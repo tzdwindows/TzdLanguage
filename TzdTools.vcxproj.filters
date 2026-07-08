@@ -1,0 +1,247 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="TzdTools.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TzdCommandSystem.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TzdDebugger.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TzdStackTrace.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TzdMemoryAsm.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="TzdFuncScanner.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="PdbReader.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="SymbolDemangler.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdInterpreter.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdLangBaseVisitor.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdLangLexer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdLangParser.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdLangVisitor.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Plots\pbPlots.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Plots\supportLib.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdNativeModule.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdFFIAdapter.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dyncall\dyncall_api.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dyncall\dyncall_callvm.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dyncall\dyncall_callvm_base.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dyncall\dyncall_vector.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdOop.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Generated\TzdJit.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="TzdCommandSystem.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="TzdDebugger.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="TzdStackTrace.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="TzdMemoryAsm.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="TzdFuncScanner.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PdbReader.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="SymbolDemangler.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdInterpreter.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdLangBaseVisitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdLangLexer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdLangParser.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdLangVisitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Plots\pbPlots.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Plots\supportLib.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdNativeLib.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdNativeModule.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdFFIAdapter.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_aggregate.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_alloc.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callf.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_arm.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_arm_armhf.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_thumb.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_arm64.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_mips.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_mips_eabi.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_mips_n32.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_mips_n64.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_mips_o32.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_ppc32.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_ppc64.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_sparc.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_sparc64.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_x64.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_callvm_x86.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_config.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_macros.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_signature.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_types.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_utils.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_value.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_vector.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="dyncall\dyncall_version.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdOop.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Generated\TzdJit.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Res\TzdStrings.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Grammar\TzdLang.g4" />
+    <None Include="Generated\TzdLang.interp" />
+    <None Include="Generated\TzdLang.tokens" />
+    <None Include="Generated\TzdLangLexer.interp" />
+    <None Include="Generated\TzdLangLexer.tokens" />
+    <None Include="Res\TzdStrings.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="dyncall\dyncall_call_x64_generic_masm.asm">
+      <Filter>源文件</Filter>
+    </MASM>
+  </ItemGroup>
+</Project>

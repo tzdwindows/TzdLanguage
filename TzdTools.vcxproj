@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{ef38e9bd-d1ac-4cf3-a2a1-842d4858503b}</ProjectGuid>
+    <RootNamespace>TzdTools</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>E:\Fintamath\include;C:\Program Files\Java\jdk-20\include\win32;C:\Program Files\Java\jdk-20\include;E:\LLVM_SDK\include;C:\Program Files\LLVM\include;E:\vcpkg\buildtrees\antlr4\src\4.13.2-b64128cc53.clean\runtime\Cpp\runtime\src;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>CPPCORO_COMPILER_MSVC;FMT_UNICODE=0;_SILENCE_CLANG_COROUTINE_MESSAGE;_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;DC__Feature_Aggr=0;ANTLR4CPP_STATIC;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <DisableSpecificWarnings>4146;4244;4267;4624;4005;4819;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <Optimization>MaxSpeed</Optimization>
+      <!-- Avoid vc145.pdb open/lock errors during parallel compilation -->
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>E:\Fintamath\f\build\lib\Release;E:\vcpkg\installed\x64-windows-static\lib;E:\LLVM_SDK\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ws2_32.lib;IPHLPAPI.lib;fintamath.lib;zlib.lib;zstd.lib;clang-repl.lib;clangAnalysis.lib;clangAnalysisFlowSensitive.lib;clangAnalysisFlowSensitiveModels.lib;clangAPINotes.lib;clangAST.lib;clangASTMatchers.lib;clangBasic.lib;clangCodeGen.lib;clangCrossTU.lib;clangDependencyScanning.lib;clangDirectoryWatcher.lib;clangDriver.lib;clangDynamicASTMatchers.lib;clangEdit.lib;clangExtractAPI.lib;clangFormat.lib;clangFrontend.lib;clangFrontendTool.lib;clangHandleCXX.lib;clangHandleLLVM.lib;clangIndex.lib;clangIndexSerialization.lib;clangInterpreter.lib;clangLex.lib;clangParse.lib;clangRewrite.lib;clangRewriteFrontend.lib;clangSema.lib;clangSerialization.lib;clangStaticAnalyzerCheckers.lib;clangStaticAnalyzerCore.lib;clangStaticAnalyzerFrontend.lib;clangSupport.lib;clangTooling.lib;clangToolingASTDiff.lib;clangToolingCore.lib;clangToolingInclusions.lib;clangToolingInclusionsStdlib.lib;clangToolingRefactoring.lib;clangToolingSyntax.lib;clangTransformer.lib;libclang.lib;lldCOFF.lib;lldCommon.lib;lldELF.lib;lldMachO.lib;lldMinGW.lib;lldWasm.lib;LLVMAggressiveInstCombine.lib;LLVMAnalysis.lib;LLVMAsmParser.lib;LLVMAsmPrinter.lib;LLVMBinaryFormat.lib;LLVMBitReader.lib;LLVMBitstreamReader.lib;LLVMBitWriter.lib;LLVMCFGuard.lib;LLVMCFIVerify.lib;LLVMCodeGen.lib;LLVMCodeGenTypes.lib;LLVMCore.lib;LLVMCoroutines.lib;LLVMCoverage.lib;LLVMDebugInfoBTF.lib;LLVMDebugInfoCodeView.lib;LLVMDebuginfod.lib;LLVMDebugInfoDWARF.lib;LLVMDebugInfoGSYM.lib;LLVMDebugInfoLogicalView.lib;LLVMDebugInfoMSF.lib;LLVMDebugInfoPDB.lib;LLVMDemangle.lib;LLVMDiff.lib;LLVMDlltoolDriver.lib;LLVMDWARFLinker.lib;LLVMDWARFLinkerClassic.lib;LLVMDWARFLinkerParallel.lib;LLVMDWP.lib;LLVMExecutionEngine.lib;LLVMExegesis.lib;LLVMExegesisX86.lib;LLVMExtensions.lib;LLVMFileCheck.lib;LLVMFrontendDriver.lib;LLVMFrontendHLSL.lib;LLVMFrontendOffloading.lib;LLVMFrontendOpenACC.lib;LLVMFrontendOpenMP.lib;LLVMFuzzerCLI.lib;LLVMFuzzMutate.lib;LLVMGlobalISel.lib;LLVMHipStdPar.lib;LLVMInstCombine.lib;LLVMInstrumentation.lib;LLVMInterfaceStub.lib;LLVMInterpreter.lib;LLVMipo.lib;LLVMIRPrinter.lib;LLVMIRReader.lib;LLVMJITLink.lib;LLVMLibDriver.lib;LLVMLineEditor.lib;LLVMLinker.lib;LLVMLTO.lib;LLVMMC.lib;LLVMMCA.lib;LLVMMCDisassembler.lib;LLVMMCJIT.lib;LLVMMCParser.lib;LLVMMIRParser.lib;LLVMObjCARCOpts.lib;LLVMObjCopy.lib;LLVMObject.lib;LLVMObjectYAML.lib;LLVMOption.lib;LLVMOrcDebugging.lib;LLVMOrcJIT.lib;LLVMOrcShared.lib;LLVMOrcTargetProcess.lib;LLVMPasses.lib;LLVMProfileData.lib;LLVMRemarks.lib;LLVMRuntimeDyld.lib;LLVMScalarOpts.lib;LLVMSelectionDAG.lib;LLVMSupport.lib;LLVMSymbolize.lib;LLVMTableGen.lib;LLVMTableGenCommon.lib;LLVMTableGenGlobalISel.lib;LLVMTarget.lib;LLVMTargetParser.lib;LLVMTextAPI.lib;LLVMTextAPIBinaryReader.lib;LLVMTransformUtils.lib;LLVMVectorize.lib;LLVMWindowsDriver.lib;LLVMWindowsManifest.lib;LLVMX86AsmParser.lib;LLVMX86CodeGen.lib;LLVMX86Desc.lib;LLVMX86Disassembler.lib;LLVMX86Info.lib;LLVMX86TargetMCA.lib;LLVMXRay.lib;LTO.lib;Remarks.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <IgnoreSpecificDefaultLibraries>MSVCRT</IgnoreSpecificDefaultLibraries>
+      <OptimizeReferences>false</OptimizeReferences>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <AdditionalOptions>/WHOLEARCHIVE:LLVMX86CodeGen.lib /WHOLEARCHIVE:LLVMX86Desc.lib /WHOLEARCHIVE:LLVMX86Info.lib /WHOLEARCHIVE:LLVMX86AsmParser.lib /WHOLEARCHIVE:LLVMOrcJIT.lib /WHOLEARCHIVE:LLVMExecutionEngine.lib %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <PostBuildEvent>
+      <Command>robocopy "$(SolutionDir)stdlib" "$(SolutionDir)TzdTools\stdlib" /XO /E /NDL /NFL /NJH /NJS
+if %ERRORLEVEL% LEQ 7 exit 0</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="dyncall\dyncall_api.c" />
+    <ClCompile Include="dyncall\dyncall_callvm.c" />
+    <ClCompile Include="dyncall\dyncall_callvm_base.c" />
+    <ClCompile Include="dyncall\dyncall_vector.c" />
+    <ClCompile Include="Generated\TzdFFIAdapter.cpp" />
+    <ClCompile Include="Generated\TzdInterpreter.cpp" />
+    <ClCompile Include="Generated\TzdJit.cpp" />
+    <ClCompile Include="Generated\TzdLangBaseVisitor.cpp" />
+    <ClCompile Include="Generated\TzdLangLexer.cpp" />
+    <ClCompile Include="Generated\TzdLangParser.cpp" />
+    <ClCompile Include="Generated\TzdLangVisitor.cpp" />
+    <ClCompile Include="Generated\TzdNativeModule.cpp" />
+    <ClCompile Include="Generated\TzdOop.cpp" />
+    <ClCompile Include="Plots\pbPlots.cpp" />
+    <ClCompile Include="Plots\supportLib.cpp" />
+    <ClCompile Include="PdbReader.cpp" />
+    <ClCompile Include="SymbolDemangler.cpp" />
+    <ClCompile Include="TzdCommandSystem.cpp" />
+    <ClCompile Include="TzdFuncScanner.cpp" />
+    <ClCompile Include="TzdMemoryAsm.cpp" />
+    <ClCompile Include="TzdDebugger.cpp" />
+    <ClCompile Include="TzdStackTrace.cpp" />
+    <ClCompile Include="TzdTools.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="dyncall\dyncall.h" />
+    <ClInclude Include="dyncall\dyncall_aggregate.h" />
+    <ClInclude Include="dyncall\dyncall_alloc.h" />
+    <ClInclude Include="dyncall\dyncall_callf.h" />
+    <ClInclude Include="dyncall\dyncall_callvm.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_arm.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_arm_armhf.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_arm32_thumb.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_arm64.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_mips.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_mips_eabi.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_mips_n32.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_mips_n64.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_mips_o32.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_ppc32.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_ppc64.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_sparc.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_sparc64.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_x64.h" />
+    <ClInclude Include="dyncall\dyncall_callvm_x86.h" />
+    <ClInclude Include="dyncall\dyncall_config.h" />
+    <ClInclude Include="dyncall\dyncall_macros.h" />
+    <ClInclude Include="dyncall\dyncall_signature.h" />
+    <ClInclude Include="dyncall\dyncall_types.h" />
+    <ClInclude Include="dyncall\dyncall_utils.h" />
+    <ClInclude Include="dyncall\dyncall_value.h" />
+    <ClInclude Include="dyncall\dyncall_vector.h" />
+    <ClInclude Include="dyncall\dyncall_version.h" />
+    <ClInclude Include="Generated\TzdFFIAdapter.h" />
+    <ClInclude Include="Generated\TzdInterpreter.h" />
+    <ClInclude Include="Generated\TzdJit.h" />
+    <ClInclude Include="Generated\TzdLangBaseVisitor.h" />
+    <ClInclude Include="Generated\TzdLangLexer.h" />
+    <ClInclude Include="Generated\TzdLangParser.h" />
+    <ClInclude Include="Generated\TzdLangVisitor.h" />
+    <ClInclude Include="Generated\TzdNativeLib.h" />
+    <ClInclude Include="Generated\TzdNativeModule.h" />
+    <ClInclude Include="Generated\TzdOop.h" />
+    <ClInclude Include="Plots\pbPlots.hpp" />
+    <ClInclude Include="Plots\supportLib.hpp" />
+    <ClInclude Include="PdbReader.h" />
+    <ClInclude Include="Res\TzdStrings.h" />
+    <ClInclude Include="SymbolDemangler.h" />
+    <ClInclude Include="TzdCommandSystem.h" />
+    <ClInclude Include="TzdFuncScanner.h" />
+    <ClInclude Include="TzdMemoryAsm.h" />
+    <ClInclude Include="TzdDebugger.h" />
+    <ClInclude Include="TzdStackTrace.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="dyncall\dyncall_call_x64_generic_masm.asm">
+      <FileType>Document</FileType>
+    </MASM>
+    <None Include="Generated\TzdLang.interp" />
+    <None Include="Generated\TzdLang.tokens" />
+    <None Include="Generated\TzdLangLexer.interp" />
+    <None Include="Generated\TzdLangLexer.tokens" />
+    <None Include="Grammar\TzdLang.g4" />
+    <None Include="Res\TzdStrings.json" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  </ImportGroup>
+</Project>

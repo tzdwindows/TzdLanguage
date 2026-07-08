@@ -1,0 +1,46 @@
+class Error {
+    var string message;
+    var string code;
+    var string stack_trace;
+    var ptr cause;
+
+    Error(message) {
+        this.message = message;
+        this.code = "GENERIC_ERROR";
+        this.cause = null;
+        this.stack_trace = Runtime.captureStackTrace();
+    }
+
+    Error(message, code) {
+        this.message = message;
+        this.code = code;
+        this.cause = null;
+        this.stack_trace = Runtime.captureStackTrace();
+    }
+
+    Error(message, code, cause) {
+        this.message = message;
+        this.code = code;
+        this.cause = cause;
+        this.stack_trace = Runtime.captureStackTrace();
+    }
+
+    fun toString() {
+        var text = "[" + this.code + "] " + this.message;
+        if (this.cause != null) {
+            var causeText = "[" + this.cause.code + "] " + this.cause.message;
+            text = text + "\n  Caused by: " + causeText;
+        }
+        if (this.stack_trace != "") {
+            text = text + "\n" + this.stack_trace;
+        }
+        ret text;
+    }
+
+    
+
+    
+    fun display() {
+        print(this.toString());
+    }
+}
