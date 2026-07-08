@@ -44,6 +44,8 @@ static llvm::BasicBlock* s_tailRecurseBB = nullptr;
 static bool s_inTailPosition = false;
 static llvm::Function* s_currentWorkerFunc = nullptr;
 static std::unordered_map<std::string, void*> s_workerPointers;
+static std::vector<std::tuple<llvm::Value*, llvm::Value*, int>> s_tryJmpBufStack;
+static int s_loopLevel = 0;
 
 std::string formatSourcePath(const std::string& fullPath);
 std::string unescapeString(const std::string& input);
@@ -1022,13 +1024,21 @@ extern "C" {
         delete static_cast<jmp_buf*>(buf);
     }
 
-    int rt_enter_try_buf(void* buf) {
+    /*int rt_enter_try_buf(void* buf) {
         g_tzdCatchJmp = static_cast<jmp_buf*>(buf);
         return setjmp(*g_tzdCatchJmp);
     }
-
     void rt_leave_try() {
         g_tzdCatchJmp = nullptr;
+    }
+    */
+
+    void* rt_get_catch_jmp() {
+        return g_tzdCatchJmp;
+    }
+
+    void rt_set_catch_jmp(void* buf) {
+        g_tzdCatchJmp = static_cast<jmp_buf*>(buf);
     }
 
     void rt_throw(void* valPtr) {
@@ -1043,10 +1053,12 @@ extern "C" {
             currentTrace.push_back("<throw> at line " + std::to_string(g_CurrentInterpreter->m_jitLine));
         }
 
+        // 如果 JIT 环境或者外部设置了捕获点，执行跳转
         if (g_tzdCatchJmp) {
             longjmp(*g_tzdCatchJmp, 1);
         }
 
+        // 否则作为未捕获异常抛出给 C++ 外层解释器处理
         if (g_CurrentInterpreter) {
             g_CurrentInterpreter->m_jitUnhandledThrow = std::make_unique<TzdThrowException>(g_tzdThrownValue, currentTrace);
             g_CurrentInterpreter->m_hasJitError = true;
@@ -1148,6 +1160,8 @@ llvm::AllocaInst* TzdCompiler::CreateEntryBlockAlloca(llvm::Type* Ty, llvm::Valu
 
 void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx,
     TzdLangParser::MethodDeclContext* methodCtx) {
+    s_tryJmpBufStack.clear();
+    s_loopLevel = 0;
     std::string className = classCtx->qualifiedName(0)->getText();
     std::string methodName = methodCtx->IDENTIFIER()->getText();
     std::string fullInternalName = className + "_" + methodName;
@@ -1594,8 +1608,18 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_alloc_jmp_buf", {}, m_ptrTy);
     addFunc("rt_free_jmp_buf", { m_ptrTy }, m_voidTy);
-    addFunc("rt_enter_try_buf", { m_ptrTy }, Type::getInt32Ty(m_context));
-    addFunc("rt_leave_try", {}, m_voidTy);
+    addFunc("rt_get_catch_jmp", {}, m_ptrTy);
+    addFunc("rt_set_catch_jmp", { m_ptrTy }, m_voidTy);
+
+#ifdef _WIN32
+    // Windows x64 下 _setjmp 的签名需要包含隐藏的帧指针
+    Function::Create(FunctionType::get(m_int32Ty, { m_ptrTy, m_ptrTy }, false), Function::ExternalLinkage, "_setjmp", m_module.get());
+#else
+    Function::Create(FunctionType::get(m_int32Ty, { m_ptrTy }, false), Function::ExternalLinkage, "setjmp", m_module.get());
+#endif
+
+    //addFunc("rt_enter_try_buf", { m_ptrTy }, Type::getInt32Ty(m_context));
+    //addFunc("rt_leave_try", {}, m_voidTy);
     addFunc("rt_throw", { m_ptrTy }, m_voidTy);
     addFunc("rt_get_thrown", {}, m_ptrTy);
     addFunc("rt_push_catch_scope", { m_ptrTy, m_ptrTy }, m_voidTy);
@@ -1707,14 +1731,13 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_get_arg", (void*)&rt_get_arg);
     bind("rt_set_last_ret", (void*)&rt_set_last_ret);
     bind("rt_call_sub", (void*)&rt_call_sub);
-    bind("rt_get_member", (void*)&rt_get_member);
     bind("rt_store_member", (void*)&rt_store_member);
     bind("rt_cast", (void*)&rt_cast);
     bind("rt_type_check", (void*)&rt_type_check);
     bind("rt_call_super", (void*)&rt_call_super);
     bind("rt_get_var_ptr", (void*)&rt_get_var_ptr);
     bind("rt_print_newline", (void*)&rt_print_newline);
-	bind("rt_to_double_fast", (void*)&rt_to_double_fast);
+    bind("rt_to_double_fast", (void*)&rt_to_double_fast);
     bind("rt_stabilize_value", (void*)&rt_stabilize_value);
     bind("rt_store_index", (void*)&rt_store_index);
     bind("rt_copy_value", (void*)&rt_copy_value);
@@ -1731,25 +1754,48 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_get_index_native_d_dyn", (void*)&rt_get_index_native_d_dyn);
     bind("rt_store_index_native_d_dyn", (void*)&rt_store_index_native_d_dyn);
     bind("rt_create_native_double_arr", (void*)&rt_create_native_double_arr);
-    bind("rt_push_arg_frame",(void*)&rt_push_arg_frame);
-    bind("rt_pop_arg_frame",(void*)&rt_pop_arg_frame);
+    bind("rt_push_arg_frame", (void*)&rt_push_arg_frame);
+    bind("rt_pop_arg_frame", (void*)&rt_pop_arg_frame);
     bind("rt_init_tzd_value", (void*)&rt_init_tzd_value);
     bind("rt_write_fast_ret", (void*)&rt_write_fast_ret);
     bind("rt_get_worker_ptr", (void*)&rt_get_worker_ptr);
+
+    // ======= 修复 try/catch 机制的新绑定 =======
     bind("rt_alloc_jmp_buf", (void*)&rt_alloc_jmp_buf);
     bind("rt_free_jmp_buf", (void*)&rt_free_jmp_buf);
-    bind("rt_enter_try_buf", (void*)&rt_enter_try_buf);
-    bind("rt_leave_try", (void*)&rt_leave_try);
+    bind("rt_get_catch_jmp", (void*)&rt_get_catch_jmp);
+    bind("rt_set_catch_jmp", (void*)&rt_set_catch_jmp);
+
+#ifdef _WIN32
+    void* sjAddr = nullptr;
+    HMODULE hUcrt = GetModuleHandleA("ucrtbase.dll");
+    if (hUcrt) sjAddr = (void*)GetProcAddress(hUcrt, "_setjmp");
+    if (!sjAddr) {
+        HMODULE hMsvc = GetModuleHandleA("msvcrt.dll");
+        if (hMsvc) sjAddr = (void*)GetProcAddress(hMsvc, "_setjmp");
+    }
+    if (!sjAddr) {
+        HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+        if (hNtdll) sjAddr = (void*)GetProcAddress(hNtdll, "_setjmp");
+    }
+    if (sjAddr) {
+        bind("_setjmp", sjAddr);
+    }
+    else {
+        std::cerr << "FATAL: Could not resolve _setjmp from Windows DLLs!" << std::endl;
+    }
+#else
+    bind("setjmp", (void*)&_setjmp);
+#endif
+    // ==========================================
+
     bind("rt_throw", (void*)&rt_throw);
     bind("rt_get_thrown", (void*)&rt_get_thrown);
-    bind("rt_push_catch_scope", (void*)&rt_push_catch_scope);
-    bind("rt_pop_catch_scope", (void*)&rt_pop_catch_scope);
     bind("rt_set_location", (void*)&rt_set_location);
     bind("rt_push_jit_frame", (void*)&rt_push_jit_frame);
     bind("rt_pop_jit_frame", (void*)&rt_pop_jit_frame);
     bind("rt_replace_jit_frame", (void*)&rt_replace_jit_frame);
     bind("rt_create_lambda_value", (void*)&rt_create_lambda_value);
-
 
     cantFail(m_lljit->getMainJITDylib().define(absoluteSymbols(symbols)));
 }
@@ -1979,13 +2025,14 @@ std::any TzdCompiler::visitWhileStmt(TzdLangParser::WhileStmtContext* ctx) {
 
     m_builder.CreateBr(condBB);
     m_builder.SetInsertPoint(condBB);
-
     Value* condVal = std::any_cast<Value*>(visit(ctx->expression()));
     Value* isTrue = toNativeBool(condVal);
     m_builder.CreateCondBr(isTrue, bodyBB, endBB);
 
     m_builder.SetInsertPoint(bodyBB);
+    s_loopLevel++; // <--- 循环级别+1
     visit(ctx->statement());
+    s_loopLevel--; // <--- 循环级别-1
     if (!m_builder.GetInsertBlock()->getTerminator()) {
         m_builder.CreateBr(condBB);
     }
@@ -1997,17 +2044,33 @@ std::any TzdCompiler::visitWhileStmt(TzdLangParser::WhileStmtContext* ctx) {
 
 std::any TzdCompiler::visitBreakStmt(TzdLangParser::BreakStmtContext* ctx) {
     (void)ctx;
-    if (!m_switchEndStack.empty()) {
-        m_builder.CreateBr(m_switchEndStack.back());
+    // ======= 清理跳出的循环内部所在的 try 块 =======
+    for (auto it = s_tryJmpBufStack.rbegin(); it != s_tryJmpBufStack.rend(); ++it) {
+        if (std::get<2>(*it) >= s_loopLevel) {
+            m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { std::get<1>(*it) });
+            m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { std::get<0>(*it) });
+        }
+        else { break; }
     }
-    else if (!m_loopStack.empty()) {
-        m_builder.CreateBr(m_loopStack.back().breakBB);
-    }
+    // ===========================================
+
+    if (!m_switchEndStack.empty()) m_builder.CreateBr(m_switchEndStack.back());
+    else if (!m_loopStack.empty()) m_builder.CreateBr(m_loopStack.back().breakBB);
     return std::any();
 }
 
 std::any TzdCompiler::visitContinueStmt(TzdLangParser::ContinueStmtContext* ctx) {
     (void)ctx;
+    // ======= 清理同上 =======
+    for (auto it = s_tryJmpBufStack.rbegin(); it != s_tryJmpBufStack.rend(); ++it) {
+        if (std::get<2>(*it) >= s_loopLevel) {
+            m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { std::get<1>(*it) });
+            m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { std::get<0>(*it) });
+        }
+        else { break; }
+    }
+    // =======================
+
     if (m_loopStack.empty()) return std::any();
     m_builder.CreateBr(m_loopStack.back().continueBB);
     return std::any();
@@ -2112,34 +2175,26 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
     // --- [核心修复] 循环变量自动提升 ---
     if (ctx->forInit()) {
         if (auto expr = ctx->forInit()->expression()) {
-            // 检查是否是赋值表达式 (i = 0)
             if (auto assignCtx = dynamic_cast<TzdLangParser::AssignmentExprContext*>(expr)) {
-
                 std::string varName = assignCtx->expression(0)->getText();
                 auto valExpr = assignCtx->expression(1);
 
-                // 1. 先编译右值 (拿到 Value*)
                 Value* initVal = std::any_cast<Value*>(visit(valExpr));
 
-                // 2. [关键判定] 只要右值是原生 double，且变量未定义，就强制提升为原生变量
                 if (initVal->getType()->isDoubleTy() &&
                     m_nativeDoubleLocals.find(varName) == m_nativeDoubleLocals.end() &&
                     m_namedValues.find(varName) == m_namedValues.end()) {
 
-                    // 3. 在栈上分配原生内存
                     AllocaInst* alloc = m_builder.CreateAlloca(m_doubleTy, nullptr, varName + "_loop_native");
                     m_builder.CreateStore(initVal, alloc);
 
-                    // 4. 注册到原生表
                     m_nativeDoubleLocals[varName] = alloc;
-                    initHandled = true; // 标记已处理
+                    initHandled = true;
                 }
             }
         }
     }
-    // -----------------------------------
 
-    // 如果未被优化逻辑处理，则执行默认访问
     if (!initHandled && ctx->forInit()) {
         visit(ctx->forInit());
     }
@@ -2155,7 +2210,6 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
 
     if (ctx->cond) {
         Value* condValue = std::any_cast<Value*>(visit(ctx->cond));
-        // 使用之前实现的 toNativeBool 避免装箱
         Value* isTrue = toNativeBool(condValue);
         m_builder.CreateCondBr(isTrue, bodyBB, afterBB);
     }
@@ -2166,9 +2220,15 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
     m_loopStack.push_back({ stepBB, afterBB });
 
     m_builder.SetInsertPoint(bodyBB);
+
+    // ==========================================
+    s_loopLevel++; // 进入循环控制域
     if (ctx->statement()) {
         visit(ctx->statement());
     }
+    s_loopLevel--; // 退出循环控制域
+    // ==========================================
+
     if (!m_builder.GetInsertBlock()->getTerminator()) {
         m_builder.CreateBr(stepBB);
     }
@@ -2466,32 +2526,38 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
         retValRaw = std::any_cast<Value*>(visit(ctx->expression()));
 
         s_inTailPosition = oldTailState;
+    }
 
-        if (m_currentRetPtr) {
-            if (retValRaw && retValRaw->getType()->isDoubleTy()) {
-                // 如果是原生数字，直接写值！拒绝调用 C++ 的 rt_write_fast_ret/rt_create_num
-                m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, retValRaw });
-            }
-            else {
-                Value* boxed = boxToTzdValue(retValRaw);
-                Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxed });
-                m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, stable });
-            }
+    // ======= 强制展开回收动作 (防止 try 块内 return 导致 jmp_buf 泄露) =======
+    for (auto it = s_tryJmpBufStack.rbegin(); it != s_tryJmpBufStack.rend(); ++it) {
+        m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { std::get<1>(*it) });
+        m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { std::get<0>(*it) });
+    }
+    // =========================================================================
+
+    if (m_currentRetPtr) {
+        if (retValRaw && retValRaw->getType()->isDoubleTy()) {
+            // 如果是原生数字，直接写值
+            m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, retValRaw });
         }
-
-        Function* currentFunc = m_builder.GetInsertBlock()->getParent();
-        std::string currentName = currentFunc->getName().str();
-
-        // 绝不让高频自递归污染和更新全局 g_last_ret
-        if (currentName.find("_worker") == std::string::npos) {
+        else if (retValRaw) {
             Value* boxed = boxToTzdValue(retValRaw);
             Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxed });
-            m_builder.CreateCall(getRtFunc("rt_set_last_ret"), { stable });
+            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, stable });
         }
     }
 
-    // [绝杀修改]：如果是 Worker 函数，直接用底层寄存器返回原生数字！
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
+    std::string currentName = currentFunc->getName().str();
+
+    // 绝不让高频自递归污染和更新全局 g_last_ret
+    if (retValRaw && currentName.find("_worker") == std::string::npos) {
+        Value* boxed = boxToTzdValue(retValRaw);
+        Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxed });
+        m_builder.CreateCall(getRtFunc("rt_set_last_ret"), { stable });
+    }
+
+    // [绝杀修改]：如果是 Worker 函数，直接用底层寄存器返回原生数字
     if (currentFunc->getReturnType()->isDoubleTy()) {
         Value* dRet = castToNativeDouble(retValRaw);
         m_builder.CreateRet(dRet);
@@ -3149,25 +3215,54 @@ std::any TzdCompiler::visitTryCatchStmt(TzdLangParser::TryCatchStmtContext* ctx)
     BasicBlock* afterBB = BasicBlock::Create(m_context, "try.after", func);
 
     Value* jmpBuf = m_builder.CreateCall(getRtFunc("rt_alloc_jmp_buf"));
-    Value* enterRes = m_builder.CreateCall(getRtFunc("rt_enter_try_buf"), { jmpBuf });
+    Value* oldJmpBuf = m_builder.CreateCall(getRtFunc("rt_get_catch_jmp"));
+    m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { jmpBuf });
+
+    Value* enterRes = nullptr;
+#ifdef _WIN32
+    Function* sjF = m_module->getFunction("_setjmp");
+    Value* nullFrame = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+    enterRes = m_builder.CreateCall(sjF, { jmpBuf, nullFrame }); // 直接内联调用原生的 _setjmp!
+#else
+    Function* sjF = m_module->getFunction("setjmp");
+    enterRes = m_builder.CreateCall(sjF, { jmpBuf });
+#endif
+
     Value* isCatch = m_builder.CreateICmpNE(enterRes, m_builder.getInt32(0));
     m_builder.CreateCondBr(isCatch, catchBB, tryBB);
 
     m_builder.SetInsertPoint(tryBB);
+    s_tryJmpBufStack.push_back({ jmpBuf, oldJmpBuf, s_loopLevel });
     visit(ctx->block(0));
-    m_builder.CreateCall(getRtFunc("rt_leave_try"));
-    m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { jmpBuf });
-    m_builder.CreateBr(afterBB);
+    s_tryJmpBufStack.pop_back();
+
+    if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { oldJmpBuf });
+        m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { jmpBuf });
+        m_builder.CreateBr(afterBB);
+    }
 
     m_builder.SetInsertPoint(catchBB);
-    m_builder.CreateCall(getRtFunc("rt_leave_try"));
+    m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { oldJmpBuf });
+    m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { jmpBuf }); // 避免异常再次发生时泄露
+
     Value* thrown = m_builder.CreateCall(getRtFunc("rt_get_thrown"));
-    Value* catchName = m_builder.CreateGlobalStringPtr(ctx->IDENTIFIER()->getText());
-    m_builder.CreateCall(getRtFunc("rt_push_catch_scope"), { catchName, thrown });
+    std::string errName = ctx->IDENTIFIER()->getText();
+
+    // 自动利用 JIT 的 Alloca 分配捕获的变量对象环境，完全抛弃缓慢的 Runtime Scope !
+    AllocaInst* alloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, errName + "_catch");
+    m_builder.CreateStore(thrown, alloc);
+
+    auto backupNamedVals = m_namedValues;
+    m_namedValues[errName] = alloc;
+
     visit(ctx->block(1));
-    m_builder.CreateCall(getRtFunc("rt_pop_catch_scope"));
-    m_builder.CreateCall(getRtFunc("rt_free_jmp_buf"), { jmpBuf });
-    m_builder.CreateBr(afterBB);
+
+    m_namedValues = backupNamedVals;
+
+    if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateBr(afterBB);
+    }
 
     m_builder.SetInsertPoint(afterBB);
     return std::any((Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy)));
