@@ -1,59 +1,34 @@
 /* ==========================================================================
-   TzdLang Official Documentation & Showcase
-   Apple / macOS Liquid Glassmorphism (Frosted Glass) Aesthetic
+   TzdLang (TZD) - Official Apple macOS / iOS Liquid Glassmorphism Theme
+   Designed for Physical Depth, Specular Lighting, and Restrained Micro-motion
    ========================================================================== */
 
 :root {
-  /* Apple Dark Theme Canvas */
-  --bg-canvas: #08090C;
-  --bg-card: rgba(255, 255, 255, 0.04);
-  --bg-card-hover: rgba(255, 255, 255, 0.07);
-  --bg-glass-nav: rgba(18, 20, 29, 0.68);
-  --bg-glass-panel: rgba(255, 255, 255, 0.035);
-  
-  /* Precision Glass Borders & Specular Edge Lighting */
-  --glass-border: 1px solid rgba(255, 255, 255, 0.12);
-  --glass-border-subtle: 1px solid rgba(255, 255, 255, 0.07);
-  --glass-border-focus: 1px solid rgba(255, 255, 255, 0.25);
-  
-  /* Specular Rim Lights (Inner Bevel) */
-  --specular-rim: inset 0 1px 1px 0 rgba(255, 255, 255, 0.2);
-  --specular-rim-subtle: inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
-  --shadow-glass: 0 20px 50px -10px rgba(0, 0, 0, 0.6), inset 0 1px 1px 0 rgba(255, 255, 255, 0.14);
-  --shadow-float: 0 30px 70px -15px rgba(0, 0, 0, 0.75), inset 0 1px 2px 0 rgba(255, 255, 255, 0.22);
-  
-  /* Apple Typography Palette */
-  --text-primary: #F5F5F7;
+  /* Canvas & Glass Palette */
+  --bg-dark: #08090C;
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-bg-hover: rgba(255, 255, 255, 0.06);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+  --glass-border-hover: 1px solid rgba(255, 255, 255, 0.25);
+  --glass-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15), 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+  --glass-shadow-hover: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 25px rgba(255, 255, 255, 0.05);
+
+  /* Typography */
+  --text-pure: #FFFFFF;
+  --text-main: #F5F5F7;
   --text-secondary: #A1A1A6;
   --text-tertiary: #6E6E73;
-  
-  /* Accents */
-  --accent-teal: #14b8a6;
-  --accent-blue: #38bdf8;
-  --accent-indigo: #6366f1;
-  --accent-purple: #a855f7;
-  --accent-coral: #f43f5e;
-  --accent-emerald: #10b981;
-  --accent-amber: #f59e0b;
 
-  /* Typography Stack */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  /* Font Stack */
+  --font-apple: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
 
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
-  --radius-xl: 30px;
-  --radius-pill: 9999px;
-
-  /* Transitions: Restrained & Sophisticated */
+  /* Easing */
   --ease-apple: cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-fast: 0.22s var(--ease-apple);
-  --transition-base: 0.3s var(--ease-apple);
+  --transition-apple: all 0.3s var(--ease-apple);
 }
 
-/* Global Reset */
+/* Reset & Root Setup */
 *, *::before, *::after {
   margin: 0;
   padding: 0;
@@ -63,102 +38,239 @@
 html {
   scroll-behavior: smooth;
   font-size: 16px;
-  background-color: var(--bg-canvas);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  line-height: 1.6;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  font-family: var(--font-apple);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Layered Ambient Glow Background */
 body {
   overflow-x: hidden;
   min-height: 100vh;
-  background-color: var(--bg-canvas);
+  background-color: var(--bg-dark);
   position: relative;
 }
 
-/* Organic Ambient Light Blooms (Deep Gaussian Blur) */
-.ambient-glow-container {
+/* ==========================================================================
+   1. Dynamic Aurora Glowing Background (30s Gentle Breathing Drift)
+   ========================================================================== */
+.aurora-canvas {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
-  overflow: hidden;
 }
 
-.glow-spot {
+.aurora-orb {
   position: absolute;
   border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 光斑 1: 青绿/湖蓝 (#00f2fe)，尺寸 520px，位置右上，opacity: 0.15，filter: blur(140px) */
+.orb-cyan {
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, #00f2fe 0%, #0d9488 55%, transparent 75%);
+  top: -40px;
+  right: 6%;
+  opacity: 0.16;
   filter: blur(140px);
-  opacity: 0.65;
-  mix-blend-mode: screen;
+  animation: auroraFloat1 30s ease-in-out infinite alternate;
 }
 
-.glow-teal {
+/* 光斑 2: 深紫/洋红 (#7928ca)，尺寸 620px，位置中间偏右，opacity: 0.20，filter: blur(160px) */
+.orb-purple {
+  width: 620px;
+  height: 620px;
+  background: radial-gradient(circle, #7928ca 0%, #ff0080 50%, transparent 75%);
+  top: 25%;
+  right: 22%;
+  opacity: 0.20;
+  filter: blur(160px);
+  animation: auroraFloat2 34s ease-in-out infinite alternate;
+}
+
+/* 光斑 3: 靛蓝/紫罗兰 (#4338ca)，尺寸 600px，位置左中下，opacity: 0.18，filter: blur(150px) */
+.orb-indigo {
   width: 600px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(20, 184, 166, 0.22) 0%, rgba(13, 148, 136, 0.05) 70%, transparent 100%);
-  top: 5%;
-  right: 8%;
-}
-
-.glow-indigo {
-  width: 750px;
-  height: 650px;
-  background: radial-gradient(circle, rgba(79, 70, 229, 0.25) 0%, rgba(49, 46, 129, 0.08) 70%, transparent 100%);
-  top: 10%;
-  left: 5%;
-}
-
-.glow-coral {
-  width: 650px;
-  height: 550px;
-  background: radial-gradient(circle, rgba(244, 63, 94, 0.14) 0%, rgba(168, 85, 247, 0.08) 60%, transparent 100%);
-  top: 45%;
-  right: 15%;
-}
-
-.glow-violet {
-  width: 700px;
   height: 600px;
-  background: radial-gradient(circle, rgba(124, 58, 237, 0.16) 0%, rgba(67, 56, 202, 0.06) 70%, transparent 100%);
-  bottom: 5%;
-  left: 15%;
+  background: radial-gradient(circle, #3b82f6 0%, #6366f1 45%, #7c3aed 70%, transparent 80%);
+  bottom: 8%;
+  left: 6%;
+  opacity: 0.18;
+  filter: blur(150px);
+  animation: auroraFloat3 36s ease-in-out infinite alternate;
 }
 
-/* High-Contrast Crisp Typography */
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-sans);
-  color: #FFFFFF;
-  letter-spacing: -0.025em;
-  font-weight: 700;
+@keyframes auroraFloat1 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-20px, 18px) scale(1.05); }
+  100% { transform: translate(18px, -15px) scale(0.96); }
 }
 
-p, li, span {
-  color: var(--text-secondary);
+@keyframes auroraFloat2 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(20px, -22px) scale(1.06); }
+  100% { transform: translate(-18px, 15px) scale(0.95); }
 }
 
-a {
-  color: var(--text-secondary);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-a:hover {
-  color: #FFFFFF;
-}
-
-code, pre {
-  font-family: var(--font-mono);
+@keyframes auroraFloat3 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-18px, -16px) scale(1.04); }
+  100% { transform: translate(22px, 12px) scale(0.97); }
 }
 
 /* ==========================================================================
-   Apple Floating Pill Navigation Bar
+   2. Apple Frosted Glass Core Specification (Liquid Glassmorphism)
+   ========================================================================== */
+.glass-capsule-nav,
+.hero-big-card,
+.glass-stat-chip,
+.code-front-window,
+.glass-feature-pod,
+.benchmarks-glass-wrapper,
+.playground-glass-case,
+.syntax-pod-card,
+.doc-sidebar-sticky,
+.arch-pipeline-pod,
+.site-footer-glass {
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(20px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15), 0 20px 40px -15px rgba(0, 0, 0, 0.5) !important;
+  transition: var(--transition-apple);
+}
+
+/* iOS Large Round Corner System */
+.hero-big-card,
+.benchmarks-glass-wrapper,
+.playground-glass-case,
+.arch-pipeline-pod {
+  border-radius: 24px !important;
+}
+
+.code-front-window,
+.glass-feature-pod,
+.syntax-pod-card,
+.doc-sidebar-sticky {
+  border-radius: 20px !important;
+}
+
+.glass-stat-chip {
+  border-radius: 16px !important;
+}
+
+/* ==========================================================================
+   3. Interactive Micro-Motion (Smooth & Restrained)
+   ========================================================================== */
+.glass-stat-chip:hover,
+.glass-feature-pod:hover,
+.btn-apple-glass:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 20px rgba(255, 255, 255, 0.06) !important;
+}
+
+.code-front-window:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.28), 0 30px 60px -10px rgba(0, 0, 0, 0.7), 0 0 25px rgba(0, 242, 254, 0.08) !important;
+}
+
+/* Shimmer on Primary Action Button */
+.btn-shimmer-apple {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.08) 100%), #4338CA !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.4) !important;
+  color: #FFFFFF !important;
+  border-radius: 9999px !important;
+  padding: 0.72rem 1.65rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+  transition: var(--transition-apple);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-shimmer-apple::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.28) 50%, transparent 100%);
+  transform: skewX(-20deg);
+  animation: buttonShimmer 3.2s infinite ease-in-out;
+  pointer-events: none;
+}
+
+@keyframes buttonShimmer {
+  0% { left: -100%; }
+  35% { left: 160%; }
+  100% { left: 160%; }
+}
+
+.btn-shimmer-apple:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.12) 100%), #4F46E5 !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+  box-shadow: 0 8px 30px -4px rgba(99, 102, 241, 0.65), inset 0 1px 2px rgba(255, 255, 255, 0.55) !important;
+}
+
+/* Secondary Frosted Pill Button */
+.btn-apple-glass {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.16);
+  color: #F4F4F5;
+  padding: 0.72rem 1.45rem;
+  border-radius: 9999px;
+  font-weight: 500;
+  font-size: 0.92rem;
+  text-decoration: none;
+  transition: var(--transition-apple);
+}
+
+.btn-apple-glass:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #FFFFFF;
+}
+
+/* Code Fade-In Switch Animation */
+@keyframes codeFadeIn {
+  from {
+    opacity: 0.2;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.code-fade-in {
+  animation: codeFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ==========================================================================
+   4. Floating Capsule Header Navigation
    ========================================================================== */
 .site-header {
   position: sticky;
@@ -167,10 +279,10 @@ code, pre {
   display: flex;
   justify-content: center;
   padding: 0 1.5rem;
-  pointer-events: none; /* children enable pointer events */
+  pointer-events: none;
 }
 
-.nav-pill-capsule {
+.glass-capsule-nav {
   pointer-events: auto;
   display: flex;
   align-items: center;
@@ -178,26 +290,23 @@ code, pre {
   gap: 1.5rem;
   max-width: 1220px;
   width: 100%;
-  padding: 0.6rem 1.4rem;
-  background: var(--bg-glass-nav);
-  backdrop-filter: blur(30px) saturate(190%);
-  -webkit-backdrop-filter: blur(30px) saturate(190%);
-  border: var(--glass-border);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-glass);
+  padding: 0.65rem 1.4rem;
+  border-radius: 9999px !important;
+  background: rgba(18, 20, 29, 0.72) !important;
 }
 
 .brand-capsule {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  text-decoration: none;
 }
 
 .brand-logo-disc {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(99, 102, 241, 0.3));
+  background: linear-gradient(135deg, rgba(0, 242, 254, 0.25), rgba(99, 102, 241, 0.3));
   border: 1px solid rgba(255, 255, 255, 0.2);
   display: flex;
   align-items: center;
@@ -218,7 +327,7 @@ code, pre {
   color: #E2E8F0;
   font-size: 0.7rem;
   padding: 2px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   font-weight: 600;
   letter-spacing: 0.5px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
@@ -227,7 +336,7 @@ code, pre {
 .nav-links-row {
   display: flex;
   align-items: center;
-  gap: 1.4rem;
+  gap: 1.35rem;
   list-style: none;
 }
 
@@ -236,8 +345,9 @@ code, pre {
   font-weight: 500;
   color: var(--text-secondary);
   padding: 0.35rem 0.65rem;
-  border-radius: var(--radius-pill);
-  transition: all var(--transition-fast);
+  border-radius: 9999px;
+  text-decoration: none;
+  transition: var(--transition-apple);
 }
 
 .nav-links-row a:hover, .nav-links-row a.active {
@@ -254,17 +364,17 @@ code, pre {
   box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.25);
   color: #FFFFFF;
   padding: 0.45rem 1.15rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   font-size: 0.85rem;
   font-weight: 500;
-  transition: all var(--transition-fast);
+  text-decoration: none;
+  transition: var(--transition-apple);
 }
 
 .btn-github-pill:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.3);
-  box-shadow: inset 0 1px 2px 0 rgba(255, 255, 255, 0.35), 0 4px 15px rgba(0, 0, 0, 0.3);
-  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.32);
+  transform: translateY(-1px);
 }
 
 .mobile-toggle {
@@ -277,7 +387,7 @@ code, pre {
 }
 
 /* ==========================================================================
-   Hero Section & Stacked Liquid Glassmorphism Windows
+   5. Hero Presentation Stage (Physical Depth & Sharp Typography)
    ========================================================================== */
 .hero-stage {
   position: relative;
@@ -287,14 +397,7 @@ code, pre {
   padding: 4.5rem 1.5rem 4rem;
 }
 
-/* Translucent Frosted Glass Big Container (Image_0 Replica) */
 .hero-big-card {
-  background: rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-float);
-  border-radius: var(--radius-xl);
   padding: 3.5rem 3.25rem;
   display: grid;
   grid-template-columns: 1.15fr 0.95fr;
@@ -304,7 +407,6 @@ code, pre {
   overflow: hidden;
 }
 
-/* Subtle Specular Surface Sheen on Big Card */
 .hero-big-card::before {
   content: "";
   position: absolute;
@@ -312,7 +414,7 @@ code, pre {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.35) 40%, rgba(255, 255, 255, 0.35) 60%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.4) 40%, rgba(255, 255, 255, 0.4) 60%, transparent 100%);
 }
 
 .hero-info-col {
@@ -331,15 +433,15 @@ code, pre {
   color: #E2E8F0;
   font-size: 0.8rem;
   padding: 0.35rem 0.95rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   width: fit-content;
 }
 
 .hero-headline {
-  font-size: 3.4rem;
+  font-size: 3.3rem;
   font-weight: 800;
-  line-height: 1.12;
-  letter-spacing: -0.03em;
+  line-height: 1.14;
+  letter-spacing: -0.025em;
   color: #FFFFFF;
 }
 
@@ -356,34 +458,25 @@ code, pre {
   font-weight: 400;
 }
 
-/* Glass Stat Badges (Row of 4) */
+/* 4 Glass Stat Chips */
 .hero-stats-capsules {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.85rem;
-  margin: 0.4rem 0;
+  margin: 0.3rem 0;
 }
 
 .glass-stat-chip {
-  background: rgba(255, 255, 255, 0.045);
-  border: var(--glass-border);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
-  border-radius: var(--radius-md);
-  padding: 0.85rem 0.6rem;
+  padding: 0.9rem 0.6rem;
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  transition: all var(--transition-fast);
-}
-
-.glass-stat-chip:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.22);
+  cursor: default;
 }
 
 .stat-num-sharp {
-  font-size: 1.35rem;
+  font-size: 1.38rem;
   font-weight: 800;
   color: #FFFFFF;
   font-family: var(--font-mono);
@@ -396,7 +489,6 @@ code, pre {
   font-weight: 500;
 }
 
-/* Tactile Sculpted Action Buttons */
 .hero-buttons-row {
   display: flex;
   gap: 0.9rem;
@@ -404,53 +496,7 @@ code, pre {
   align-items: center;
 }
 
-.btn-apple-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.09) 100%), #4338CA;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.4);
-  color: #FFFFFF;
-  padding: 0.72rem 1.6rem;
-  border-radius: var(--radius-pill);
-  font-weight: 600;
-  font-size: 0.92rem;
-  transition: all var(--transition-fast);
-}
-
-.btn-apple-primary:hover {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.12) 100%), #4F46E5;
-  border-color: rgba(255, 255, 255, 0.45);
-  box-shadow: 0 6px 26px -2px rgba(99, 102, 241, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.55);
-  color: #FFFFFF;
-}
-
-.btn-apple-glass {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: var(--glass-border);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.16);
-  color: #F4F4F5;
-  padding: 0.72rem 1.45rem;
-  border-radius: var(--radius-pill);
-  font-weight: 500;
-  font-size: 0.92rem;
-  transition: all var(--transition-fast);
-}
-
-.btn-apple-glass:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.25);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35);
-  color: #FFFFFF;
-}
-
-/* ==========================================================================
-   Layered Frosted Glass Code Stack (Image_0 Exact Visual Depth)
-   ========================================================================== */
+/* Layered Glass Windows (Physical Stacked Depth) */
 .code-window-stack-wrapper {
   position: relative;
   width: 100%;
@@ -458,7 +504,6 @@ code, pre {
   justify-content: center;
 }
 
-/* Underneath Glass Panels creating physical stacked depth */
 .glass-stack-card-back-2 {
   position: absolute;
   top: 24px;
@@ -466,10 +511,10 @@ code, pre {
   right: -16px;
   bottom: -24px;
   background: rgba(255, 255, 255, 0.015);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
   pointer-events: none;
   z-index: 1;
 }
@@ -481,32 +526,25 @@ code, pre {
   right: -8px;
   bottom: -12px;
   background: rgba(255, 255, 255, 0.025);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: var(--radius-lg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
   pointer-events: none;
   z-index: 2;
 }
 
-/* Main Front Frosted Glass Window */
 .code-front-window {
   position: relative;
   z-index: 3;
   width: 100%;
-  background: rgba(26, 31, 46, 0.65);
-  backdrop-filter: blur(34px) saturate(200%);
-  -webkit-backdrop-filter: blur(34px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.7), inset 0 1px 1px 0 rgba(255, 255, 255, 0.28);
-  border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 .window-titlebar {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0.75rem 1.1rem;
   display: flex;
@@ -514,7 +552,6 @@ code, pre {
   justify-content: space-between;
 }
 
-/* macOS Traffic Light Buttons */
 .traffic-lights {
   display: flex;
   gap: 7px;
@@ -530,7 +567,6 @@ code, pre {
 .dot-min { background: #FFBD2E; }
 .dot-zoom { background: #27C93F; }
 
-/* Translucent Window Tabs */
 .glass-tabs-group {
   display: flex;
   gap: 0.35rem;
@@ -543,10 +579,10 @@ code, pre {
   color: var(--text-tertiary);
   font-size: 0.76rem;
   padding: 0.28rem 0.65rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   cursor: pointer;
-  transition: all var(--transition-fast);
-  font-family: var(--font-sans);
+  transition: var(--transition-apple);
+  font-family: var(--font-apple);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -571,14 +607,10 @@ code, pre {
 
 .code-viewer-area pre {
   margin: 0;
-  padding: 1.25rem 1.4rem;
+  padding: 1.3rem 1.4rem;
   font-size: 0.88rem;
   line-height: 1.65;
   background: transparent !important;
-}
-
-.code-viewer-area code {
-  color: #F1F5F9;
 }
 
 .copy-btn-apple {
@@ -590,11 +622,11 @@ code, pre {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
   color: #E2E8F0;
   padding: 0.3rem 0.7rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   font-size: 0.72rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: var(--transition-apple);
   z-index: 10;
 }
 
@@ -604,7 +636,7 @@ code, pre {
 }
 
 /* ==========================================================================
-   Global Sections & Apple Glass Containers
+   6. Content Sections Common Layout
    ========================================================================== */
 .content-section {
   position: relative;
@@ -645,7 +677,7 @@ code, pre {
   line-height: 1.65;
 }
 
-/* Glass Cards Grid */
+/* Grid Layouts */
 .glass-grid-3col {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -653,24 +685,10 @@ code, pre {
 }
 
 .glass-feature-pod {
-  background: var(--bg-card);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-glass);
-  border-radius: var(--radius-lg);
-  padding: 2rem;
+  padding: 2.1rem;
   display: flex;
   flex-direction: column;
   gap: 1.15rem;
-  position: relative;
-  transition: all var(--transition-fast);
-}
-
-.glass-feature-pod:hover {
-  background: var(--bg-card-hover);
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.7), inset 0 1px 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .pod-icon-circle {
@@ -700,15 +718,9 @@ code, pre {
 }
 
 /* ==========================================================================
-   Benchmarks Glass Comparison Section
+   7. Benchmarks Glass Comparison
    ========================================================================== */
 .benchmarks-glass-wrapper {
-  background: rgba(255, 255, 255, 0.025);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-glass);
-  border-radius: var(--radius-xl);
   padding: 3rem;
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
@@ -751,7 +763,6 @@ code, pre {
   font-family: var(--font-mono);
 }
 
-/* Benchmark Progress Bars */
 .bench-bars-stack {
   display: flex;
   flex-direction: column;
@@ -774,7 +785,7 @@ code, pre {
 .bar-rail {
   height: 14px;
   background: rgba(255, 255, 255, 0.05);
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   position: relative;
@@ -783,25 +794,19 @@ code, pre {
 .bar-fill-tzd {
   height: 100%;
   background: linear-gradient(90deg, #38BDF8, #6366F1);
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
 }
 
 .bar-fill-jdk {
   height: 100%;
   background: linear-gradient(90deg, #F59E0B, #D97706);
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
 }
 
 /* ==========================================================================
-   Interactive Code Playground Glass Redesign
+   8. Interactive Playground Glass Section
    ========================================================================== */
 .playground-glass-case {
-  background: rgba(18, 22, 33, 0.7);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-float);
-  border-radius: var(--radius-xl);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -820,15 +825,15 @@ code, pre {
 
 .preset-dropdown-apple {
   background: rgba(255, 255, 255, 0.06);
-  border: var(--glass-border);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
   color: #FFFFFF;
-  padding: 0.4rem 0.9rem;
-  border-radius: var(--radius-pill);
+  padding: 0.45rem 0.95rem;
+  border-radius: 9999px;
   font-size: 0.86rem;
   outline: none;
   cursor: pointer;
-  font-family: var(--font-sans);
+  font-family: var(--font-apple);
 }
 
 .btn-play-run {
@@ -837,19 +842,19 @@ code, pre {
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 4px 15px rgba(16, 185, 129, 0.3);
   color: #FFFFFF;
   padding: 0.45rem 1.25rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   font-size: 0.86rem;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  transition: all var(--transition-fast);
+  transition: var(--transition-apple);
 }
 
 .btn-play-run:hover {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.12) 100%), #10B981;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.45), 0 6px 20px rgba(16, 185, 129, 0.45);
+  transform: translateY(-1px);
 }
 
 .playground-split {
@@ -914,17 +919,11 @@ code, pre {
 .playground-term-output .out-sys { color: #94A3B8; }
 
 /* ==========================================================================
-   Syntax Documentation & Standards Glass Layout
+   9. Syntax & Guidelines Glass Components
    ========================================================================== */
 .doc-sidebar-sticky {
   position: sticky;
   top: 6rem;
-  background: var(--bg-card);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-glass);
-  border-radius: var(--radius-lg);
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -937,11 +936,12 @@ code, pre {
   color: var(--text-secondary);
   font-size: 0.88rem;
   padding: 0.5rem 0.85rem;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  transition: all var(--transition-fast);
+  text-decoration: none;
+  transition: var(--transition-apple);
 }
 
 .doc-sidebar-sticky a:hover, .doc-sidebar-sticky a.active {
@@ -950,12 +950,6 @@ code, pre {
 }
 
 .syntax-pod-card {
-  background: var(--bg-card);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-glass);
-  border-radius: var(--radius-lg);
   padding: 2.25rem;
   display: flex;
   flex-direction: column;
@@ -969,6 +963,7 @@ code, pre {
   gap: 0.6rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding-bottom: 0.85rem;
+  color: #FFFFFF;
 }
 
 .syntax-pod-card p {
@@ -978,34 +973,28 @@ code, pre {
 
 .apple-callout-box {
   border-left: 3px solid;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-radius: 0 12px 12px 0;
   padding: 0.9rem 1.2rem;
   background: rgba(255, 255, 255, 0.025);
   font-size: 0.9rem;
 }
 
 .callout-warning {
-  border-color: var(--accent-amber);
+  border-color: #F59E0B;
   background: rgba(245, 158, 11, 0.07);
   color: #FDE68A;
 }
 
 .callout-tip {
-  border-color: var(--accent-emerald);
+  border-color: #10B981;
   background: rgba(16, 185, 129, 0.07);
   color: #A7F3D0;
 }
 
 /* ==========================================================================
-   Architecture & Pipeline Glass Cards
+   10. Architecture Pipeline Pod
    ========================================================================== */
 .arch-pipeline-pod {
-  background: var(--bg-card);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: var(--glass-border);
-  box-shadow: var(--shadow-glass);
-  border-radius: var(--radius-xl);
   padding: 2.5rem;
   display: flex;
   flex-direction: column;
@@ -1018,27 +1007,25 @@ code, pre {
   color: #E2E8F0;
   font-size: 0.72rem;
   padding: 2px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: 9999px;
   font-family: var(--font-mono);
 }
 
 /* ==========================================================================
-   Site Footer
+   11. Footer
    ========================================================================== */
 .site-footer-glass {
-  position: relative;
-  z-index: 1;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding: 4rem 1.5rem 3rem;
-  background: rgba(8, 9, 12, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(8, 9, 12, 0.85) !important;
   color: var(--text-tertiary);
   font-size: 0.88rem;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 /* ==========================================================================
-   Responsive Adaptations
+   12. Responsive Behavior
    ========================================================================== */
 @media (max-width: 1024px) {
   .hero-big-card {

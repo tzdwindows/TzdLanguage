@@ -129,7 +129,10 @@ function initHeroCodeTabs() {
             tab.classList.add('active');
             const key = tab.dataset.tab;
             if (heroCodeSnippets[key]) {
+                codeElem.classList.remove('code-fade-in');
+                void codeElem.offsetWidth; // 触发重绘重启动画
                 codeElem.textContent = heroCodeSnippets[key];
+                codeElem.classList.add('code-fade-in');
                 if (window.Prism) {
                     Prism.highlightElement(codeElem);
                 }
