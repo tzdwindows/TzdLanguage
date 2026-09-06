@@ -78,6 +78,7 @@ struct Instruction {
     OpCode op;
     int32_t arg1;  // Generic operand (index, offset, etc.)
     int32_t arg2;  // Second operand (for some instructions)
+    mutable int32_t cache = -1;  // Runtime cache: CALL_FUNC caches funcIndex
 };
 
 // Constant pool entry

@@ -1324,8 +1324,8 @@ BytecodeModule TzdBytecodeCompiler::loadFromFile(const std::string& path) {
 // TzdBytecodeVM
 // ============================================================================
 TzdBytecodeVM::TzdBytecodeVM(TzdInterpreter* interp) : m_interp(interp) {
-    m_stack.reserve(4096);  // pre-allocate to avoid reallocation during execution
-    m_locals.reserve(1024);
+    m_stack.reserve(65536);  // pre-allocate to avoid reallocation during execution
+    m_locals.reserve(8192);
 }
 
 TzdValue TzdBytecodeVM::execute(const BytecodeModule& module) {
@@ -1538,12 +1538,20 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
     // Fresh local frame (locals are relative to localBase).
     size_t localBase = m_locals.size();
     int localsNeeded = (f.localCount > f.paramCount) ? f.localCount : f.paramCount;
-    m_locals.resize(localBase + (size_t)localsNeeded + 1);
+    size_t needed = localBase + (size_t)localsNeeded + 1;
+    // Only grow when the vector is too small (avoids default ctor calls)
+    if (m_locals.size() < needed) {
+        m_locals.resize(needed);
+    }
 
     // Copy args to locals BEFORE m_stack.reserve() — argsData may point
     // into m_stack's buffer, and reserve can reallocate it (use-after-free).
     for (int i = 0; i < f.paramCount && i < (int)argCount; ++i) {
         m_locals[localBase + i] = argsData[i];
+    }
+    // Clear remaining local slots to null (for locals beyond params)
+    for (size_t i = localBase + f.paramCount; i < needed; ++i) {
+        m_locals[i] = TzdValue();
     }
 
     // Pre-allocate operand stack space based on verifier-computed maxStackDepth
@@ -1599,10 +1607,27 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
 
             // ---- Variables ----
             case OpCode::LOAD_LOCAL: {
-                m_stack.push_back(m_locals[localBase + instr.arg1]);
+                const TzdValue& v = m_locals[localBase + instr.arg1];
+                // Type-specialized fast path: construct a new TzdValue with
+                // only the relevant field, avoiding a full 200+ byte copy
+                // of all empty strings/vectors/maps in the struct.
+                switch (v.type) {
+                case TzdValue::DOUBLE: case TzdValue::FLOAT:
+                    m_stack.emplace_back(v.dVal); break;
+                case TzdValue::INT: case TzdValue::LONG: case TzdValue::SHORT:
+                case TzdValue::SBYTE:
+                    m_stack.emplace_back(v.lVal); break;
+                case TzdValue::BOOL:
+                    m_stack.emplace_back(v.bVal); break;
+                case TzdValue::STRING:
+                    m_stack.emplace_back(v.sVal); break;
+                default:
+                    m_stack.push_back(v); break;
+                }
                 ++ip; break;
             }
             case OpCode::STORE_LOCAL: {
+                // Move directly from stack top, then shrink (avoids double move)
                 m_locals[localBase + instr.arg1] = std::move(m_stack.back());
                 m_stack.pop_back();
                 ++ip; break;
@@ -1820,13 +1845,26 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 break;
             }
             case OpCode::JMP_FALSE: {
-                TzdValue v; pop(v);
-                ip = TzdInterpreter::isTruthy(v) ? (ip + 1) : (size_t)instr.arg1;
+                // Fast path: check top without full pop (avoids 200+ byte move)
+                bool truthy;
+                if (m_stack.size() > stackBase) {
+                    truthy = TzdInterpreter::isTruthy(m_stack.back());
+                    m_stack.pop_back();
+                } else {
+                    truthy = false;
+                }
+                ip = truthy ? (ip + 1) : (size_t)instr.arg1;
                 break;
             }
             case OpCode::JMP_TRUE: {
-                TzdValue v; pop(v);
-                ip = TzdInterpreter::isTruthy(v) ? (size_t)instr.arg1 : (ip + 1);
+                bool truthy;
+                if (m_stack.size() > stackBase) {
+                    truthy = TzdInterpreter::isTruthy(m_stack.back());
+                    m_stack.pop_back();
+                } else {
+                    truthy = false;
+                }
+                ip = truthy ? (size_t)instr.arg1 : (ip + 1);
                 break;
             }
 
@@ -1837,8 +1875,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdValue r;
 
                 // On-demand JIT bridge: compile hot bytecode functions to native.
-                // onFunctionCall increments call count and may trigger tryJitCompile.
-                if (m_interp) {
+                // Skip entirely when threshold is very high (JIT effectively disabled)
+                if (m_interp && TzdBytecodeJIT::getInstance().getHotThreshold() < 1000000) {
                     void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, name, m_interp);
                     if (jitPtr) {
                         // JIT-compiled: route through callFunction for proper
@@ -1853,16 +1891,25 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     }
                 }
 
-                auto it = module.funcIndex.find(name);
-                if (it != module.funcIndex.end()) {
+                // Use cached function index to avoid hash lookup on every call
+                size_t funcIdx;
+                if (instr.cache >= 0) {
+                    funcIdx = (size_t)instr.cache;
+                } else {
+                    auto it = module.funcIndex.find(name);
+                    funcIdx = (it != module.funcIndex.end()) ? it->second : (size_t)-1;
+                    instr.cache = (int32_t)funcIdx;
+                }
+
+                if (funcIdx != (size_t)-1) {
                     if ((int)m_stack.size() - (int)stackBase >= argc) {
                         size_t argsStart = m_stack.size() - argc;
-                        r = runBytecodeFunc(module, it->second, m_stack.data() + argsStart, (size_t)argc);
+                        r = runBytecodeFunc(module, funcIdx, m_stack.data() + argsStart, (size_t)argc);
                         m_stack.resize(argsStart);
                     } else {
                         std::vector<TzdValue> callArgs(argc);
                         for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
-                        r = runBytecodeFunc(module, it->second, callArgs.data(), callArgs.size());
+                        r = runBytecodeFunc(module, funcIdx, callArgs.data(), callArgs.size());
                     }
                 } else if (m_interp) {
                     std::vector<TzdValue> callArgs(argc);
@@ -1937,8 +1984,11 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             }
 
             case OpCode::RET: {
-                TzdValue v; pop(v);
-                result = std::move(v);
+                // Move directly from stack top (avoids intermediate TzdValue)
+                if (m_stack.size() > stackBase) {
+                    result = std::move(m_stack.back());
+                    m_stack.pop_back();
+                }
                 goto funcExit;
             }
             case OpCode::RET_VOID: {

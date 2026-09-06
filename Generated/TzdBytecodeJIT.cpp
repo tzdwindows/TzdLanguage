@@ -22,33 +22,30 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
                                      TzdInterpreter* interp) {
     m_totalCalls.fetch_add(1, std::memory_order_relaxed);
 
-    // Check if already JIT-compiled
+    // Single-lock fast path: check compiled, attempted, and increment count
+    // in one mutex acquisition instead of three separate ones.
+    int count;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+
+        // Check if already JIT-compiled
         auto it = m_jittedPtrs.find(funcName);
         if (it != m_jittedPtrs.end() && it->second) {
             return it->second;
         }
-    }
 
-    // Check if compilation was already attempted (don't retry)
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        // Check if compilation was already attempted (don't retry)
         if (m_compilationAttempted.count(funcName)) {
-            return nullptr; // Previous attempt failed
+            return nullptr;
         }
-    }
 
-    // Increment call count
-    int count;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        // Increment call count
         count = ++m_callCounts[funcName];
     }
 
-    // Check if hot enough to trigger JIT compilation
+    // Check if hot enough to trigger JIT compilation (outside lock)
     if (count < m_hotThreshold) {
-        return nullptr; // Not hot enough yet
+        return nullptr;
     }
 
     // Trigger JIT compilation
