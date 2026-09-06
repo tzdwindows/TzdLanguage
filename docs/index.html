@@ -6,6 +6,10 @@
   <title>TzdLang (TZD) — 现代化高性能混合编译编程语言</title>
   <meta name="description" content="TzdLang (TZD) 是一门面向对象的现代化高性能编程语言，集成轻量即开解释器、堆栈式字节码虚拟机、基于 LLVM ORC 的异步分层 JIT 编译以及原生 LibTorch 深度学习引擎，性能超越 JDK HotSpot。">
   
+  <!-- Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <!-- CSS Stylesheets -->
   <link rel="stylesheet" href="assets/style.css?v=2">
   <!-- Prism.js Dark Theme for Syntax Highlighting -->
@@ -25,13 +29,13 @@
   </div>
 
   <!-- ====================================================================
-       Apple Floating Capsule Header & Navigation
+       Apple Pinned Frosted Glass Top Status Bar (Full Width, 60px Fixed)
        ==================================================================== -->
   <header class="site-header">
-    <div class="glass-capsule-nav">
+    <div class="site-navbar-inner">
       <a href="#" class="brand-capsule">
         <div class="brand-logo-disc">
-          <i data-lucide="cpu" style="width:17px;height:17px;color:#38BDF8;"></i>
+          <i data-lucide="cpu" style="width:16px;height:16px;color:#38BDF8;"></i>
         </div>
         <span class="brand-title">TzdLang</span>
         <span class="brand-pill-tag">TZD v1.0</span>
@@ -50,13 +54,13 @@
         </ul>
       </nav>
 
-      <div style="display:flex;align-items:center;gap:0.75rem;">
+      <div class="nav-right-cluster">
         <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" class="btn-github-pill">
-          <i data-lucide="github" style="width:15px;height:15px;"></i>
+          <i data-lucide="github" style="width:14px;height:14px;"></i>
           <span>GitHub 仓库</span>
         </a>
         <button class="mobile-toggle" aria-label="Toggle Menu">
-          <i data-lucide="menu"></i>
+          <i data-lucide="menu" style="width:18px;height:18px;"></i>
         </button>
       </div>
     </div>
@@ -518,26 +522,126 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
         <p class="section-subtext">基于形式文法 <code>Grammar/TzdLang.g4</code> 的完整语法特性解析</p>
       </div>
 
-      <div style="display:grid;grid-template-columns:260px 1fr;gap:2rem;align-items:start;">
-        <aside class="doc-sidebar-sticky reveal-on-scroll">
-          <a href="#syntax-vars" class="active"><i data-lucide="hash" style="width:14px;"></i> 变量与类型系统</a>
-          <a href="#syntax-control"><i data-lucide="git-branch" style="width:14px;"></i> 控制流程与循环</a>
-          <a href="#syntax-functions"><i data-lucide="function-square" style="width:14px;"></i> 函数、闭包与 FFI</a>
-          <a href="#syntax-oop"><i data-lucide="box" style="width:14px;"></i> 面向对象编程 (OOP)</a>
-          <a href="#syntax-annotations"><i data-lucide="at-sign" style="width:14px;"></i> 注解与枚举体系</a>
-          <a href="#syntax-exceptions"><i data-lucide="alert-triangle" style="width:14px;"></i> 异常与模式甄别</a>
-          <a href="#syntax-torch"><i data-lucide="activity" style="width:14px;"></i> 深度学习标准库</a>
-          <a href="#syntax-threads"><i data-lucide="cpu" style="width:14px;"></i> 并发与多线程库</a>
-        </aside>
+      <!-- Integrated Apple / Xcode Native Workbench Card -->
+      <div class="xcode-workbench-wrapper reveal-on-scroll">
+        <div class="workbench-ambient-glow"></div>
 
-        <div style="display:flex;flex-direction:column;gap:2rem;">
-          <!-- 1. 变量与类型 -->
-          <article id="syntax-vars" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="code-2" style="color:#38BDF8;"></i> 1. 变量声明与类型系统</h3>
-            <p>
-              TzdLang 提供动态类型声明（<code>var</code>、<code>let</code>、<code>const</code>），同时原生支持可选静态强类型（<code>int</code>、<code>float</code>、<code>string</code>、<code>bool</code>、<code>void</code>、<code>ptr</code>、数组 <code>type[]</code> 以及自定义类类型）。
-            </p>
-            <pre><code class="language-tzd">// 动态类型声明
+        <div class="xcode-workbench-card">
+          <div class="workbench-layout-grid">
+            <!-- Left Column: Xcode / macOS Native Sidebar (Fixed 260px) -->
+            <aside class="xcode-sidebar-panel">
+              <div class="xcode-sidebar-header">
+                <div class="xcode-sidebar-tag">
+                  <i data-lucide="folder-code" style="width:13px;height:13px;color:#38BDF8;"></i>
+                  <span>SPEC EXPLORER</span>
+                </div>
+                <span class="xcode-badge-sub">TZD v1.0</span>
+              </div>
+
+              <nav class="xcode-sidebar-nav" id="syntax-workbench-nav">
+                <button class="xcode-nav-item active" data-topic="syntax-vars" data-file="variables_and_types.tzd" data-tag="Type System">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="hash" class="xcode-icon"></i>
+                  <span class="xcode-item-text">变量与类型系统</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-control" data-file="control_flow_and_loops.tzd" data-tag="Control Flow">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="git-branch" class="xcode-icon"></i>
+                  <span class="xcode-item-text">控制流程与循环</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-functions" data-file="functions_and_closures.tzd" data-tag="Functions & FFI">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="function-square" class="xcode-icon"></i>
+                  <span class="xcode-item-text">函数、闭包与 FFI</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-oop" data-file="object_oriented_oop.tzd" data-tag="OOP Paradigm">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="box" class="xcode-icon"></i>
+                  <span class="xcode-item-text">面向对象编程 (OOP)</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-annotations" data-file="annotations_and_enums.tzd" data-tag="Metaprogramming">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="at-sign" class="xcode-icon"></i>
+                  <span class="xcode-item-text">注解与枚举体系</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-exceptions" data-file="exception_and_match.tzd" data-tag="Error Handling">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="alert-triangle" class="xcode-icon"></i>
+                  <span class="xcode-item-text">异常与模式甄别</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-torch" data-file="libtorch_deep_learning.tzd" data-tag="Deep Learning">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="activity" class="xcode-icon"></i>
+                  <span class="xcode-item-text">深度学习标准库</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+
+                <button class="xcode-nav-item" data-topic="syntax-threads" data-file="multithreading_concurrency.tzd" data-tag="Concurrency">
+                  <span class="xcode-active-bar"></span>
+                  <i data-lucide="cpu" class="xcode-icon"></i>
+                  <span class="xcode-item-text">并发与多线程库</span>
+                  <span class="xcode-item-ext">.tzd</span>
+                </button>
+              </nav>
+
+              <div class="xcode-sidebar-footer">
+                <div class="sidebar-footer-tip">
+                  <i data-lucide="info" style="width:13px;height:13px;color:#38BDF8;flex-shrink:0;"></i>
+                  <span>切换左侧标签即时加载标准源码</span>
+                </div>
+              </div>
+            </aside>
+
+            <!-- Right Column: IDE-Level Immersive Viewport -->
+            <div class="xcode-editor-viewport">
+              <!-- Code Window Topbar (macOS Traffic Lights + Active Filename + Copy Button) -->
+              <div class="xcode-editor-titlebar">
+                <div class="xcode-titlebar-left">
+                  <div class="traffic-lights">
+                    <span class="traffic-dot dot-close"></span>
+                    <span class="traffic-dot dot-min"></span>
+                    <span class="traffic-dot dot-zoom"></span>
+                  </div>
+                  <div class="xcode-tab-pill">
+                    <i data-lucide="file-code" style="width:13px;height:13px;color:#38BDF8;"></i>
+                    <span class="active-filename-display" id="workbench-active-file">variables_and_types.tzd</span>
+                    <span class="active-tag-display" id="workbench-active-tag">Type System</span>
+                  </div>
+                </div>
+
+                <div class="xcode-titlebar-right">
+                  <button class="btn-workbench-copy" id="workbench-copy-code" title="复制代码至剪贴板">
+                    <i data-lucide="copy" style="width:13px;height:13px;"></i>
+                    <span class="copy-text-label">复制代码</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Documentation & Code Body Panes -->
+              <div class="xcode-viewport-body">
+                <!-- Pane 1: 变量与类型系统 -->
+                <div class="xcode-doc-pane active" id="pane-syntax-vars">
+                  <h3 class="doc-pane-title"><i data-lucide="code-2" style="color:#38BDF8;width:20px;height:20px;"></i> 1. 变量声明与静态强类型系统</h3>
+                  <p class="doc-pane-lead">
+                    TzdLang 原生提供动态声明（<code>var</code>、<code>let</code>、<code>const</code>），同时深度支持可选静态强类型（<code>int</code>、<code>float</code>、<code>string</code>、<code>bool</code>、<code>void</code>、<code>ptr</code>、数组 <code>type[]</code> 以及自定义类类型）。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>类型推导建议：</strong>在数值密集型计算与递归循环中，显式声明静态类型（如 <code>int</code>、<code>float</code>）能触发 JIT 引擎在 Tier 1 生成零装箱的 <code>worker_native</code> 原生双精度寄存器指令。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">// 动态类型声明
 var dynamicVal = 100;
 let mutableVal = "Hello";
 const PI = 3.14159265;
@@ -555,21 +659,20 @@ var total : int = 500;
 // 数组类型
 int[] numbers = [1, 2, 3, 4, 5];
 print("数组长度: " + len(numbers));</code></pre>
-            <div class="apple-callout-box callout-tip">
-              <strong>类型建议：</strong>在热点计算与密集循环中，显式声明静态类型（如 <code>int</code>、<code>float</code>）能够指导 JIT 编译器在 Tier 1 生成更高效的无装箱原生机器码指令。
-            </div>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 2. 控制流程 -->
-          <article id="syntax-control" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="git-branch" style="color:#818CF8;"></i> 2. 控制流程与循环语法规范</h3>
-            <p>
-              TzdLang 支持标准的条件分支与循环结构。请务必注意 <code>for</code> 循环的初始化表达式规则。
-            </p>
-            <div class="apple-callout-box callout-warning">
-              <strong>重要语法规则：</strong><code>for</code> 循环的第一个表达式<strong>严禁包含类型名或 <code>var</code> 关键字</strong>！变量必须预先声明或直接赋值。
-            </div>
-            <pre><code class="language-tzd">// --- 1. 条件分支 ---
+                <!-- Pane 2: 控制流程与循环 -->
+                <div class="xcode-doc-pane" id="pane-syntax-control">
+                  <h3 class="doc-pane-title"><i data-lucide="git-branch" style="color:#818CF8;width:20px;height:20px;"></i> 2. 控制流程与循环语法规范</h3>
+                  <p class="doc-pane-lead">
+                    TzdLang 支持标准的条件分支与循环结构。请务必注意 <code>for</code> 循环的初始化表达式规则。
+                  </p>
+                  <div class="apple-callout-box callout-warning">
+                    <strong>严格语法禁令：</strong><code>for</code> 循环头部首个子句特化为纯变量赋值表达式，<strong>严禁使用 <code>var</code> 或类型前缀</strong>！必须采用 <code>for (i = 0; i &lt; n; i++)</code> 标准写法。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">// --- 1. 条件分支 ---
 if (score >= 90) {
     print("优秀");
 } else if (score >= 60) {
@@ -578,21 +681,18 @@ if (score >= 90) {
     print("不及格");
 }
 
-// --- 2. For 循环 (正确写法) ---
-// 正确：直接赋值初始化
+// --- 2. For 循环 (严格标准写法) ---
+// 正确：直接赋值初始化 (严禁加 var 或类型前缀)
 for (i = 0; i < 5; i = i + 1) {
     print("索引: " + i);
 }
 
-// 正确：使用 ++ 自增
+// 正确：使用 ++ 自增与 break / continue 控制
 for (j = 0; j < 10; j++) {
     if (j == 8) break;      // break 中断
     if (j % 2 != 0) continue; // continue 跳过
     print("偶数: " + j);
 }
-
-// 错误写法 (语法解析器将报错):
-// for (var i = 0; i < 5; i++) { ... } // 不支持！
 
 // --- 3. While 循环 ---
 var n = 0;
@@ -612,15 +712,20 @@ switch (status) {
     default:
         print("未知状态");
 }</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 3. 函数与闭包 -->
-          <article id="syntax-functions" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="function-square" style="color:#A855F7;"></i> 3. 函数、一等公民闭包与 FFI</h3>
-            <p>
-              函数使用 <code>fun</code> 关键字定义，支持类型化参数、返回值（<code>return</code> 或 <code>ret</code>）。匿名函数可作为一等公民在变量间自由传递。同时支持直接链接 Windows 原生 DLL 动态库（FFI）。
-            </p>
-            <pre><code class="language-tzd">// 具名函数定义 (支持参数类型限定)
+                <!-- Pane 3: 函数、闭包与 FFI -->
+                <div class="xcode-doc-pane" id="pane-syntax-functions">
+                  <h3 class="doc-pane-title"><i data-lucide="function-square" style="color:#A855F7;width:20px;height:20px;"></i> 3. 函数、一等公民闭包与 Native FFI</h3>
+                  <p class="doc-pane-lead">
+                    函数使用 <code>fun</code> 关键字声明，支持参数类型限定与 <code>return</code> 返回值。匿名 Lambda 函数可作为一等公民在变量间自由传递；同时支持直接声明并链接系统原生动态链接库（Native FFI）。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>零开销 C 桥接：</strong>通过 <code>native fun</code> 语法直接导入系统 API（如 <code>user32.dll</code>、<code>kernel32.dll</code>），免去繁重编写 C++ 扩展插件的胶水成本。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">// 具名函数定义 (支持参数类型限定)
 fun add(a: int, b: int) {
     return a + b;
 }
@@ -638,15 +743,20 @@ print("Double 15: " + doubleFn(15)); // 输出: 30
 // 原生动态链接库 Native FFI 声明
 native fun MessageBoxA(hwnd: ptr, text: string, title: string, uType: int)
   (dll="user32.dll", fun="MessageBoxA", prototype="WINAPI");</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 4. 面向对象 -->
-          <article id="syntax-oop" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="box" style="color:#10B981;"></i> 4. 面向对象编程 (OOP) 核心</h3>
-            <p>
-              支持类声明、单继承（<code>extends</code> 或 <code>:</code> 语法）、构造函数级联 <code>super()</code>、成员访问控制修饰符（<code>public</code>、<code>private</code>、<code>protected</code>）、静态方法（<code>static fun</code>）与抽象方法（<code>abstract fun</code>）。
-            </p>
-            <pre><code class="language-tzd">// 基类定义
+                <!-- Pane 4: 面向对象 OOP -->
+                <div class="xcode-doc-pane" id="pane-syntax-oop">
+                  <h3 class="doc-pane-title"><i data-lucide="box" style="color:#10B981;width:20px;height:20px;"></i> 4. 面向对象编程 (OOP) 核心架构</h3>
+                  <p class="doc-pane-lead">
+                    支持完整的现代面向对象范式：类声明、单继承（<code>extends</code> 或 <code>:</code>）、显式构造函数级联 <code>: super(...)</code>、访问控制修饰符（<code>public</code>、<code>private</code>、<code>protected</code>）、静态方法（<code>static fun</code>）与抽象方法。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>JIT 优化友好：</strong>对象的只读属性读取会被 JIT 编译器标记为 <code>ReadOnly</code>，自动触发循环不变量外提（LICM），避免循环体内部冗余哈希寻址。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">// 基类定义
 class Vehicle {
     protected var string brand;
     protected var int speed;
@@ -666,7 +776,7 @@ class Vehicle {
     }
 }
 
-// 子类继承与父类构造链
+// 子类继承与父类构造链级联
 class ElectricCar extends Vehicle {
     private var int batteryLevel;
 
@@ -684,21 +794,26 @@ var tesla = new ElectricCar("Tesla Model 3", 80, 45);
 tesla.accelerate(20);
 tesla.charge();
 print("标准单位: " + Vehicle.getStandardUnit());</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 5. 注解与枚举 -->
-          <article id="syntax-annotations" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="at-sign" style="color:#F59E0B;"></i> 5. 注解元编程与枚举体系</h3>
-            <p>
-              语言原生内建对注解元编程（Annotation）与有限值枚举（Enum）的原生文法支持。
-            </p>
-            <pre><code class="language-tzd">// 枚举定义
+                <!-- Pane 5: 注解与枚举 -->
+                <div class="xcode-doc-pane" id="pane-syntax-annotations">
+                  <h3 class="doc-pane-title"><i data-lucide="at-sign" style="color:#F59E0B;width:20px;height:20px;"></i> 5. 注解元编程与有限值枚举体系</h3>
+                  <p class="doc-pane-lead">
+                    语言原生语法层面内建对元数据注解（Annotation）与紧凑枚举（Enum）的支持，适用于 Web 路由声明、依赖注入与高性能状态机。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>元编程特性：</strong>注解信息在编译阶段被保留于 AST 与类元数据字典中，可通过反射 API 在运行时极速探查并建立路由映射表。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">// 枚举定义 (Enum)
 enum HttpMethod { GET, POST, PUT, DELETE }
 
 var method = HttpMethod.POST;
 print("Enum 索引值: " + method); // 输出: 1
 
-// 注解声明与使用
+// 注解类元数据声明与路由装饰
 class @Route(path, method)
 
 @Route("/api/users", "GET")
@@ -708,15 +823,20 @@ class UserController {
         print("返回用户列表");
     }
 }</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 6. 异常处理 -->
-          <article id="syntax-exceptions" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="alert-triangle" style="color:#F43F5E;"></i> 6. 结构化异常处理与模式匹配</h3>
-            <p>
-              提供 <code>try-catch</code> 块和 <code>throw</code> 语句。通过强大的 <code>in</code> 关键字可在捕获异常时实现结构化类型匹配判断。
-            </p>
-            <pre><code class="language-tzd">import "core/Error.tzd";
+                <!-- Pane 6: 结构化异常处理与模式匹配 -->
+                <div class="xcode-doc-pane" id="pane-syntax-exceptions">
+                  <h3 class="doc-pane-title"><i data-lucide="alert-triangle" style="color:#F43F5E;width:20px;height:20px;"></i> 6. 结构化异常处理与模式匹配</h3>
+                  <p class="doc-pane-lead">
+                    提供防御式 <code>try-catch</code> 异常截获与 <code>throw</code> 语句。依托强大的 <code>in</code> 关键字可在捕获异常时实现结构化类型模式匹配甄别。
+                  </p>
+                  <div class="apple-callout-box callout-warning">
+                    <strong>规范守则：</strong>严禁裸抛原始字符串（如 <code>throw "err"</code>），必须定义或继承标准化 <code>Error</code> 实体对象，保留完整的调用栈信息。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">import "core/Error.tzd";
 import "core/DatabaseConnectionError.tzd";
 
 fun queryDatabase(queryStr) {
@@ -729,24 +849,29 @@ fun queryDatabase(queryStr) {
 try {
     queryDatabase("");
 } catch (err) {
-    // 使用 in 操作符检查具体异常类型
+    // 使用 in 操作符检查具体异常类型 (Pattern Matching)
     if (err in DatabaseConnectionError) {
         print("[数据库异常] " + err.message + " (" + err.code + ")");
     } else {
         print("[系统异常] " + err);
     }
 }</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 7. 深度学习 -->
-          <article id="syntax-torch" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="activity" style="color:#38BDF8;"></i> 7. 原生 LibTorch 深度学习标准库</h3>
-            <p>
-              TzdLang 将深度学习作为语言一等公民，提供与 Python PyTorch 体验一致、底层完全由 C++ SIMD/GPU 硬件加速的张量计算与神经网络架构。
-            </p>
-            <pre><code class="language-tzd">import "torch/All.tzd";
+                <!-- Pane 7: 原生 LibTorch 深度学习 -->
+                <div class="xcode-doc-pane" id="pane-syntax-torch">
+                  <h3 class="doc-pane-title"><i data-lucide="activity" style="color:#38BDF8;width:20px;height:20px;"></i> 7. 原生 LibTorch 深度学习标准库</h3>
+                  <p class="doc-pane-lead">
+                    TzdLang 将深度学习作为一等公民深度嵌入语法体系，底层直接无缝调用 C++ LibTorch 算子，完全消除 Python GIL 全局解释器锁瓶颈。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>高性能张量流水线：</strong>支持 <code>Sequential</code>、<code>Linear</code>、<code>ReLU</code>、<code>CrossEntropyLoss</code> 等完整模型构建、张量并行算子与二进制模型快照持久化。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">import "torch/All.tzd";
 
-// 1. 张量创建与数学运算
+// 1. 张量创建与矩阵乘法
 var t1 = torch_tensor(1.0, 2.0, 3.0, 4.0);
 var t2 = torch_reshape(t1, 2, 2);
 var mulRes = torch_matmul(t2, t2);
@@ -782,15 +907,20 @@ print("交叉熵 Loss: " + torch_scalar_value(loss));
 
 // 保存模型权重二进制快照
 net.save("my_checkpoint.bin");</code></pre>
-          </article>
+                  </div>
+                </div>
 
-          <!-- 8. 多线程 -->
-          <article id="syntax-threads" class="syntax-pod-card reveal-on-scroll">
-            <h3><i data-lucide="cpu" style="color:#10B981;"></i> 8. 原生多线程并发库 (Thread)</h3>
-            <p>
-              支持直接由系统内核调度的轻量级多线程，利用 C++ <code>std::thread</code> 底层实现真正的多核心并行处理。
-            </p>
-            <pre><code class="language-tzd">import "thread/Thread.tzd";
+                <!-- Pane 8: 原生多线程并发库 -->
+                <div class="xcode-doc-pane" id="pane-syntax-threads">
+                  <h3 class="doc-pane-title"><i data-lucide="cpu" style="color:#10B981;width:20px;height:20px;"></i> 8. 原生多线程并发库 (Thread)</h3>
+                  <p class="doc-pane-lead">
+                    支持由操作系统内核调度的轻量级多线程，底层直通 C++ <code>std::thread</code>，实现真正的多 CPU 核心并行算力释放。
+                  </p>
+                  <div class="apple-callout-box callout-tip">
+                    <strong>无锁调度性能：</strong>工作线程运行于原生系统线程之上，结合 BumpPointerArena 分配机制，多线程并发吞吐极大提升。
+                  </div>
+                  <div class="xcode-code-block">
+                    <pre><code class="language-tzd">import "thread/Thread.tzd";
 
 fun heavyComputeTask() {
     var sum = 0;
@@ -810,7 +940,11 @@ print("主线程正在执行其他任务...");
 // 等待工作线程结束
 thread.join();
 print("所有线程已安全汇合。");</code></pre>
-          </article>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

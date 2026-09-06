@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initScrollReveal();
     initSmoothScroll();
     initMobileNav();
+    initSyntaxWorkbench();
 });
 
 // ----------------------------------------------------------------------------
@@ -1596,5 +1597,139 @@ function initMobileNav() {
             nav.style.marginTop = '0.5rem';
             nav.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.6)';
         }
+    });
+}
+
+// ----------------------------------------------------------------------------
+// 7. Apple Xcode Documentation Workbench & Line Numbers Engine
+// ----------------------------------------------------------------------------
+function initSyntaxWorkbench() {
+    const navItems = document.querySelectorAll('.xcode-nav-item');
+    const panes = document.querySelectorAll('.xcode-doc-pane');
+    const activeFileEl = document.getElementById('workbench-active-file');
+    const activeTagEl = document.getElementById('workbench-active-tag');
+    const copyBtn = document.getElementById('workbench-copy-code');
+
+    function switchWorkbenchTopic(topicId, updateHistory = true) {
+        let matchedItem = null;
+        navItems.forEach(item => {
+            const itemTopic = item.getAttribute('data-topic');
+            if (itemTopic === topicId || itemTopic === `syntax-${topicId}` || `syntax-${itemTopic}` === topicId) {
+                item.classList.add('active');
+                matchedItem = item;
+            } else {
+                item.classList.remove('active');
+            }
+        });
+
+        const targetPaneId = `pane-${matchedItem ? matchedItem.getAttribute('data-topic') : topicId}`;
+        panes.forEach(pane => {
+            if (pane.id === targetPaneId || pane.id === topicId) {
+                pane.classList.add('active');
+            } else {
+                pane.classList.remove('active');
+            }
+        });
+
+        if (matchedItem) {
+            if (activeFileEl) {
+                activeFileEl.textContent = matchedItem.getAttribute('data-file') || 'specification.tzd';
+            }
+            if (activeTagEl) {
+                activeTagEl.textContent = matchedItem.getAttribute('data-tag') || 'Standard';
+            }
+            if (updateHistory) {
+                const topicKey = matchedItem.getAttribute('data-topic');
+                history.replaceState(null, null, `#${topicKey}`);
+            }
+        }
+    }
+
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const topic = item.getAttribute('data-topic');
+            if (topic) {
+                switchWorkbenchTopic(topic, true);
+            }
+        });
+    });
+
+    // Check URL Hash on Load
+    if (window.location.hash) {
+        const hash = window.location.hash.substring(1);
+        if (hash.startsWith('syntax-') || hash === 'syntax') {
+            if (hash !== 'syntax') {
+                switchWorkbenchTopic(hash, false);
+            }
+        }
+    }
+
+    // Topbar One-Click Code Copy
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            const activePane = document.querySelector('.xcode-doc-pane.active');
+            const codeEl = activePane ? activePane.querySelector('code') : null;
+            if (codeEl) {
+                const text = codeEl.textContent;
+                const copySuccess = () => {
+                    const label = copyBtn.querySelector('.copy-text-label');
+                    if (label) label.textContent = '已复制!';
+                    setTimeout(() => {
+                        if (label) label.textContent = '复制代码';
+                    }, 2000);
+                };
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(copySuccess).catch(() => {
+                        fallbackCopy(text);
+                        copySuccess();
+                    });
+                } else {
+                    fallbackCopy(text);
+                    copySuccess();
+                }
+            }
+        });
+    }
+
+    function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+    }
+
+    // Auto-generate line numbers for all xcode code blocks
+    initCodeLineNumbers();
+}
+
+function initCodeLineNumbers() {
+    document.querySelectorAll('.xcode-code-block').forEach(block => {
+        if (block.querySelector('.code-line-numbers')) return;
+
+        const codeEl = block.querySelector('code');
+        if (!codeEl) return;
+
+        const text = codeEl.textContent;
+        const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        let lineCount = rawLines.length;
+        if (lineCount > 1 && rawLines[rawLines.length - 1].trim() === '') {
+            lineCount--;
+        }
+
+        const numContainer = document.createElement('div');
+        numContainer.className = 'code-line-numbers';
+        numContainer.setAttribute('aria-hidden', 'true');
+
+        let spans = '';
+        for (let i = 1; i <= lineCount; i++) {
+            spans += `<span>${i}</span>`;
+        }
+        numContainer.innerHTML = spans;
+        block.insertBefore(numContainer, block.firstChild);
     });
 }

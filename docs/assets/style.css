@@ -254,36 +254,45 @@ body {
 }
 
 /* ==========================================================================
-   4. Floating Capsule Header Navigation
+   4. Fixed Apple Glass Pinned Navbar (Full-Width Top Bar, 60px)
    ========================================================================== */
 .site-header {
-  position: sticky;
-  top: 1.25rem;
-  z-index: 100;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 60px;
+  z-index: 1000;
   display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 0 1.5rem;
-  pointer-events: none;
+  background: rgba(10, 10, 15, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
 }
 
-.glass-capsule-nav {
-  pointer-events: auto;
+.site-navbar-inner {
+  width: 100%;
+  max-width: 1320px;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 1.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1.5rem;
-  max-width: 1220px;
-  width: 100%;
-  padding: 0.65rem 1.4rem;
-  border-radius: 9999px !important;
-  background: rgba(18, 20, 29, 0.72) !important;
+  box-sizing: border-box;
 }
 
 .brand-capsule {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.7rem;
   text-decoration: none;
+  flex-shrink: 0;
 }
 
 .brand-logo-disc {
@@ -300,7 +309,7 @@ body {
 
 .brand-title {
   font-weight: 700;
-  font-size: 1.15rem;
+  font-size: 1.12rem;
   color: #FFFFFF;
   letter-spacing: -0.01em;
 }
@@ -309,7 +318,7 @@ body {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
   color: #E2E8F0;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   padding: 2px 8px;
   border-radius: 9999px;
   font-weight: 600;
@@ -320,16 +329,18 @@ body {
 .nav-links-row {
   display: flex;
   align-items: center;
-  gap: 1.35rem;
+  gap: 1.15rem;
   list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .nav-links-row a {
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 500;
   color: var(--text-secondary);
   padding: 0.35rem 0.65rem;
-  border-radius: 9999px;
+  border-radius: 8px;
   text-decoration: none;
   transition: var(--transition-apple);
 }
@@ -339,24 +350,31 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.nav-right-cluster {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
 .btn-github-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.08);
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.25);
   color: #FFFFFF;
-  padding: 0.45rem 1.15rem;
+  padding: 0.4rem 1rem;
   border-radius: 9999px;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   font-weight: 500;
   text-decoration: none;
   transition: var(--transition-apple);
 }
 
 .btn-github-pill:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.32);
   transform: translateY(-1px);
 }
@@ -368,6 +386,7 @@ body {
   color: white;
   font-size: 1.4rem;
   cursor: pointer;
+  padding: 0.25rem;
 }
 
 /* ==========================================================================
@@ -378,7 +397,13 @@ body {
   z-index: 1;
   max-width: 1280px;
   margin: 0 auto;
-  padding: 4.5rem 1.5rem 4rem;
+  padding: 5.5rem 1.5rem 4rem;
+  scroll-margin-top: 76px;
+}
+
+section[id],
+.content-section {
+  scroll-margin-top: 76px;
 }
 
 .hero-big-card {
@@ -1497,56 +1522,450 @@ body {
 .playground-term-output .out-sys { color: #94A3B8; }
 
 /* ==========================================================================
-   9. Syntax & Guidelines Glass Components
+   9. Apple Xcode Integrated Documentation Workbench
    ========================================================================== */
-.doc-sidebar-sticky {
-  position: sticky;
-  top: 6rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  max-height: calc(100vh - 7rem);
-  overflow-y: auto;
+.xcode-workbench-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
 }
 
-.doc-sidebar-sticky a {
-  color: var(--text-secondary);
-  font-size: 0.88rem;
-  padding: 0.5rem 0.85rem;
-  border-radius: 9999px;
+/* Ambient Radial Glow behind the workbench */
+.workbench-ambient-glow {
+  position: absolute;
+  top: 15%;
+  left: 20%;
+  width: 600px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.08) 0%, rgba(121, 40, 202, 0.06) 50%, transparent 70%);
+  filter: blur(90px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.xcode-workbench-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(13, 15, 22, 0.72);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.workbench-layout-grid {
+  display: flex;
+  width: 100%;
+  min-height: 660px;
+  box-sizing: border-box;
+}
+
+/* --- Left Column: Xcode / macOS Native Sidebar (Fixed 260px) --- */
+.xcode-sidebar-panel {
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 11, 17, 0.45);
+  display: flex;
+  flex-direction: column;
+  padding: 1.15rem 0.75rem;
+  box-sizing: border-box;
+}
+
+.xcode-sidebar-header {
+  padding: 0.25rem 0.5rem 0.85rem;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  text-decoration: none;
-  transition: var(--transition-apple);
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 0.65rem;
 }
 
-.doc-sidebar-sticky a:hover, .doc-sidebar-sticky a.active {
-  color: #FFFFFF;
-  background: rgba(255, 255, 255, 0.08);
+.xcode-sidebar-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
 }
 
-.syntax-pod-card {
-  padding: 2.25rem;
+.xcode-badge-sub {
+  font-size: 0.65rem;
+  color: #38BDF8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.xcode-sidebar-nav {
   display: flex;
   flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.xcode-nav-item {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #86868B;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.xcode-nav-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #D1D5DB;
+}
+
+.xcode-nav-item .xcode-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: inherit;
+  transition: color 0.18s ease;
+}
+
+.xcode-nav-item .xcode-item-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xcode-nav-item .xcode-item-ext {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+/* Selected State: macOS Micro-Shimmer Capsule with 2px Glowing Light Bar */
+.xcode-nav-item.active {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.xcode-nav-item.active .xcode-icon {
+  color: #38BDF8;
+}
+
+.xcode-nav-item .xcode-active-bar {
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2.5px;
+  background: linear-gradient(180deg, #38BDF8, #818CF8);
+  border-radius: 9999px;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.9);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.xcode-nav-item.active .xcode-active-bar {
+  opacity: 1;
+}
+
+.xcode-sidebar-footer {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-footer-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+/* --- Right Column: IDE-Level Immersive Viewport --- */
+.xcode-editor-viewport {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 12, 18, 0.4);
+}
+
+.xcode-editor-titlebar {
+  height: 48px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
+
+.xcode-titlebar-left {
+  display: flex;
+  align-items: center;
   gap: 1.25rem;
 }
 
-.syntax-pod-card h3 {
-  font-size: 1.45rem;
+.xcode-tab-pill {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 0.85rem;
+  gap: 0.55rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 0.32rem 0.85rem;
+  border-radius: 8px;
+}
+
+.active-filename-display {
+  font-family: 'JetBrains Mono', -apple-system-ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.82rem;
+  font-weight: 500;
   color: #FFFFFF;
 }
 
-.syntax-pod-card p {
+.active-tag-display {
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.btn-workbench-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.35rem 0.85rem;
+  border-radius: 7px;
+  color: #D1D5DB;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-workbench-copy:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Documentation Content Body */
+.xcode-viewport-body {
+  padding: 1.85rem 2.25rem;
+  overflow-y: auto;
+  max-height: 780px;
+}
+
+.xcode-doc-pane {
+  display: none;
+  animation: fadeInPane 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.xcode-doc-pane.active {
+  display: block;
+}
+
+@keyframes fadeInPane {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.doc-pane-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  letter-spacing: -0.01em;
+}
+
+.doc-pane-lead {
+  font-size: 0.94rem;
   color: var(--text-secondary);
-  font-size: 0.96rem;
+  line-height: 1.7;
+  margin-bottom: 1.15rem;
+}
+
+/* IDE Code Block with Precision Line Numbers */
+.xcode-code-block {
+  display: flex;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  margin-top: 1.25rem;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 24px rgba(0, 0, 0, 0.3);
+}
+
+.code-line-numbers {
+  display: flex;
+  flex-direction: column;
+  padding: 1.15rem 0.85rem 1.15rem 1.1rem;
+  user-select: none;
+  text-align: right;
+  min-width: 44px;
+  box-sizing: border-box;
+  color: rgba(255, 255, 255, 0.22);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+  font-family: 'JetBrains Mono', -apple-system-ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.code-line-numbers span {
+  display: block;
+  height: 1.7em;
+  line-height: 1.7em;
+}
+
+.xcode-code-block pre {
+  flex: 1;
+  margin: 0 !important;
+  padding: 1.15rem 1.25rem !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  backdrop-filter: none !important;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', -apple-system-ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13.5px !important;
+  line-height: 1.7 !important;
+  box-sizing: border-box;
+}
+
+.xcode-code-block pre code {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: 1.7 !important;
+  white-space: pre !important;
+  word-spacing: normal !important;
+  word-break: normal !important;
+  tab-size: 4 !important;
+}
+
+.xcode-code-block pre::-webkit-scrollbar {
+  height: 5px;
+}
+
+.xcode-code-block pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.xcode-code-block pre::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+.xcode-code-block pre::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ==========================================================================
+   Xcode Dark / GitHub Dark Soft Syntax Highlighting Theme
+   ========================================================================== */
+.xcode-code-block pre code,
+.code-front-window pre code,
+.mac-terminal-box pre code {
+  color: #E6EDF3 !important;
+  text-shadow: none !important;
+}
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #8B949E !important;
+  font-style: italic !important;
+}
+
+.token.keyword,
+.token.tag {
+  color: #FF7AB2 !important; /* Soft Xcode magenta/rose */
+  font-weight: 500;
+}
+
+.token.builtin-type,
+.token.type {
+  color: #79C0FF !important; /* Soft sky blue */
+}
+
+.token.class-name {
+  color: #D2A8FF !important; /* Soft lavender */
+  font-weight: 600;
+}
+
+.token.string,
+.token.char {
+  color: #A5D6FF !important; /* Soft ice cyan */
+}
+
+.token.number {
+  color: #E3B341 !important; /* Warm amber gold */
+}
+
+.token.function,
+.token.builtin {
+  color: #6CB6FF !important; /* Soft periwinkle */
+}
+
+.token.operator {
+  color: #F47067 !important; /* Soft coral */
+}
+
+.token.punctuation {
+  color: #8B949E !important; /* Neutral slate */
+}
+
+.token.annotation,
+.token.decorator {
+  color: #FFA657 !important; /* Soft peach */
+  font-weight: 500;
+}
+
+.token.boolean {
+  color: #FF7AB2 !important;
+}
+
+.token.property {
+  color: #79C0FF !important;
 }
 
 .apple-callout-box {
@@ -1623,6 +2042,26 @@ body {
   .playground-editor-zone {
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .workbench-layout-grid {
+    flex-direction: column;
+  }
+  .xcode-sidebar-panel {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 1rem;
+  }
+  .xcode-sidebar-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.4rem;
+  }
+  .xcode-viewport-body {
+    padding: 1.5rem;
+    max-height: none;
   }
 }
 
