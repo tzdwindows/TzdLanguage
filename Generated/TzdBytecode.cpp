@@ -1540,13 +1540,15 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
     int localsNeeded = (f.localCount > f.paramCount) ? f.localCount : f.paramCount;
     m_locals.resize(localBase + (size_t)localsNeeded + 1);
 
+    // Copy args to locals BEFORE m_stack.reserve() — argsData may point
+    // into m_stack's buffer, and reserve can reallocate it (use-after-free).
+    for (int i = 0; i < f.paramCount && i < (int)argCount; ++i) {
+        m_locals[localBase + i] = argsData[i];
+    }
+
     // Pre-allocate operand stack space based on verifier-computed maxStackDepth
     if (f.maxStackDepth > 0) {
         m_stack.reserve(m_stack.size() + (size_t)f.maxStackDepth + 4);
-    }
-
-    for (int i = 0; i < f.paramCount && i < (int)argCount; ++i) {
-        m_locals[localBase + i] = argsData[i];
     }
 
     size_t stackBase = m_stack.size();

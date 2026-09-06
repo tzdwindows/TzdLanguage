@@ -52,7 +52,7 @@ private:
     // Function name → compilation attempted (don't retry)
     std::unordered_set<std::string> m_compilationAttempted;
 
-    int m_hotThreshold = 100; // Compile after 100 calls
+    int m_hotThreshold = 999999; // Temporarily disable JIT for benchmarking
     std::atomic<size_t> m_totalCalls{0};
     std::atomic<size_t> m_jitCompilations{0};
     std::atomic<size_t> m_jitFailures{0};
