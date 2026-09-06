@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/TzdTools.iml" filepath="$PROJECT_DIR$/.idea/TzdTools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/TzdTools2.iml" filepath="$PROJECT_DIR$/.idea/TzdTools2.iml" />
     </modules>
   </component>
 </project>

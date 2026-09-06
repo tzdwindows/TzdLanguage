@@ -1,1143 +1,1777 @@
-﻿#ifndef NOMINMAX
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 
-#define NOMINMAX
 
-#endif
+#include "Res/TzdStrings.h"
 
-#include "Res/TzdStrings.h"
 
-#include "TzdDebugger.h"
+#include "TzdDebugger.h"
 
-#include "TzdCommandSystem.h"
 
-// 包含标准库
+#include "TzdCommandSystem.h"
 
-#include <algorithm>
 
-#include <sstream>
+// 包含标准库
 
-#include <iomanip> 
 
-#include <fstream>
+#include <algorithm>
 
-#include <filesystem>
 
-#include <any>
+#include <sstream>
 
-#include <string>
 
-#include <vector>
+#include <iomanip> 
 
-#include <iostream>
 
-TzdInterpreter* TzdCommandSystem::interpreter = nullptr;
+#include <fstream>
 
-TzdCommandSystem::TzdCommandSystem() : inputBuffer("") {
 
-    if (interpreter == nullptr) {
+#include <filesystem>
 
-        interpreter = new TzdInterpreter();
 
-    }
+#include <any>
 
-}
 
-void TzdCommandSystem::registerCmd(std::string name, std::string cn, std::string fmt, std::string desc, std::string opts, std::function<void(const std::vector<std::string>&)> func) {
-    registry[name] = { name, cn, fmt, desc, opts, func };
-}
-
-void TzdCommandSystem::init() {
-    // 1. 定义一个辅助 Lambda，把脚本传入的 TzdValue 参数转回 string 参数
+#include <string>
 
-    // 这样就能直接复用现有的 handleXxx 函数
 
-    auto argsToStrings = [](const std::vector<TzdValue>& tzdArgs) -> std::vector<std::string> {
+#include <vector>
 
-        std::vector<std::string> strArgs;
 
-        for (const auto& arg : tzdArgs) {
+#include <iostream>
 
-            if (arg.type == TzdValue::STRING) {
+#include "Generated/TzdConsole.h"
+#include "Generated/TzdBytecode.h"
 
-                strArgs.push_back(arg.sVal);
 
-            }
+TzdInterpreter* TzdCommandSystem::interpreter = nullptr;
 
-            else if (arg.type == TzdValue::FLOAT) {
 
-                std::string s = std::to_string(arg.dVal);
+TzdCommandSystem::TzdCommandSystem() : inputBuffer("") {
 
-                s.erase(s.find_last_not_of('0') + 1, std::string::npos);
 
-                if (s.back() == '.') s.pop_back();
+    if (interpreter == nullptr) {
 
-                strArgs.push_back(s);
 
-            }
+        interpreter = new TzdInterpreter();
 
-            else if (arg.type == TzdValue::BOOL) {
 
-                strArgs.push_back(arg.bVal ? "true" : "false");
+    }
 
-            }
 
-        }
+}
 
-        return strArgs;
 
-        };
+void TzdCommandSystem::registerCmd(std::string name, std::string cn, std::string fmt, std::string desc, std::string opts, std::function<void(const std::vector<std::string>&)> func) {
 
-    // ============================================================
+    registry[name] = { name, cn, fmt, desc, opts, func };
 
-    //  StackTrace
+}
 
-    // ============================================================
 
-    // [指令模式] StackTrace pid;
 
-    registerCmd("StackTrace",
+void TzdCommandSystem::init() {
 
-        "进程堆栈跟踪",
+    // 1. 定义一个辅助 Lambda，把脚本传入的 TzdValue 参数转回 string 参数
 
-        "StackTrace <PID|进程名>",
 
-        "输出调用栈。支持不区分大小写的进程名查找。",
+    // 这样就能直接复用现有的 handleXxx 函数
 
-        "示例: StackTrace qq.exe;",
 
-        TzdCommandSystem::handleStackTrace);
+    auto argsToStrings = [](const std::vector<TzdValue>& tzdArgs) -> std::vector<std::string> {
 
-    // [函数模式] StackTrace("pid");
 
-    interpreter->registerNativeFunction("StackTrace", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
+        std::vector<std::string> strArgs;
 
-        // 直接复用 handleStackTrace 逻辑
 
-        TzdCommandSystem::handleStackTrace(argsToStrings(args));
+        for (const auto& arg : tzdArgs) {
 
-        return TzdValue();
 
-        });
+            if (arg.type == TzdValue::STRING) {
 
-    // ============================================================
 
-    //  MemoryAsm
+                strArgs.push_back(arg.sVal);
 
-    // ============================================================
 
-    // [指令模式]
+            }
 
-    registerCmd("MemoryAsm",
 
-        "内存反汇编分析",
+            else if (arg.type == TzdValue::FLOAT) {
 
-        "MemoryAsm <PID|ProcessName>",
 
-        "扫描目标进程的所有可执行代码段并翻译为汇编指令。",
+                std::string s = std::to_string(arg.dVal);
 
-        "危险操作：可能导致目标进程短暂卡顿。",
 
-        TzdCommandSystem::handleMemoryAsm);
+                s.erase(s.find_last_not_of('0') + 1, std::string::npos);
 
-    // [函数模式]
 
-    interpreter->registerNativeFunction("MemoryAsm", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
+                if (s.back() == '.') s.pop_back();
 
-        TzdCommandSystem::handleMemoryAsm(argsToStrings(args));
 
-        return TzdValue();
+                strArgs.push_back(s);
 
-        });
 
-    // ============================================================
+            }
 
-    //  ScanFunc
 
-    // ============================================================
+            else if (arg.type == TzdValue::BOOL) {
 
-    // [指令模式]
 
-    registerCmd("ScanFunc",
+                strArgs.push_back(arg.bVal ? "true" : "false");
 
-        "扫描进程函数(支持PDB与GUI)",
 
-        "ScanFunc <PID|Name> [-m Module] [-p PdbPath] [-g]",
+            }
 
-        "通过特征码定位函数并进行符号还原。\n"
 
-        "  -m: 指定目标模块名 (如: UnityPlayer.dll)\n"
+        }
 
-        "  -p: 指定外部 PDB 符号路径\n"
 
-        "  -g: 开启 DirectX 11 GUI 交互界面 (支持搜索/过滤)",
+        return strArgs;
 
-        "示例: ScanFunc notepad.exe -m notepad.exe -g",
 
-        TzdCommandSystem::handleScanFunc);
+        };
 
-    // [函数模式] ScanFunc("notepad.exe", "-g");
 
-    interpreter->registerNativeFunction("ScanFunc", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
+    // ============================================================
 
-        TzdCommandSystem::handleScanFunc(argsToStrings(args));
 
-        return TzdValue();
+    //  StackTrace
 
-        });
 
-    // ============================================================
+    // ============================================================
 
-    //  Demangle
 
-    // ============================================================
+    // [指令模式] StackTrace pid;
 
-    // [指令模式]
 
-    registerCmd("Demangle",
+    registerCmd("StackTrace",
 
-        "C++符号去修饰",
 
-        "Demangle <MangledName>",
+        "进程堆栈跟踪",
 
-        "将 MSVC 编译器的修饰名转换为可读的函数签名。",
 
-        "示例: Demangle ?init@System@@QAEXXZ",
+        "StackTrace <PID|进程名>",
 
-        TzdCommandSystem::handleDemangle);
 
-    // [函数模式]
+        "输出调用栈。支持不区分大小写的进程名查找。",
 
-    interpreter->registerNativeFunction("Demangle", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-        TzdCommandSystem::handleDemangle(argsToStrings(args));
+        "示例: StackTrace qq.exe;",
 
-        return TzdValue();
 
-        });
+        TzdCommandSystem::handleStackTrace);
 
-    // ============================================================
 
-    //  PdbInfo
+    // [函数模式] StackTrace("pid");
 
-    // ============================================================
 
-    // [指令模式]
+    interpreter->registerNativeFunction("StackTrace", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-    registerCmd("PdbInfo",
 
-        "PDB文件分析工具",
+        // 直接复用 handleStackTrace 逻辑
 
-        "PdbInfo <PdbPath>",
 
-        "读取 PDB 文件头信息并尝试提取前 10 个公开符号。",
+        TzdCommandSystem::handleStackTrace(argsToStrings(args));
 
-        "示例: PdbInfo C:\\Symbols\\game.pdb",
 
-        TzdCommandSystem::handlePdbInfo);
+        return TzdValue();
 
-    // [函数模式] PdbInfo("C:/path.pdb");
 
-    interpreter->registerNativeFunction("PdbInfo", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
+        });
 
-        TzdCommandSystem::handlePdbInfo(argsToStrings(args));
 
-        return TzdValue();
+    // ============================================================
 
-        });
 
-    // ============================================================
+    //  MemoryAsm
 
-    //  Run (仅保留为系统指令，无需函数化)
 
-    // ============================================================
+    // ============================================================
 
-    registerCmd("Run",
 
-        "运行脚本",
+    // [指令模式]
 
-        "Run <Code|FilePath>",
 
-        "解析并运行 TzdLang 脚本代码。",
+    registerCmd("MemoryAsm",
 
-        "示例: Run \"a = gxxx 100; b = a ^ 2;\"",
 
-        TzdCommandSystem::handleRunScript);
+        "内存反汇编分析",
 
-}
 
-void printRuntimeError(const std::string& msg, antlr4::Token* token) {
+        "MemoryAsm <PID|ProcessName>",
 
-    size_t line = token->getLine();
 
-    size_t charPositionInLine = token->getCharPositionInLine();
+        "扫描目标进程的所有可执行代码段并翻译为汇编指令。",
 
-    std::cerr << "==================================================" << std::endl;
 
-    std::cerr << "[Tzd 运行时错误] 行 " << line << ":" << charPositionInLine << std::endl;
+        "危险操作：可能导致目标进程短暂卡顿。",
 
-    std::cerr << "[错误详情] " << msg << std::endl;
 
-    antlr4::CharStream* stream = token->getInputStream();
+        TzdCommandSystem::handleMemoryAsm);
 
-    if (stream) {
 
-        std::string fullText = stream->toString();
+    // [函数模式]
 
-        std::istringstream iss(fullText);
 
-        std::string codeLine;
+    interpreter->registerNativeFunction("MemoryAsm", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-        size_t currentLine = 1;
 
-        while (std::getline(iss, codeLine)) {
+        TzdCommandSystem::handleMemoryAsm(argsToStrings(args));
 
-            if (!codeLine.empty() && codeLine.back() == '\r') codeLine.pop_back();
 
-            if (currentLine == line) {
+        return TzdValue();
 
-                std::cerr << "--------------------------------------------------" << std::endl;
 
-                std::cerr << "    " << codeLine << std::endl;
+        });
 
-                std::cerr << "    ";
 
-                for (size_t i = 0; i < charPositionInLine; ++i) {
+    // ============================================================
 
-                    if (i < codeLine.size() && codeLine[i] == '\t') std::cerr << '\t';
 
-                    else std::cerr << ' ';
+    //  ScanFunc
 
-                }
 
-                std::cerr << "^--- 这里" << std::endl;
+    // ============================================================
 
-                break;
 
-            }
+    // [指令模式]
 
-            currentLine++;
 
-        }
+    registerCmd("ScanFunc",
 
-    }
 
-    std::cerr << "==================================================" << std::endl;
+        "扫描进程函数(支持PDB与GUI)",
 
-}
 
-void TzdCommandSystem::handleRunScript(const std::vector<std::string>& args) {
+        "ScanFunc <PID|Name> [-m Module] [-p PdbPath] [-g]",
 
-    if (args.empty()) return;
 
-    std::string code = args[0];
+        "通过特征码定位函数并进行符号还原。\n"
 
-    try {
 
-        interpreter->loadScript(code);
+        "  -m: 指定目标模块名 (如: UnityPlayer.dll)\n"
 
-    }
 
-    catch (const std::exception& e) {
+        "  -p: 指定外部 PDB 符号路径\n"
 
-        std::cerr << "[Tzd 系统错误] " << e.what() << std::endl;
 
-    }
+        "  -g: 开启 DirectX 11 GUI 交互界面 (支持搜索/过滤)",
 
-}
 
-void TzdCommandSystem::handleDemangle(const std::vector<std::string>& args) {
+        "示例: ScanFunc notepad.exe -m notepad.exe -g",
 
-    if (args.empty()) {
 
-        std::cout << "[Tzd] 用法: Demangle <修饰名字符串>" << std::endl;
+        TzdCommandSystem::handleScanFunc);
 
-        return;
 
-    }
+    // [函数模式] ScanFunc("notepad.exe", "-g");
 
-    std::string rawName = args[0];
 
-    for (size_t i = 1; i < args.size(); ++i) rawName += args[i];
+    interpreter->registerNativeFunction("ScanFunc", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-    std::string readable = SymbolDemangler::demangle(rawName);
 
-    std::cout << "[原始] " << rawName << std::endl;
+        TzdCommandSystem::handleScanFunc(argsToStrings(args));
 
-    std::cout << "[结果] " << readable << std::endl;
 
-}
+        return TzdValue();
 
-void TzdCommandSystem::handlePdbInfo(const std::vector<std::string>& args) {
 
-    if (args.empty()) {
+        });
 
-        std::cout << "[Tzd] 用法: PdbInfo <Pdb路径>" << std::endl;
 
-        return;
+    // ============================================================
 
-    }
 
-    std::string path = args[0];
+    //  Demangle
 
-    std::cout << "[Tzd] 正在读取 PDB: " << path << " ..." << std::endl;
 
-    PdbReader reader(path);
+    // ============================================================
 
-    if (!reader.IsValid()) {
 
-        std::cout << "[Tzd] 错误: PDB 文件无效或无法打开。" << std::endl;
+    // [指令模式]
 
-        return;
 
-    }
+    registerCmd("Demangle",
 
-    std::cout << "[Tzd] PDB 文件校验通过 (MSF 格式有效)。" << std::endl;
 
-    std::vector<uint32_t> mockSections = { 0x1000, 0x2000, 0x3000, 0x4000, 0x5000 };
+        "C++符号去修饰",
 
-    std::vector<PdbSymbol> symbols;
 
-    if (reader.ParsePublicSymbols(mockSections, symbols)) {
+        "Demangle <MangledName>",
 
-        std::cout << "[Tzd] 成功解析符号表，共找到 " << symbols.size() << " 个公开符号。" << std::endl;
 
-        for (const auto& sym : symbols) {
+        "将 MSVC 编译器的修饰名转换为可读的函数签名。",
 
-            std::cout << "  [0x" << std::hex << std::setw(8) << std::setfill('0') << sym.rva << "] "
 
-                << SymbolDemangler::demangle(sym.name) << std::dec << std::endl;
+        "示例: Demangle ?init@System@@QAEXXZ",
 
-        }
 
-    }
+        TzdCommandSystem::handleDemangle);
 
-    else {
 
-        std::cout << "[Tzd] 警告: 符号流解析失败。" << std::endl;
+    // [函数模式]
 
-    }
 
-}
+    interpreter->registerNativeFunction("Demangle", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-void TzdCommandSystem::handleScanFunc(const std::vector<std::string>& args) {
 
-    if (args.empty()) {
+        TzdCommandSystem::handleDemangle(argsToStrings(args));
 
-        std::cout << "[Tzd] 用法: ScanFunc <PID|进程名> [-m 模块名] [-p PDB路径] [-g (开启GUI)]" << std::endl;
 
-        return;
+        return TzdValue();
 
-    }
 
-    DWORD pid = 0;
+        });
 
-    std::string target = args[0];
 
-    std::string moduleName = "";
+    // ============================================================
 
-    std::string pdbPath = "";
 
-    bool useGui = false;
+    //  PdbInfo
 
-    for (size_t i = 1; i < args.size(); ++i) {
 
-        if (args[i] == "-m" && i + 1 < args.size()) {
+    // ============================================================
 
-            moduleName = args[++i];
 
-        }
+    // [指令模式]
 
-        else if (args[i] == "-p" && i + 1 < args.size()) {
 
-            pdbPath = args[++i];
+    registerCmd("PdbInfo",
 
-        }
 
-        else if (args[i] == "-g") {
+        "PDB文件分析工具",
 
-            useGui = true;
 
-        }
+        "PdbInfo <PdbPath>",
 
-    }
 
-    try {
+        "读取 PDB 文件头信息并尝试提取前 10 个公开符号。",
 
-        if (std::all_of(target.begin(), target.end(), ::isdigit)) {
 
-            pid = std::stoul(target);
+        "示例: PdbInfo C:\\Symbols\\game.pdb",
 
-        }
 
-        else {
+        TzdCommandSystem::handlePdbInfo);
 
-            pid = TzdStackTrace::getPidByName(target);
 
-        }
+    // [函数模式] PdbInfo("C:/path.pdb");
 
-    }
 
-    catch (...) {
+    interpreter->registerNativeFunction("PdbInfo", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
 
-        pid = TzdStackTrace::getPidByName(target);
 
-    }
+        TzdCommandSystem::handlePdbInfo(argsToStrings(args));
 
-    if (pid == 0) {
 
-        std::cout << "[Tzd] 错误: 找不到目标进程: " << target << std::endl;
+        return TzdValue();
 
-        return;
 
-    }
+        });
 
-    std::cout << "[Tzd] 正在扫描进程: " << target << " (" << pid << ")" << std::endl;
 
-    if (!moduleName.empty()) std::cout << "[Tzd] 过滤模块: " << moduleName << std::endl;
+    // ============================================================
 
-    if (!pdbPath.empty())   std::cout << "[Tzd] 符号文件: " << pdbPath << std::endl;
 
-    if (useGui)             std::cout << "[Tzd] 模式: GUI 视图" << std::endl;
+    //  Run (仅保留为系统指令，无需函数化)
 
-    TzdFuncScanner scanner;
 
-    if (useGui) {
+    // ============================================================
 
-        std::vector<ScanResult> results;
 
-        scanner.scanProcess(pid, moduleName, pdbPath, &results);
+    registerCmd("Run",
 
-        if (results.empty()) {
 
-            std::cout << "[Tzd] 警告: 未扫描到任何符合特征的函数，GUI 未启动。" << std::endl;
+        "运行脚本",
 
-        }
 
-    }
+        "Run <Code|FilePath>",
 
-    else {
 
-        scanner.scanProcess(pid, moduleName, pdbPath, nullptr);
+        "解析并运行 TzdLang 脚本代码。",
 
-    }
 
-    std::cout << "\n[Tzd] 任务已提交，扫描完成。" << std::endl;
+        "示例: Run \"a = gxxx 100; b = a ^ 2;\"",
 
-}
 
-void TzdCommandSystem::handleMemoryAsm(const std::vector<std::string>& args) {
+        TzdCommandSystem::handleRunScript);
 
-    if (args.empty()) {
 
-        std::cout << "[Tzd] 用法: MemoryAsm <PID|Name>;" << std::endl;
+}
 
-        return;
 
-    }
+void printRuntimeError(const std::string& msg, antlr4::Token* token) {
 
-    DWORD pid = (isdigit(args[0][0])) ? std::stoul(args[0]) : TzdStackTrace::getPidByName(args[0]);
 
-    if (pid != 0) {
+    size_t line = token->getLine();
 
-        TzdMemoryAsm::analyzeAndDumpAsm(pid);
 
-    }
+    size_t charPositionInLine = token->getCharPositionInLine();
 
-    else {
 
-        std::cout << "[Tzd] 错误: 找不到目标进程。" << std::endl;
+    std::cerr << "==================================================" << std::endl;
 
-    }
 
-}
+    std::cerr << "[Tzd 运行时错误] 行 " << line << ":" << charPositionInLine << std::endl;
 
-void TzdCommandSystem::handleStackTrace(const std::vector<std::string>& args) {
 
-    if (args.empty()) {
+    std::cerr << "[错误详情] " << msg << std::endl;
 
-        std::cout << "[Tzd] 错误: 请提供 PID 或进程名。用法: StackTrace <Target>;" << std::endl;
 
-        return;
+    antlr4::CharStream* stream = token->getInputStream();
 
-    }
 
-    std::string target = args[0];
+    if (stream) {
 
-    DWORD pid = 0;
 
-    if (!target.empty() && std::all_of(target.begin(), target.end(), ::isdigit)) {
+        std::string fullText = stream->toString();
 
-        pid = std::stoul(target);
 
-    }
+        std::istringstream iss(fullText);
 
-    else {
 
-        pid = TzdStackTrace::getPidByName(target);
+        std::string codeLine;
 
-        if (pid == 0) {
 
-            std::cout << "[Tzd] 错误: 找不到名为 '" << target << "' 的进程。" << std::endl;
+        size_t currentLine = 1;
 
-            return;
 
-        }
+        while (std::getline(iss, codeLine)) {
 
-        std::cout << "[Tzd] 已找到进程 " << target << "，对应 PID: " << pid << std::endl;
 
-    }
+            if (!codeLine.empty() && codeLine.back() == '\r') codeLine.pop_back();
 
-    TzdStackTrace::dumpProcessStack(pid);
 
-}
+            if (currentLine == line) {
 
-void TzdCommandSystem::printHelp(std::string cmdName) {
 
-    if (cmdName.empty()) {
+                std::cerr << "--------------------------------------------------" << std::endl;
 
-        std::cout << "\n--- " << APP_NAME << " 命令系统 (作者: " << AUTHOR << ") ---" << std::endl;
 
-        std::cout << "直接输入命令并以分号(;)结束。常用命令如下:" << std::endl;
+                std::cerr << "    " << codeLine << std::endl;
 
-        for (auto const& [name, meta] : registry) {
 
-            std::cout << "  > " << name << " \t [" << meta.chineseName << "]" << std::endl;
+                std::cerr << "    ";
 
-        }
 
-        std::cout << "输入 'help <命令名>;' 查看具体详情。" << std::endl;
+                for (size_t i = 0; i < charPositionInLine; ++i) {
 
-    }
 
-    else {
+                    if (i < codeLine.size() && codeLine[i] == '\t') std::cerr << '\t';
 
-        if (registry.count(cmdName)) {
 
-            auto& m = registry[cmdName];
+                    else std::cerr << ' ';
 
-            std::cout << "\n【命令中文名】: " << m.chineseName << std::endl;
 
-            std::cout << "【使用格式】  : " << m.format << std::endl;
+                }
 
-            std::cout << "【功能介绍】  : " << m.description << std::endl;
 
-            std::cout << "【子选项/扩展】: " << m.subOptions << std::endl;
+                std::cerr << "^--- 这里" << std::endl;
 
-        }
 
-        else {
+                break;
 
-            std::cout << "[Tzd] 未找到命令 '" << cmdName << "' 的帮助信息。" << std::endl;
 
-        }
+            }
 
-    }
 
-}
+            currentLine++;
 
-void TzdCommandSystem::process(std::string input) {
 
-    // 1. 去除首尾空白
+        }
 
-    std::string trimmed = input;
 
-    size_t firstNonSpace = trimmed.find_first_not_of(" \t\r\n");
+    }
 
-    if (firstNonSpace == std::string::npos) return;
 
-    trimmed.erase(0, firstNonSpace);
+    std::cerr << "==================================================" << std::endl;
 
-    size_t lastNonSpace = trimmed.find_last_not_of(" \t\r\n");
 
-    if (lastNonSpace != std::string::npos) trimmed.erase(lastNonSpace + 1);
+}
 
-    if (trimmed.empty()) return;
 
-    // 2. 提取首个单词
+void TzdCommandSystem::handleRunScript(const std::vector<std::string>& args) {
 
-    size_t firstSpace = trimmed.find_first_of(" \t");
 
-    std::string cmdHead = (firstSpace == std::string::npos) ? trimmed : trimmed.substr(0, firstSpace);
+    if (args.empty()) return;
 
-    // 3. 关键字保护
 
-    static const std::set<std::string> keywords = {
+    std::string code = args[0];
 
-        "fun", "class", "var", "if", "while", "for", "return", "ret",
 
-        "print", "new", "sin", "cos", "tan", "log"
+    try {
 
-    };
 
-    bool isKeyword = keywords.count(cmdHead);
+        interpreter->loadScript(code);
 
-    bool looksLikeFunctionCall = false;
 
-    if (trimmed.find('(') != std::string::npos) {
+    }
 
-        size_t openParen = trimmed.find('(');
 
-        std::string potentialName = trimmed.substr(0, openParen);
+    catch (const std::exception& e) {
 
-        size_t lastChar = potentialName.find_last_not_of(" \t");
 
-        if (lastChar != std::string::npos) potentialName = potentialName.substr(0, lastChar + 1);
+        std::cerr << "[Tzd 系统错误] " << e.what() << std::endl;
 
-        if (potentialName == cmdHead) {
 
-            looksLikeFunctionCall = true;
+    }
 
-        }
 
-    }
+}
 
-    bool isSystemCmd = (cmdHead == "help") || (!isKeyword && !looksLikeFunctionCall && registry.count(cmdHead));
 
-    if (!isSystemCmd) {
+void TzdCommandSystem::handleDemangle(const std::vector<std::string>& args) {
 
-        // --- 脚本模式 ---
 
-        std::string scriptCode = trimmed;
+    if (args.empty()) {
 
-        if (scriptCode.size() >= 4 && scriptCode.substr(0, 4) == "Run ") {
 
-            scriptCode = scriptCode.substr(4);
+        std::cout << "[Tzd] 用法: Demangle <修饰名字符串>" << std::endl;
 
-            size_t scriptStart = scriptCode.find_first_not_of(" \t");
 
-            if (scriptStart != std::string::npos) scriptCode.erase(0, scriptStart);
+        return;
 
-        }
 
-        if (scriptCode.empty()) return;
+    }
 
-        std::vector<std::string> args = { scriptCode };
 
-        try {
+    std::string rawName = args[0];
 
-            handleRunScript(args);
 
-        }
+    for (size_t i = 1; i < args.size(); ++i) rawName += args[i];
 
-        catch (const std::exception& e) {
 
-            std::cerr << "[Tzd 运行时错误] " << e.what() << std::endl;
+    std::string readable = SymbolDemangler::demangle(rawName);
 
-        }
 
-        return;
+    std::cout << "[原始] " << rawName << std::endl;
 
-    }
 
-    // --- 系统指令模式 ---
+    std::cout << "[结果] " << readable << std::endl;
 
-    std::vector<std::string> tokens;
 
-    std::string currentToken;
+}
 
-    bool inQuotes = false;
 
-    for (size_t i = 0; i < trimmed.length(); ++i) {
+void TzdCommandSystem::handlePdbInfo(const std::vector<std::string>& args) {
 
-        char c = trimmed[i];
 
-        if (c == '"') { inQuotes = !inQuotes; continue; }
+    if (args.empty()) {
 
-        if (std::isspace(c) && !inQuotes) {
 
-            if (!currentToken.empty()) { tokens.push_back(currentToken); currentToken.clear(); }
+        std::cout << "[Tzd] 用法: PdbInfo <Pdb路径>" << std::endl;
 
-        }
 
-        else currentToken += c;
+        return;
 
-    }
 
-    if (!currentToken.empty()) tokens.push_back(currentToken);
+    }
 
-    // 重定向处理
 
-    std::string outputFile = "";
+    std::string path = args[0];
 
-    auto it = std::find(tokens.begin(), tokens.end(), "=>");
 
-    if (it != tokens.end()) {
+    std::cout << "[Tzd] 正在读取 PDB: " << path << " ..." << std::endl;
 
-        if (std::next(it) != tokens.end()) {
 
-            outputFile = *std::next(it);
+    PdbReader reader(path);
 
-            tokens.erase(it, tokens.end());
 
-        }
+    if (!reader.IsValid()) {
 
-        else {
 
-            std::cerr << "[Tzd 语法错误] 重定向符号 '=>' 后缺少文件名。" << std::endl;
+        std::cout << "[Tzd] 错误: PDB 文件无效或无法打开。" << std::endl;
 
-            return;
 
-        }
+        return;
 
-    }
 
-    if (tokens.empty()) return;
+    }
 
-    std::string head = tokens[0];
 
-    std::vector<std::string> sysArgs(tokens.begin() + 1, tokens.end());
+    std::cout << "[Tzd] PDB 文件校验通过 (MSF 格式有效)。" << std::endl;
 
-    std::ofstream outFile;
 
-    std::streambuf* coutBuf = nullptr;
+    std::vector<uint32_t> mockSections = { 0x1000, 0x2000, 0x3000, 0x4000, 0x5000 };
 
-    if (!outputFile.empty()) {
 
-        char buffer[MAX_PATH];
+    std::vector<PdbSymbol> symbols;
 
-        GetModuleFileNameA(NULL, buffer, MAX_PATH);
 
-        std::filesystem::path finalPath = std::filesystem::path(buffer).parent_path() / outputFile;
+    if (reader.ParsePublicSymbols(mockSections, symbols)) {
 
-        outFile.open(finalPath, std::ios::out | std::ios::trunc);
 
-        if (outFile.is_open()) {
+        std::cout << "[Tzd] 成功解析符号表，共找到 " << symbols.size() << " 个公开符号。" << std::endl;
 
-            coutBuf = std::cout.rdbuf();
 
-            std::cout.rdbuf(outFile.rdbuf());
+        for (const auto& sym : symbols) {
 
-        }
 
-        else {
+            std::cout << "  [0x" << std::hex << std::setw(8) << std::setfill('0') << sym.rva << "] "
 
-            std::cerr << "[Tzd 错误] 无法创建输出文件" << std::endl;
 
-            return;
+                << SymbolDemangler::demangle(sym.name) << std::dec << std::endl;
 
-        }
 
-    }
+        }
 
-    if (head == "help") {
 
-        if (!sysArgs.empty()) printHelp(sysArgs[0]);
+    }
 
-        else printHelp();
 
-    }
+    else {
 
-    else {
 
-        registry[head].handler(sysArgs);
+        std::cout << "[Tzd] 警告: 符号流解析失败。" << std::endl;
 
-    }
 
-    if (coutBuf) {
+    }
 
-        std::cout.rdbuf(coutBuf);
 
-        outFile.close();
+}
 
-        std::cout << "[Tzd] 输出已保存至: " << outputFile << std::endl;
 
-    }
+void TzdCommandSystem::handleScanFunc(const std::vector<std::string>& args) {
 
-}
 
-void TzdCommandSystem::enterInteractiveMode() {
+    if (args.empty()) {
 
-    std::cout << R"(
 
-  ____________________________________________________________________
+        std::cout << "[Tzd] 用法: ScanFunc <PID|进程名> [-m 模块名] [-p PDB路径] [-g (开启GUI)]" << std::endl;
 
- |                                                                    |
 
- |   _______ ________   __   _____                                    |
+        return;
 
- |  |__   __|___  /\ \ / /  / ____|                 _                 |
 
- |     | |     / /  \ V /  | |     ___  _ __  _ __ | |_ _ __ ___      |
+    }
 
- |     | |    / /    > <   | |    / _ \| '_ \| '_ \| __| '__/ _ \     |
 
- |     | |   / /__  / . \  | |___| (_) | | | | | | | |_| | | (_) |    |
+    DWORD pid = 0;
 
- |     |_|  /_____|/_/ \_\  \_____\___/|_| |_|_| |_|\__|_|  \___/     |
 
- |                                                                    |
+    std::string target = args[0];
 
- |_____________________________________ Powered by TzdEngine _________|
 
-)" << std::endl;
+    std::string moduleName = "";
 
-    std::cout << " [System Info]" << std::endl;
 
-    std::cout << "   * 版本号  : 1.0.0 Alpha" << std::endl;
+    std::string pdbPath = "";
 
-    std::cout << "   * 构建于  : " << __DATE__ << " " << __TIME__ << std::endl;
 
-    std::cout << "   * 开发者  : " << AUTHOR << std::endl;
+    bool useGui = false;
 
-    std::cout << "   * 架构    : " << (sizeof(void*) == 8 ? "x64 (64-bit)" : "x86 (32-bit)") << std::endl;
 
-    std::cout << "\n [Module Status]" << std::endl;
+    for (size_t i = 1; i < args.size(); ++i) {
 
-    std::cout << "   * StackTrace ... [OK]" << std::endl;
 
-    std::cout << "   * MemoryAsm  ... [OK]" << std::endl;
+        if (args[i] == "-m" && i + 1 < args.size()) {
 
-    std::cout << "   * PdbReader  ... [OK]" << std::endl;
 
-    std::cout << "   * GUI System ... [Standby]" << std::endl;
+            moduleName = args[++i];
 
-    std::cout << "\n [Interactive Shell]" << std::endl;
 
-    std::cout << "   输入 'help' 查看完整命令列表。" << std::endl;
+        }
 
-    std::cout << "   输入 'exit' 退出程序。" << std::endl;
 
-    std::cout << "   支持多行输入 (直到大括号闭合或遇到分号)。" << std::endl;
+        else if (args[i] == "-p" && i + 1 < args.size()) {
 
-    std::cout << " --------------------------------------------------------------------\n" << std::endl;
 
-    std::string line;
+            pdbPath = args[++i];
 
-    int braceCount = 0;
 
-    while (true) {
+        }
 
-        if (inputBuffer.empty()) std::cout << "Tzd> ";
 
-        else std::cout << "   > ";
+        else if (args[i] == "-g") {
 
-        if (!std::getline(std::cin, line)) break;
 
-        std::string trimLine = line;
+            useGui = true;
 
-        trimLine.erase(0, trimLine.find_first_not_of(" \t\r\n"));
 
-        trimLine.erase(trimLine.find_last_not_of(" \t\r\n") + 1);
+        }
 
-        if (trimLine == "exit" || trimLine == "exit;") break;
 
-        bool inQuotes = false;
+    }
 
-        for (char c : line) {
 
-            if (c == '"') inQuotes = !inQuotes;
+    try {
 
-            if (!inQuotes) {
 
-                if (c == '{') braceCount++;
+        if (std::all_of(target.begin(), target.end(), ::isdigit)) {
 
-                if (c == '}') braceCount--;
 
-            }
+            pid = std::stoul(target);
 
-        }
 
-        inputBuffer += line + "\n";
+        }
 
-        std::string tempBuffer = inputBuffer;
 
-        size_t lastCharIdx = tempBuffer.find_last_not_of(" \t\r\n");
+        else {
 
-        bool endsWithSemi = (lastCharIdx != std::string::npos && tempBuffer[lastCharIdx] == ';');
 
-        if (braceCount <= 0 && endsWithSemi) {
+            pid = TzdStackTrace::getPidByName(target);
 
-            process(inputBuffer);
 
-            inputBuffer = "";
+        }
 
-            braceCount = 0;
 
-        }
+    }
 
-    }
 
-}
+    catch (...) {
 
-void TzdCommandSystem::start(int argc, char* argv[]) {
-    init();
-
-    std::string runMainScript = "";
-    bool hasCustomFlags = false;
-    bool silentMode = false;
-    
-    std::string debugHost = "127.0.0.1";
-    int debugPort = 0;
-    bool enableDebug = false;
-
-    // 清理尾部引号的 Lambda
-    auto stripQuotes = [](const std::string& s) -> std::string {
-        std::string res = s;
-        if (res.size() >= 2 && res.front() == '"' && res.back() == '"') {
-            res = res.substr(1, res.size() - 2);
-        }
-        else if (res.size() >= 2 && res.front() == '\'' && res.back() == '\'') {
-            res = res.substr(1, res.size() - 2);
-        }
-        return res;
-        };
-
-    // 参数解析
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        // 1. 工作目录: --setProjectDirectory="path" 或 --setpd="path"
-        if (arg.rfind("--setProjectDirectory=", 0) == 0 || arg.rfind("--setpd=", 0) == 0) {
-            hasCustomFlags = true;
-            size_t eqPos = arg.find('=');
-            std::string pathVal = stripQuotes(arg.substr(eqPos + 1));
-            if (!pathVal.empty()) {
-                try {
-                    std::filesystem::current_path(pathVal);
-                    interpreter->m_includePaths.push_back(std::filesystem::absolute(pathVal).string());
-                }
-                catch (const std::exception& e) {
-                    std::fprintf(stderr, TzdCmd::WORK_DIR_WARN, e.what()); std::cerr << std::endl;
-                }
-            }
-        }
-        // 2. 库路径: --addLibraryDirectory="path1","path2"
-        else if (arg.rfind("--addLibraryDirectory=", 0) == 0) {
-            hasCustomFlags = true;
-            size_t eqPos = arg.find('=');
-            std::string valList = arg.substr(eqPos + 1);
-
-            // 逗号分隔路径支持
-            std::vector<std::string> paths;
-            std::string current;
-            bool insideQuotes = false;
-            for (size_t charIdx = 0; charIdx < valList.size(); ++charIdx) {
-                char c = valList[charIdx];
-                if (c == '"' || c == '\'') {
-                    insideQuotes = !insideQuotes;
-                    continue;
-                }
-                if (c == ',' && !insideQuotes) {
-                    if (!current.empty()) {
-                        paths.push_back(current);
-                        current.clear();
-                    }
-                }
-                else {
-                    current += c;
-                }
-            }
-            if (!current.empty()) {
-                paths.push_back(current);
-            }
-
-            for (const auto& p : paths) {
-                std::string cleanPath = stripQuotes(p);
-                if (!cleanPath.empty()) {
-                    interpreter->m_includePaths.push_back(std::filesystem::absolute(cleanPath).string());
-                }
-            }
-        }
-        // 3. 执行单 tzd 文件: --runMainTzd="path"
-        else if (arg.rfind("--runMainTzd=", 0) == 0) {
-            hasCustomFlags = true;
-            size_t eqPos = arg.find('=');
-            runMainScript = stripQuotes(arg.substr(eqPos + 1));
-        }
-        // 4. 静默模式 (隐藏 >>> 10 的输出)
-        else if (arg == "--silent" || arg == "-s") {
-            silentMode = true;
-        }
-        // 5. 调试端口/主机
-        else if (arg.rfind("--debug-port=", 0) == 0) {
-            size_t eqPos = arg.find('=');
-            debugPort = std::stoi(arg.substr(eqPos + 1));
-            enableDebug = true;
-        }
-        else if (arg.rfind("--debug-host=", 0) == 0) {
-            size_t eqPos = arg.find('=');
-            debugHost = stripQuotes(arg.substr(eqPos + 1));
-            enableDebug = true;
-        }
-        else if (arg.rfind("--debug-addr=", 0) == 0) {
-            size_t eqPos = arg.find('=');
-            std::string addr = stripQuotes(arg.substr(eqPos + 1));
-            size_t colon = addr.find(':');
-            if (colon != std::string::npos) {
-                debugHost = addr.substr(0, colon);
-                debugPort = std::stoi(addr.substr(colon + 1));
-            } else {
-                debugPort = std::stoi(addr);
-            }
-            enableDebug = true;
-        }
-    }
-
-    if (silentMode || !runMainScript.empty()) {
-        interpreter->m_silentMode = true;
-    }
-
-    // 启动调试服务器
-    if (enableDebug && debugPort > 0) {
-        TzdDebugger::startDebugServer(interpreter, debugHost, debugPort);
-    }
-
-    // 文件运行模式
-    if (!runMainScript.empty()) {
-        try {
-            interpreter->loadScriptFromFile(runMainScript);
-            
-            // 检查是否有 main() 函数并执行
-            if (!interpreter->scopes.empty() && interpreter->scopes[0].count("main")) {
-                TzdValue mainFunc = interpreter->scopes[0]["main"];
-                if (mainFunc.type == TzdValue::FUNCTION) {
-                    interpreter->callFunction(mainFunc, {});
-                }
-            }
-        }
-        catch (const std::exception& e) {
-            std::fprintf(stderr, TzdErr::EXECUTION, e.what()); std::cerr << std::endl;
-        }
-        return;
-    }
-
-    // 非交互模式或带标志的交互模式
-    if (hasCustomFlags) {
-        enterInteractiveMode();
-        return;
-    }
-
-    // 原生命令行执行逻辑
-    if (argc > 1) {
-        std::string cmdLine = "";
-        for (int i = 1; i < argc; ++i) {
-            std::string arg = argv[i];
-            // 过滤配置标志
-            if (arg == "-s" || arg == "--silent" ||
-                arg.rfind("--debug-port=", 0) == 0 ||
-                arg.rfind("--debug-host=", 0) == 0 ||
-                arg.rfind("--debug-addr=", 0) == 0 ||
-                arg.rfind("--setProjectDirectory=", 0) == 0 ||
-                arg.rfind("--setpd=", 0) == 0 ||
-                arg.rfind("--addLibraryDirectory=", 0) == 0 ||
-                arg.rfind("--runMainTzd=", 0) == 0) 
-            {
-                continue;
-            }
-            cmdLine += arg + " ";
-        }
-        
-        std::string trimCmd = cmdLine;
-        trimCmd.erase(0, trimCmd.find_first_not_of(" \t\r\n"));
-        trimCmd.erase(trimCmd.find_last_not_of(" \t\r\n") + 1);
-        
-        if (!trimCmd.empty()) {
-            process(trimCmd);
-        } else {
-            enterInteractiveMode();
-        }
-    }
-    else {
-        enterInteractiveMode();
-    }
+
+        pid = TzdStackTrace::getPidByName(target);
+
+
+    }
+
+
+    if (pid == 0) {
+
+
+        std::cout << "[Tzd] 错误: 找不到目标进程: " << target << std::endl;
+
+
+        return;
+
+
+    }
+
+
+    std::cout << "[Tzd] 正在扫描进程: " << target << " (" << pid << ")" << std::endl;
+
+
+    if (!moduleName.empty()) std::cout << "[Tzd] 过滤模块: " << moduleName << std::endl;
+
+
+    if (!pdbPath.empty())   std::cout << "[Tzd] 符号文件: " << pdbPath << std::endl;
+
+
+    if (useGui)             std::cout << "[Tzd] 模式: GUI 视图" << std::endl;
+
+
+    TzdFuncScanner scanner;
+
+
+    if (useGui) {
+
+
+        std::vector<ScanResult> results;
+
+
+        scanner.scanProcess(pid, moduleName, pdbPath, &results);
+
+
+        if (results.empty()) {
+
+
+            std::cout << "[Tzd] 警告: 未扫描到任何符合特征的函数，GUI 未启动。" << std::endl;
+
+
+        }
+
+
+    }
+
+
+    else {
+
+
+        scanner.scanProcess(pid, moduleName, pdbPath, nullptr);
+
+
+    }
+
+
+    std::cout << "\n[Tzd] 任务已提交，扫描完成。" << std::endl;
+
+
+}
+
+
+void TzdCommandSystem::handleMemoryAsm(const std::vector<std::string>& args) {
+
+
+    if (args.empty()) {
+
+
+        std::cout << "[Tzd] 用法: MemoryAsm <PID|Name>;" << std::endl;
+
+
+        return;
+
+
+    }
+
+
+    DWORD pid = (isdigit(args[0][0])) ? std::stoul(args[0]) : TzdStackTrace::getPidByName(args[0]);
+
+
+    if (pid != 0) {
+
+
+        TzdMemoryAsm::analyzeAndDumpAsm(pid);
+
+
+    }
+
+
+    else {
+
+
+        std::cout << "[Tzd] 错误: 找不到目标进程。" << std::endl;
+
+
+    }
+
+
+}
+
+
+void TzdCommandSystem::handleStackTrace(const std::vector<std::string>& args) {
+
+
+    if (args.empty()) {
+
+
+        std::cout << "[Tzd] 错误: 请提供 PID 或进程名。用法: StackTrace <Target>;" << std::endl;
+
+
+        return;
+
+
+    }
+
+
+    std::string target = args[0];
+
+
+    DWORD pid = 0;
+
+
+    if (!target.empty() && std::all_of(target.begin(), target.end(), ::isdigit)) {
+
+
+        pid = std::stoul(target);
+
+
+    }
+
+
+    else {
+
+
+        pid = TzdStackTrace::getPidByName(target);
+
+
+        if (pid == 0) {
+
+
+            std::cout << "[Tzd] 错误: 找不到名为 '" << target << "' 的进程。" << std::endl;
+
+
+            return;
+
+
+        }
+
+
+        std::cout << "[Tzd] 已找到进程 " << target << "，对应 PID: " << pid << std::endl;
+
+
+    }
+
+
+    TzdStackTrace::dumpProcessStack(pid);
+
+
+}
+
+
+void TzdCommandSystem::printHelp(std::string cmdName) {
+
+
+    if (cmdName.empty()) {
+
+
+        std::cout << "\n--- " << APP_NAME << " 命令系统 (作者: " << AUTHOR << ") ---" << std::endl;
+
+
+        std::cout << "直接输入命令并以分号(;)结束。常用命令如下:" << std::endl;
+
+
+        for (auto const& [name, meta] : registry) {
+
+
+            std::cout << "  > " << name << " \t [" << meta.chineseName << "]" << std::endl;
+
+
+        }
+
+
+        std::cout << "输入 'help <命令名>;' 查看具体详情。" << std::endl;
+
+
+    }
+
+
+    else {
+
+
+        if (registry.count(cmdName)) {
+
+
+            auto& m = registry[cmdName];
+
+
+            std::cout << "\n【命令中文名】: " << m.chineseName << std::endl;
+
+
+            std::cout << "【使用格式】  : " << m.format << std::endl;
+
+
+            std::cout << "【功能介绍】  : " << m.description << std::endl;
+
+
+            std::cout << "【子选项/扩展】: " << m.subOptions << std::endl;
+
+
+        }
+
+
+        else {
+
+
+            std::cout << "[Tzd] 未找到命令 '" << cmdName << "' 的帮助信息。" << std::endl;
+
+
+        }
+
+
+    }
+
+
+}
+
+
+void TzdCommandSystem::process(std::string input) {
+
+
+    // 1. 去除首尾空白
+
+
+    std::string trimmed = input;
+
+
+    size_t firstNonSpace = trimmed.find_first_not_of(" \t\r\n");
+
+
+    if (firstNonSpace == std::string::npos) return;
+
+
+    trimmed.erase(0, firstNonSpace);
+
+
+    size_t lastNonSpace = trimmed.find_last_not_of(" \t\r\n");
+
+
+    if (lastNonSpace != std::string::npos) trimmed.erase(lastNonSpace + 1);
+
+
+    if (trimmed.empty()) return;
+
+
+    // 2. 提取首个单词
+
+
+    size_t firstSpace = trimmed.find_first_of(" \t");
+
+
+    std::string cmdHead = (firstSpace == std::string::npos) ? trimmed : trimmed.substr(0, firstSpace);
+
+
+    // 3. 关键字保护
+
+
+    static const std::set<std::string> keywords = {
+
+
+        "fun", "class", "var", "if", "while", "for", "return", "ret",
+
+
+        "print", "new", "sin", "cos", "tan", "log"
+
+
+    };
+
+
+    bool isKeyword = keywords.count(cmdHead);
+
+
+    bool looksLikeFunctionCall = false;
+
+
+    if (trimmed.find('(') != std::string::npos) {
+
+
+        size_t openParen = trimmed.find('(');
+
+
+        std::string potentialName = trimmed.substr(0, openParen);
+
+
+        size_t lastChar = potentialName.find_last_not_of(" \t");
+
+
+        if (lastChar != std::string::npos) potentialName = potentialName.substr(0, lastChar + 1);
+
+
+        if (potentialName == cmdHead) {
+
+
+            looksLikeFunctionCall = true;
+
+
+        }
+
+
+    }
+
+
+    bool isSystemCmd = (cmdHead == "help") || (!isKeyword && !looksLikeFunctionCall && registry.count(cmdHead));
+
+
+    if (!isSystemCmd) {
+
+
+        // --- 脚本模式 ---
+
+
+        std::string scriptCode = trimmed;
+
+
+        if (scriptCode.size() >= 4 && scriptCode.substr(0, 4) == "Run ") {
+
+
+            scriptCode = scriptCode.substr(4);
+
+
+            size_t scriptStart = scriptCode.find_first_not_of(" \t");
+
+
+            if (scriptStart != std::string::npos) scriptCode.erase(0, scriptStart);
+
+
+        }
+
+
+        if (scriptCode.empty()) return;
+
+
+        std::vector<std::string> args = { scriptCode };
+
+
+        try {
+
+
+            handleRunScript(args);
+
+
+        }
+
+
+        catch (const std::exception& e) {
+
+
+            std::cerr << "[Tzd 运行时错误] " << e.what() << std::endl;
+
+
+        }
+
+
+        return;
+
+
+    }
+
+
+    // --- 系统指令模式 ---
+
+
+    std::vector<std::string> tokens;
+
+
+    std::string currentToken;
+
+
+    bool inQuotes = false;
+
+
+    for (size_t i = 0; i < trimmed.length(); ++i) {
+
+
+        char c = trimmed[i];
+
+
+        if (c == '"') { inQuotes = !inQuotes; continue; }
+
+
+        if (std::isspace(c) && !inQuotes) {
+
+
+            if (!currentToken.empty()) { tokens.push_back(currentToken); currentToken.clear(); }
+
+
+        }
+
+
+        else currentToken += c;
+
+
+    }
+
+
+    if (!currentToken.empty()) tokens.push_back(currentToken);
+
+
+    // 重定向处理
+
+
+    std::string outputFile = "";
+
+
+    auto it = std::find(tokens.begin(), tokens.end(), "=>");
+
+
+    if (it != tokens.end()) {
+
+
+        if (std::next(it) != tokens.end()) {
+
+
+            outputFile = *std::next(it);
+
+
+            tokens.erase(it, tokens.end());
+
+
+        }
+
+
+        else {
+
+
+            std::cerr << "[Tzd 语法错误] 重定向符号 '=>' 后缺少文件名。" << std::endl;
+
+
+            return;
+
+
+        }
+
+
+    }
+
+
+    if (tokens.empty()) return;
+
+
+    std::string head = tokens[0];
+
+
+    std::vector<std::string> sysArgs(tokens.begin() + 1, tokens.end());
+
+
+    std::ofstream outFile;
+
+
+    std::streambuf* coutBuf = nullptr;
+
+
+    if (!outputFile.empty()) {
+
+
+        char buffer[MAX_PATH];
+
+
+        GetModuleFileNameA(NULL, buffer, MAX_PATH);
+
+
+        std::filesystem::path finalPath = std::filesystem::path(buffer).parent_path() / outputFile;
+
+
+        outFile.open(finalPath, std::ios::out | std::ios::trunc);
+
+
+        if (outFile.is_open()) {
+
+
+            coutBuf = std::cout.rdbuf();
+
+
+            std::cout.rdbuf(outFile.rdbuf());
+
+
+        }
+
+
+        else {
+
+
+            std::cerr << "[Tzd 错误] 无法创建输出文件" << std::endl;
+
+
+            return;
+
+
+        }
+
+
+    }
+
+
+    if (head == "help") {
+
+
+        if (!sysArgs.empty()) printHelp(sysArgs[0]);
+
+
+        else printHelp();
+
+
+    }
+
+
+    else {
+
+
+        registry[head].handler(sysArgs);
+
+
+    }
+
+
+    if (coutBuf) {
+
+
+        std::cout.rdbuf(coutBuf);
+
+
+        outFile.close();
+
+
+        std::cout << "[Tzd] 输出已保存至: " << outputFile << std::endl;
+
+
+    }
+
+
+}
+
+
+void TzdCommandSystem::enterInteractiveMode() {
+
+
+    std::cout << R"(
+
+
+  ____________________________________________________________________
+
+
+ |                                                                    |
+
+
+ |   _______ ________   __   _____                                    |
+
+
+ |  |__   __|___  /\ \ / /  / ____|                 _                 |
+
+
+ |     | |     / /  \ V /  | |     ___  _ __  _ __ | |_ _ __ ___      |
+
+
+ |     | |    / /    > <   | |    / _ \| '_ \| '_ \| __| '__/ _ \     |
+
+
+ |     | |   / /__  / . \  | |___| (_) | | | | | | | |_| | | (_) |    |
+
+
+ |     |_|  /_____|/_/ \_\  \_____\___/|_| |_|_| |_|\__|_|  \___/     |
+
+
+ |                                                                    |
+
+
+ |_____________________________________ Powered by TzdEngine _________|
+
+
+)" << std::endl;
+
+
+    std::cout << " [System Info]" << std::endl;
+
+
+    std::cout << "   * 版本号  : 1.0.0 Alpha" << std::endl;
+
+
+    std::cout << "   * 构建于  : " << __DATE__ << " " << __TIME__ << std::endl;
+
+
+    std::cout << "   * 开发者  : " << AUTHOR << std::endl;
+
+
+    std::cout << "   * 架构    : " << (sizeof(void*) == 8 ? "x64 (64-bit)" : "x86 (32-bit)") << std::endl;
+
+
+    std::cout << "\n [Module Status]" << std::endl;
+
+
+    std::cout << "   * StackTrace ... [OK]" << std::endl;
+
+
+    std::cout << "   * MemoryAsm  ... [OK]" << std::endl;
+
+
+    std::cout << "   * PdbReader  ... [OK]" << std::endl;
+
+
+    std::cout << "   * GUI System ... [Standby]" << std::endl;
+
+
+    std::cout << "\n [Interactive Shell]" << std::endl;
+
+
+    std::cout << "   输入 'help' 查看完整命令列表。" << std::endl;
+
+
+    std::cout << "   输入 'exit' 退出程序。" << std::endl;
+
+
+    std::cout << "   支持多行输入 (直到大括号闭合或遇到分号)。" << std::endl;
+
+
+    std::cout << " --------------------------------------------------------------------\n" << std::endl;
+
+    // Use TzdConsole for interactive mode with syntax highlighting, history, clipboard
+    TzdConsole console;
+
+    console.run("Tzd> ", "   > ", [this](const std::string& input) -> bool {
+        process(input);
+        return true;
+    });
+
+
+}
+
+
+void TzdCommandSystem::start(int argc, char* argv[]) {
+    init();
+
+    std::string runMainScript = "";
+
+    bool hasCustomFlags = false;
+
+    bool silentMode = false;
+
+
+
+    std::string debugHost = "127.0.0.1";
+
+    int debugPort = 0;
+
+    bool enableDebug = false;
+
+
+
+    // 清理尾部引号的 Lambda
+
+    auto stripQuotes = [](const std::string& s) -> std::string {
+
+        std::string res = s;
+
+        if (res.size() >= 2 && res.front() == '"' && res.back() == '"') {
+
+            res = res.substr(1, res.size() - 2);
+
+        }
+
+        else if (res.size() >= 2 && res.front() == '\'' && res.back() == '\'') {
+
+            res = res.substr(1, res.size() - 2);
+
+        }
+
+        return res;
+
+        };
+
+
+
+    // 参数解析
+
+    for (int i = 1; i < argc; ++i) {
+
+        std::string arg = argv[i];
+
+
+
+        // 1. 工作目录: --setProjectDirectory="path" 或 --setpd="path"
+
+        if (arg.rfind("--setProjectDirectory=", 0) == 0 || arg.rfind("--setpd=", 0) == 0) {
+
+            hasCustomFlags = true;
+
+            size_t eqPos = arg.find('=');
+
+            std::string pathVal = stripQuotes(arg.substr(eqPos + 1));
+
+            if (!pathVal.empty()) {
+
+                try {
+
+                    std::filesystem::current_path(pathVal);
+
+                    interpreter->m_includePaths.push_back(std::filesystem::absolute(pathVal).string());
+
+                }
+
+                catch (const std::exception& e) {
+
+                    std::fprintf(stderr, TzdCmd::WORK_DIR_WARN, e.what()); std::cerr << std::endl;
+
+                }
+
+            }
+
+        }
+
+        // 2. 库路径: --addLibraryDirectory="path1","path2"
+
+        else if (arg.rfind("--addLibraryDirectory=", 0) == 0) {
+
+            hasCustomFlags = true;
+
+            size_t eqPos = arg.find('=');
+
+            std::string valList = arg.substr(eqPos + 1);
+
+
+
+            // 逗号分隔路径支持
+
+            std::vector<std::string> paths;
+
+            std::string current;
+
+            bool insideQuotes = false;
+
+            for (size_t charIdx = 0; charIdx < valList.size(); ++charIdx) {
+
+                char c = valList[charIdx];
+
+                if (c == '"' || c == '\'') {
+
+                    insideQuotes = !insideQuotes;
+
+                    continue;
+
+                }
+
+                if (c == ',' && !insideQuotes) {
+
+                    if (!current.empty()) {
+
+                        paths.push_back(current);
+
+                        current.clear();
+
+                    }
+
+                }
+
+                else {
+
+                    current += c;
+
+                }
+
+            }
+
+            if (!current.empty()) {
+
+                paths.push_back(current);
+
+            }
+
+
+
+            for (const auto& p : paths) {
+
+                std::string cleanPath = stripQuotes(p);
+
+                if (!cleanPath.empty()) {
+
+                    interpreter->m_includePaths.push_back(std::filesystem::absolute(cleanPath).string());
+
+                }
+
+            }
+
+        }
+
+        // 3. 执行单 tzd 文件: --runMainTzd="path"
+
+        else if (arg.rfind("--runMainTzd=", 0) == 0) {
+
+            hasCustomFlags = true;
+
+            size_t eqPos = arg.find('=');
+
+            runMainScript = stripQuotes(arg.substr(eqPos + 1));
+
+        }
+
+        // 4. 静默模式 (隐藏 >>> 10 的输出)
+
+        else if (arg == "--silent" || arg == "-s") {
+
+            silentMode = true;
+
+        }
+
+        // 4b. 禁用 JIT 模式 (仅使用解释器)
+
+        else if (arg == "--noJit" || arg == "--no-jit") {
+
+            interpreter->m_noJit = true;
+
+        }
+
+        // 4c. 纯解释器模式 (--interpreter / --tree-walk)：禁用 JIT 且禁用字节码 VM
+
+        else if (arg == "--interpreter" || arg == "--tree-walk") {
+
+            interpreter->m_noJit = true;
+
+            interpreter->m_forceInterpreter = true;
+
+            interpreter->m_useBytecodeVM = false;
+
+        }
+
+        // 5. 调试端口/主机
+
+        else if (arg.rfind("--debug-port=", 0) == 0) {
+
+            size_t eqPos = arg.find('=');
+
+            debugPort = std::stoi(arg.substr(eqPos + 1));
+
+            enableDebug = true;
+
+        }
+
+        else if (arg.rfind("--debug-host=", 0) == 0) {
+
+            size_t eqPos = arg.find('=');
+
+            debugHost = stripQuotes(arg.substr(eqPos + 1));
+
+            enableDebug = true;
+
+        }
+
+        else if (arg.rfind("--debug-addr=", 0) == 0) {
+
+            size_t eqPos = arg.find('=');
+
+            std::string addr = stripQuotes(arg.substr(eqPos + 1));
+
+            size_t colon = addr.find(':');
+
+            if (colon != std::string::npos) {
+
+                debugHost = addr.substr(0, colon);
+
+                debugPort = std::stoi(addr.substr(colon + 1));
+
+            }
+            else {
+
+                debugPort = std::stoi(addr);
+
+            }
+
+            enableDebug = true;
+
+        }
+
+        // 6. 编译为字节码: --compile=file.tzd
+        else if (arg.rfind("--compile=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            std::string srcPath = stripQuotes(arg.substr(eqPos + 1));
+
+            try {
+                std::ifstream f(srcPath);
+                std::string code((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                f.close();
+
+                std::string outPath = srcPath.substr(0, srcPath.find_last_of('.')) + ".tzdc";
+                if (interpreter->compileToBytecodeFile(code, outPath)) {
+                    std::cout << "Compiled: " << srcPath << " -> " << outPath << std::endl;
+                } else {
+                    std::cerr << "Compile failed: syntax errors" << std::endl;
+                }
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Compile error: " << e.what() << std::endl;
+            }
+            fflush(stdout); fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+
+        // 7. 执行字节码文件: --runbc=file.tzdc
+        else if (arg.rfind("--runbc=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            std::string bcPath = stripQuotes(arg.substr(eqPos + 1));
+
+            try {
+                interpreter->executeBytecodeFile(bcPath);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Bytecode execution error: " << e.what() << std::endl;
+            }
+            fflush(stdout); fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+
+    }
+
+
+
+    if (silentMode || !runMainScript.empty()) {
+
+        interpreter->m_silentMode = true;
+
+    }
+
+
+
+    // 启动调试服务器
+
+    if (enableDebug && debugPort > 0) {
+
+        TzdDebugger::startDebugServer(interpreter, debugHost, debugPort);
+
+    }
+
+
+
+    // 文件运行模式
+
+    if (!runMainScript.empty()) {
+        try {
+            interpreter->loadScriptFromFile(runMainScript);
+
+            // 检查是否有 main() 函数并执行
+            if (!interpreter->scopes.empty() && interpreter->scopes[0].count("main")) {
+                TzdValue mainFunc = interpreter->scopes[0]["main"];
+                if (mainFunc.type == TzdValue::FUNCTION) {
+                    interpreter->callFunction(mainFunc, {});
+                }
+            }
+        }
+        catch (const std::exception& e) {
+            std::fprintf(stderr, TzdErr::EXECUTION, e.what()); std::cerr << std::endl;
+        }
+
+        fflush(stdout); fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), 0);
+    }
+
+
+
+    // 非交互模式或带标志的交互模式
+
+    if (hasCustomFlags) {
+
+        enterInteractiveMode();
+
+        return;
+
+    }
+
+
+
+    // 原生命令行执行逻辑
+
+    if (argc > 1) {
+
+        std::string cmdLine = "";
+
+        for (int i = 1; i < argc; ++i) {
+
+            std::string arg = argv[i];
+
+            // 过滤配置标志
+
+            if (arg == "-s" || arg == "--silent" ||
+
+                arg == "--noJit" || arg == "--no-jit" ||
+                arg == "--interpreter" || arg == "--tree-walk" ||
+
+                arg.rfind("--debug-port=", 0) == 0 ||
+
+                arg.rfind("--debug-host=", 0) == 0 ||
+
+                arg.rfind("--debug-addr=", 0) == 0 ||
+
+                arg.rfind("--setProjectDirectory=", 0) == 0 ||
+
+                arg.rfind("--setpd=", 0) == 0 ||
+
+                arg.rfind("--addLibraryDirectory=", 0) == 0 ||
+
+                arg.rfind("--runMainTzd=", 0) == 0)
+
+            {
+
+                continue;
+
+            }
+
+            cmdLine += arg + " ";
+
+        }
+
+
+
+        std::string trimCmd = cmdLine;
+
+        trimCmd.erase(0, trimCmd.find_first_not_of(" \t\r\n"));
+
+        trimCmd.erase(trimCmd.find_last_not_of(" \t\r\n") + 1);
+
+
+
+        if (!trimCmd.empty()) {
+
+            process(trimCmd);
+
+        }
+        else {
+
+            enterInteractiveMode();
+
+        }
+
+    }
+
+    else {
+
+        enterInteractiveMode();
+
+    }
+
 }

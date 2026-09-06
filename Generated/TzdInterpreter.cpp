@@ -1,4 +1,231 @@
-﻿#include "TzdInterpreter.h"
+#include "TzdInterpreter.h"
+
+#include "TzdGC.h"
+#include "TzdTieringEngine.h"
+#include "TzdBytecode.h"
+
+bool tzdStackNearOverflow() {
+    static thread_local ULONG_PTR s_low = 0;
+    static thread_local ULONG_PTR s_high = 0;
+    if (s_low == 0) {
+        GetCurrentThreadStackLimits(&s_low, &s_high);
+    }
+    char probe;
+    constexpr ULONG_PTR kGuard = 4ull * 1024 * 1024;
+    return (reinterpret_cast<ULONG_PTR>(&probe) - s_low) < kGuard;
+}
+
+TzdValue::TzdValue(TzdInstance* i) : type(INSTANCE), instanceVal(i) {
+    if (instanceVal) instanceVal->retain();
+}
+
+TzdValue::TzdValue(const TzdValue& o)
+    : annotations(o.annotations), type(o.type), name(o.name),
+      dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
+      sVal(o.sVal), bVal(o.bVal), arrVal(o.arrVal), mapVal(o.mapVal),
+      params(o.params), paramTypes(o.paramTypes), funcBody(o.funcBody),
+      nativeFunc(o.nativeFunc), classDefVal(o.classDefVal),
+      instanceVal(o.instanceVal), sourceFile(o.sourceFile),
+      line(o.line), column(o.column),
+      jitInternalName(o.jitInternalName), nativeArr(o.nativeArr),
+      isNativeDoubleArr(o.isNativeDoubleArr), jittedPtr(o.jittedPtr) {
+    if (instanceVal) instanceVal->retain();
+    if (type == TzdValue::TENSOR && ptrVal) tzdTensorRetain(ptrVal);
+}
+
+TzdValue::TzdValue(TzdValue&& o) noexcept
+    : annotations(std::move(o.annotations)), type(o.type), name(std::move(o.name)),
+      dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
+      sVal(std::move(o.sVal)), bVal(o.bVal), arrVal(std::move(o.arrVal)), mapVal(std::move(o.mapVal)),
+      params(std::move(o.params)), paramTypes(std::move(o.paramTypes)), funcBody(o.funcBody),
+      nativeFunc(std::move(o.nativeFunc)), classDefVal(o.classDefVal),
+      instanceVal(o.instanceVal), sourceFile(std::move(o.sourceFile)),
+      line(o.line), column(o.column),
+      jitInternalName(std::move(o.jitInternalName)), nativeArr(std::move(o.nativeArr)),
+      isNativeDoubleArr(o.isNativeDoubleArr), jittedPtr(o.jittedPtr) {
+    o.instanceVal = nullptr;
+    o.ptrVal = nullptr;
+    o.jittedPtr = nullptr;
+    o.type = NONE;
+}
+
+TzdValue& TzdValue::operator=(const TzdValue& o) {
+    if (this == &o) return *this;
+    if (instanceVal) instanceVal->release();
+    if (type == TzdValue::TENSOR && ptrVal) tzdTensorRelease(ptrVal);
+
+    annotations = o.annotations;
+    type = o.type;
+    name = o.name;
+    dVal = o.dVal;
+    lVal = o.lVal;
+    ulVal = o.ulVal;
+    ptrVal = o.ptrVal;
+    sVal = o.sVal;
+    bVal = o.bVal;
+    arrVal = o.arrVal;
+    mapVal = o.mapVal;
+    params = o.params;
+    paramTypes = o.paramTypes;
+    funcBody = o.funcBody;
+    nativeFunc = o.nativeFunc;
+    classDefVal = o.classDefVal;
+    instanceVal = o.instanceVal;
+    sourceFile = o.sourceFile;
+    line = o.line;
+    column = o.column;
+    jitInternalName = o.jitInternalName;
+    nativeArr = o.nativeArr;
+    isNativeDoubleArr = o.isNativeDoubleArr;
+    jittedPtr = o.jittedPtr;
+
+    if (instanceVal) instanceVal->retain();
+    if (type == TzdValue::TENSOR && ptrVal) tzdTensorRetain(ptrVal);
+    return *this;
+}
+
+TzdValue& TzdValue::operator=(TzdValue&& o) noexcept {
+    if (this == &o) return *this;
+    if (instanceVal) instanceVal->release();
+    if (type == TzdValue::TENSOR && ptrVal) tzdTensorRelease(ptrVal);
+
+    annotations = std::move(o.annotations);
+    type = o.type;
+    name = std::move(o.name);
+    dVal = o.dVal;
+    lVal = o.lVal;
+    ulVal = o.ulVal;
+    ptrVal = o.ptrVal;
+    sVal = std::move(o.sVal);
+    bVal = o.bVal;
+    arrVal = std::move(o.arrVal);
+    mapVal = std::move(o.mapVal);
+    params = std::move(o.params);
+    paramTypes = std::move(o.paramTypes);
+    funcBody = o.funcBody;
+    nativeFunc = std::move(o.nativeFunc);
+    classDefVal = o.classDefVal;
+    instanceVal = o.instanceVal;
+    sourceFile = std::move(o.sourceFile);
+    line = o.line;
+    column = o.column;
+    jitInternalName = std::move(o.jitInternalName);
+    nativeArr = std::move(o.nativeArr);
+    isNativeDoubleArr = o.isNativeDoubleArr;
+    jittedPtr = o.jittedPtr;
+
+    o.instanceVal = nullptr;
+    o.ptrVal = nullptr;
+    o.jittedPtr = nullptr;
+    o.type = NONE;
+    return *this;
+}
+
+TzdValue::~TzdValue() {
+    if (instanceVal) {
+        instanceVal->release();
+        instanceVal = nullptr;
+    }
+    if (type == TzdValue::TENSOR && ptrVal) {
+        tzdTensorRelease(ptrVal);
+        ptrVal = nullptr;
+    }
+}
+
+void TzdValue::setInstance(TzdInstance* i) {
+    if (instanceVal == i) return;
+    if (instanceVal) instanceVal->release();
+    instanceVal = i;
+    if (instanceVal) instanceVal->retain();
+}
+
+void tzdPoolSlotReleaseInstance(TzdValue* v) {
+    if (!v) return;
+    if (v->instanceVal) {
+        v->instanceVal->release();
+        v->instanceVal = nullptr;
+    }
+    if (v->type == TzdValue::TENSOR && v->ptrVal) {
+        tzdTensorRelease(v->ptrVal);
+        v->ptrVal = nullptr;
+    }
+}
+
+TzdInterpreter::TzdInterpreter() {
+    m_jitEngine = std::make_unique<TzdJitEngine>();
+    m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "main_module");
+    scopes.push_back({});
+    initNativeFunctions();
+}
+
+TzdInterpreter::~TzdInterpreter() {
+    for (auto mod : loadedModules) delete mod;
+    loadedModules.clear();
+}
+
+bool TzdInterpreter::compileToBytecodeFile(const std::string& code, const std::string& outPath) {
+    antlr4::ANTLRInputStream input(code);
+    TzdLangLexer lexer(&input);
+    antlr4::CommonTokenStream tokens(&lexer);
+    TzdLangParser parser(&tokens);
+    auto* tree = parser.program();
+    if (parser.getNumberOfSyntaxErrors() > 0) return false;
+    TzdBytecodeCompiler compiler;
+    BytecodeModule mod = compiler.compile(tree, code);
+    return compiler.saveToFile(mod, outPath);
+}
+
+bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
+    // Disable JIT during bytecode execution — the bytecode VM IS the fast path.
+    bool savedNoJit = m_noJit;
+    m_noJit = true;
+
+    // Ensure native functions are available
+    if (scopes.empty()) scopes.push_back({});
+    initNativeFunctions();
+
+    TzdBytecodeCompiler bc;
+    BytecodeModule mod = bc.loadFromFile(bcPath);
+
+    // Process class/enum/annotation/import declarations from source code.
+    // Keep the ANTLR parse tree alive for the entire function scope so that
+    // constructor/method body pointers stored in class definitions remain valid
+    // during bytecode VM execution.
+    std::unique_ptr<antlr4::ANTLRInputStream> input;
+    std::unique_ptr<TzdLangLexer> lexer;
+    std::unique_ptr<antlr4::CommonTokenStream> tokens;
+    std::unique_ptr<TzdLangParser> parser;
+    TzdLangParser::ProgramContext* tree = nullptr;
+
+    if (!mod.sourceCode.empty()) {
+        input = std::make_unique<antlr4::ANTLRInputStream>(mod.sourceCode);
+        lexer = std::make_unique<TzdLangLexer>(input.get());
+        tokens = std::make_unique<antlr4::CommonTokenStream>(lexer.get());
+        parser = std::make_unique<TzdLangParser>(tokens.get());
+        tree = parser->program();
+        if (parser->getNumberOfSyntaxErrors() == 0) {
+            for (auto stmt : tree->statement()) {
+                if (dynamic_cast<TzdLangParser::ClassDeclStmtContext*>(stmt) ||
+                    dynamic_cast<TzdLangParser::EnumDeclStmtContext*>(stmt) ||
+                    dynamic_cast<TzdLangParser::AnnotationDeclStmtContext*>(stmt) ||
+                    dynamic_cast<TzdLangParser::ImportStmtContext*>(stmt) ||
+                    dynamic_cast<TzdLangParser::NativeFunDeclStmtContext*>(stmt)) {
+                    visit(stmt);
+                }
+            }
+        }
+    }
+
+    TzdBytecodeVM vm(this);
+    vm.execute(mod);
+
+    // Call main() if it exists
+    if (mod.funcIndex.count("main")) {
+        vm.callFunction(mod, "main", {});
+    }
+    m_noJit = savedNoJit;
+    return true;
+}
 #include "../TzdDebugger.h"
 #include <fstream>
 #include <chrono>
@@ -227,12 +454,14 @@ std::string AnsiToUtf8(const std::string& str) {
 
 std::string Utf8ToAnsi(const std::string& utf8) {
     if (utf8.empty()) return "";
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), nullptr, 0);
+    if (wlen <= 0) return "";
     std::wstring wstr(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wstr[0], wlen);
-    int alen = WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), &wstr[0], wlen);
+    int alen = WideCharToMultiByte(CP_ACP, 0, wstr.data(), wlen, nullptr, 0, nullptr, nullptr);
+    if (alen <= 0) return "";
     std::string ansi(alen, '\0');
-    WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, &ansi[0], alen, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, wstr.data(), wlen, &ansi[0], alen, nullptr, nullptr);
     return ansi;
 }
 
@@ -398,12 +627,14 @@ std::string TzdInterpreter::getAsString(std::any value) {
     }
     case TzdValue::INSTANCE: {
         if (!v.instanceVal) return "null instance";
-        std::string res = "Instance of " + v.instanceVal->definition->fullName + " {";
+        std::string res = "Instance of " + (v.instanceVal->definition ? v.instanceVal->definition->fullName : "Unknown") + " {";
         bool first = true;
-        for (auto const& [name, fVal] : v.instanceVal->fields) {
-            if (!first) res += ", ";
-            res += name + ": " + getAsString(fVal);
-            first = false;
+        if (v.instanceVal->definition) {
+            for (auto const& [name, field] : v.instanceVal->definition->fields) {
+                if (!first) res += ", ";
+                res += name + ": " + getAsString(v.instanceVal->getMember(name));
+                first = false;
+            }
         }
         return res + "}";
     }
@@ -715,8 +946,26 @@ void TzdInterpreter::loadScript(std::string code) {
     loadedModules.push_back(mod);
     initNativeFunctions(); // 确保内建函数可用
 
+    // Compile to bytecode for faster function execution (non-JIT path).
+    // When m_forceInterpreter (--interpreter / --tree-walk) is set, the
+    // bytecode VM must NOT engage; loadScript() must not reset the flag.
+    if (m_forceInterpreter) {
+        m_useBytecodeVM = false;
+    } else {
+        try {
+            TzdBytecodeCompiler bc;
+            m_bytecodeModule = std::make_unique<BytecodeModule>(bc.compile(mod->tree, utf8Code));
+            m_bytecodeVM = std::make_unique<TzdBytecodeVM>(this);
+            m_useBytecodeVM = true;
+        } catch (...) {
+            m_useBytecodeVM = false;
+        }
+    }
+
     // --- 4. 执行访问（编译）与 JIT ---
     try {
+        // Set g_CurrentInterpreter so JIT compilation can register nested functions
+        g_CurrentInterpreter = this;
         // visit 过程中如果遇到 import，会递归调用 loadScript，
         // 由于我们上面做了“状态保存”，所以递归是安全的。
         std::any result = this->visit(mod->tree);
@@ -763,8 +1012,6 @@ void TzdInterpreter::loadScript(std::string code) {
         TzdErrorHandler::report("系统异常", 0, 0, e.what(), "");
     }
 
-    // --- 5. 还原父级编译器状态 ---
-    // 当前脚本编译完了，把主脚本的编译器还给 m_compiler，让主流程继续
     m_compiler = std::move(savedCompiler);
     m_pendingJitFunctions = std::move(savedPending);
     m_jitNameToUserMap = std::move(savedJitMap);
@@ -1000,43 +1247,45 @@ void TzdInterpreter::mapJitSymbolsToValue() {
     }
 }
 
+// RAII guard for the interpreter call stack + debug file stack. Lives at file
+// scope so that both callFunction() and callScriptFunction() can share it.
+struct TzdCallStackGuard {
+    TzdInterpreter* self;
+    explicit TzdCallStackGuard(TzdInterpreter* interp, const std::string& frame, const std::string& sourceFile) : self(interp) {
+        self->m_callStackFrames.push_back(frame);
+        self->m_debugFileStack.push_back(sourceFile);
+    }
+    ~TzdCallStackGuard() {
+        if (!self->m_callStackFrames.empty()) self->m_callStackFrames.pop_back();
+        if (!self->m_debugFileStack.empty()) self->m_debugFileStack.pop_back();
+    }
+};
+
 TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<TzdValue>& args) {
-    struct CallStackGuard {
-        TzdInterpreter* self;
-        explicit CallStackGuard(TzdInterpreter* interp, const std::string& frame, const std::string& sourceFile) : self(interp) {
-            self->m_callStackFrames.push_back(frame);
-            self->m_debugFileStack.push_back(sourceFile);
-        }
-        ~CallStackGuard() {
-            if (!self->m_callStackFrames.empty()) self->m_callStackFrames.pop_back();
-            if (!self->m_debugFileStack.empty()) self->m_debugFileStack.pop_back();
-        }
-    };
-
-    std::string fileLoc = formatSourcePath(func.sourceFile);
-    if (func.line > 0) {
-        fileLoc += ":" + std::to_string(func.line);
-    }
-
-    std::string stackFrame = func.name.empty() ? "<anonymous>" : func.name;
-    if (func.instanceVal && func.instanceVal->definition) {
-        stackFrame = func.instanceVal->definition->fullName + "." + func.name;
-    }
-
-    stackFrame += " (" + fileLoc + ")";
-
-    if (func.type == TzdValue::NATIVE_FUNCTION) stackFrame += " (Native Method)";
-    else if (func.type == TzdValue::FUNCTION && func.jittedPtr) stackFrame += " (JIT Compiled)";
-    else stackFrame += " (Interpreted)";
-
-    CallStackGuard stackGuard(this, stackFrame, func.sourceFile);
-
-    // 1. 类型校验
+    // 1. 类型校验 (no stack frame yet — a type error is not a runtime fault
+    //    inside a function body and should not pollute the trace).
     if (func.type != TzdValue::FUNCTION && func.type != TzdValue::NATIVE_FUNCTION) {
         throw std::runtime_error("尝试调用一个非函数对象");
     }
 
-    // 2. 参数个数校验 (针对脚本函数)
+    // Build the stack frame label.
+    std::string fileLoc = formatSourcePath(func.sourceFile);
+    if (func.line > 0) {
+        fileLoc += ":" + std::to_string(func.line);
+    }
+    std::string stackFrame = func.name.empty() ? "<anonymous>" : func.name;
+    if (func.instanceVal && func.instanceVal->definition) {
+        stackFrame = func.instanceVal->definition->fullName + "." + func.name;
+    }
+    stackFrame += " (" + fileLoc + ")";
+    if (func.type == TzdValue::NATIVE_FUNCTION) stackFrame += " (Native Method)";
+    else if (func.type == TzdValue::FUNCTION && func.jittedPtr) stackFrame += " (JIT Compiled)";
+    else stackFrame += " (Interpreted)";
+
+    TzdCallStackGuard stackGuard(this, stackFrame, func.sourceFile);
+
+    // 参数个数与类型校验 (针对脚本函数；原生函数跳过)。必须在字节码/JIT/解释
+    // 分支之前执行，以保持与原有行为一致。
     if (func.type == TzdValue::FUNCTION) {
         if (args.size() != func.params.size()) {
             throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
@@ -1053,10 +1302,104 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
         }
     }
 
-    // --- 分支 A: JIT 机器码执行 ---
-    // 只要 func.jittedPtr 不为空，就说明这个版本已经被编译成功
-    // --- 分支 A: JIT 机器码执行 ---
-    if (func.type == TzdValue::FUNCTION && func.jittedPtr && !TzdDebugger::g_DebugActive) {
+    // --- 分支 B: 原生 C++ 函数 ---
+    if (func.type == TzdValue::NATIVE_FUNCTION) {
+        return func.nativeFunc(args);
+    }
+
+    // --- 分支 C: JIT 机器码执行 (如果已生成机器码且未被禁用，最高优先级直接执行) ---
+    if (!m_noJit && func.jittedPtr && !TzdDebugger::g_DebugActive) {
+        return callScriptFunction(func.name, func.params, func.paramTypes,
+            func.funcBody, func.jittedPtr, func.instanceVal, args,
+            func.sourceFile, func.line);
+    }
+
+    // --- 分支 D: 字节码 VM 快速路径 ---
+    // IMPORTANT: only dispatch free (non-bound) functions by name. A bound
+    // method (instanceVal != nullptr) must never be routed to an unrelated
+    // free function that happens to share its name — it falls through to the
+    // script-function core which executes func.funcBody directly.
+    if (m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr) {
+        auto it = m_bytecodeModule->funcIndex.find(func.name);
+        if (it != m_bytecodeModule->funcIndex.end()) {
+            return m_bytecodeVM->callFunction(*m_bytecodeModule, func.name, args);
+        }
+    }
+
+    // --- 分支 E: 脚本函数 (解释执行)，走公共核心 ---
+    return callScriptFunction(func.name, func.params, func.paramTypes,
+        func.funcBody, func.jittedPtr, func.instanceVal, args,
+        func.sourceFile, func.line);
+}
+
+TzdValue TzdInterpreter::callMethod(ClassMethod& method, TzdInstance* receiver,
+    const std::vector<TzdValue>& args) {
+    // Build the stack frame label.
+    std::string fileLoc = formatSourcePath(method.sourceFile);
+    if (method.line > 0) {
+        fileLoc += ":" + std::to_string(method.line);
+    }
+    std::string stackFrame = method.name.empty() ? "<anonymous>" : method.name;
+    if (receiver && receiver->definition) {
+        stackFrame = receiver->definition->fullName + "." + method.name;
+    }
+    stackFrame += " (" + fileLoc + ")";
+    if (method.isNative) stackFrame += " (Native Method)";
+    else if (method.jittedPtr) stackFrame += " (JIT Compiled)";
+    else stackFrame += " (Interpreted)";
+
+    TzdCallStackGuard stackGuard(this, stackFrame, method.sourceFile);
+
+    // 参数个数与类型校验 (脚本方法；原生方法跳过)。
+    if (!method.isNative) {
+        if (args.size() != method.params.size()) {
+            throw std::runtime_error("函数 '" + method.name + "' 参数不匹配: 期望 " +
+                std::to_string(method.params.size()) + " 个，实际 " +
+                std::to_string(args.size()) + " 个");
+        }
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i < method.paramTypes.size() && !method.paramTypes[i].empty() &&
+                !checkParamValueType(method.paramTypes[i], args[i])) {
+                throw std::runtime_error(
+                    "函数 '" + method.name + "' 第 " + std::to_string(i + 1) +
+                    " 个参数类型不匹配: 期望 " + method.paramTypes[i]);
+            }
+        }
+    }
+
+    // --- 原生方法 ---
+    if (method.isNative) {
+        return method.nativeWrapper(args);
+    }
+
+    // --- 脚本方法 (JIT 或解释执行)，走公共核心 ---
+    return callScriptFunction(method.name, method.params, method.paramTypes,
+        method.body, method.jittedPtr, receiver, args,
+        method.sourceFile, method.line);
+}
+
+// Common script-function execution core shared by callFunction() and
+// callMethod(). Takes the actual receiver separately (not embedded in a bound
+// TzdValue) and reads metadata by reference — no template copy. Handles
+// arg/type checks, stack traces, debugger fallback (skip JIT when
+// g_DebugActive), JIT behaviour and the tree-walk interpreter path. Scope
+// unwinding is exception-safe for every path (catch(...) pops before rethrow).
+TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
+    const std::vector<std::string>& params,
+    const std::vector<std::string>& paramTypes,
+    TzdLangParser::BlockContext* funcBody,
+    void (*jittedPtr)(void*, void*),
+    TzdInstance* receiver,
+    const std::vector<TzdValue>& args,
+    const std::string& sourceFile,
+    int line) {
+
+    // Arg/type checks are performed by the callers (callFunction / callMethod)
+    // before dispatching to this core, so that the bytecode VM and native
+    // paths also honour them consistently.
+
+    // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行) ---
+    if (jittedPtr && !TzdDebugger::g_DebugActive) {
         this->clearJitError();
         this->m_jitUnhandledThrow.reset(); // 清除上一次遗留的异常
         g_CurrentInterpreter = this;
@@ -1064,8 +1407,8 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
 
         std::vector<TzdValue> jitArgs;
         g_JitPool.reset();
-        if (func.instanceVal != nullptr) {
-            jitArgs.push_back(TzdValue(func.instanceVal));
+        if (receiver != nullptr) {
+            jitArgs.push_back(TzdValue(receiver));
         }
         jitArgs.insert(jitArgs.end(), args.begin(), args.end());
 
@@ -1073,29 +1416,20 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
         this->m_argPtrStack.push_back(this->m_currentArgs.data());
 
         std::unordered_map<std::string, TzdValue> jitScope;
-        if (func.instanceVal) jitScope["this"] = TzdValue(func.instanceVal);
+        if (receiver) jitScope["this"] = TzdValue(receiver);
         scopes.push_back(jitScope);
 
         TzdValue result;
         try {
-            // 自然执行 JIT 机器码
-            func.jittedPtr(this, &result);
+            jittedPtr(this, &result);
 
-            // ============================================
-            // 此时已经安全脱离 LLVM JIT 栈帧，回到了纯净的 C++ 栈！
-            // 可以放心地使用纯 C++ 特性抛出错误。
-            // ============================================
-
-            // 1. 如果代码里写了 throw new Error()，它会被缓存在这里
             if (this->m_jitUnhandledThrow) {
                 auto thrown = *this->m_jitUnhandledThrow;
                 this->m_jitUnhandledThrow.reset();
-                throw thrown; // 安全抛出！附带完整调用链
+                throw thrown;
             }
 
-            // 2. 如果是找不到类等 JIT 编译或执行时错误
             if (this->m_hasJitError) {
-                // 将保存的 JIT 错误、堆栈和坐标转换为标准的 RuntimeException！
                 TzdRuntimeException ex(m_lastJitError, nullptr, m_jitErrorTrace);
                 ex.line = this->m_jitLine;
                 ex.column = this->m_jitColumn;
@@ -1122,30 +1456,43 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
         return result;
     }
 
-    // --- 分支 B: 原生 C++ 函数 ---
-    if (func.type == TzdValue::NATIVE_FUNCTION) {
-        return func.nativeFunc(args);
-    }
-
-    // --- 分支 C: 解释执行 (JIT 未就绪或重定义后尚未链接) ---
+    // --- 分支 B: 解释执行 (JIT 未就绪、重定义后尚未链接或调试器激活) ---
     std::unordered_map<std::string, TzdValue> callScope;
-    if (func.instanceVal != nullptr) callScope["this"] = TzdValue(func.instanceVal);
-    for (size_t i = 0; i < func.params.size(); ++i) {
-        callScope[func.params[i]] = args[i];
+    if (receiver != nullptr) callScope["this"] = TzdValue(receiver);
+    for (size_t i = 0; i < params.size(); ++i) {
+        callScope[params[i]] = args[i];
     }
 
     scopes.push_back(callScope);
     TzdValue result;
     try {
-        if (func.funcBody) {
-            std::any res = visit(func.funcBody);
+        if (funcBody) {
+            std::any res = visit(funcBody);
             if (res.has_value() && res.type() == typeid(TzdValue))
                 result = std::any_cast<TzdValue>(res);
         }
     }
     catch (const TzdReturnException& e) { result = e.value; }
-    catch (const TzdThrowException&) { scopes.pop_back(); throw; }
+    catch (...) {
+        // Exception-safe scope unwinding for *every* escaping exception
+        // (TzdThrowException, TzdRuntimeException, TzdBreakException, ...).
+        scopes.pop_back();
+        throw;
+    }
     scopes.pop_back();
+
+    // Auto-collect: lightweight check, only gather roots when threshold exceeded
+    if (TzdGarbageCollector::getInstance().shouldCollect() && !scopes.empty()) {
+        std::vector<TzdValue*> roots;
+        for (auto& [k, v] : scopes[0]) roots.push_back(&v);
+        TzdGarbageCollector::getInstance().collectIfNeeded(roots);
+    }
+
+    // Tiering: record invocation count for hotspot detection
+    if (!name.empty()) {
+        TzdTieringEngine::getInstance().recordInvocation(name);
+    }
+
     return result;
 }
 
@@ -1343,7 +1690,7 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
     funcVal.line = (int)ctx->getStart()->getLine();
     funcVal.column = (int)ctx->getStart()->getCharPositionInLine();
 
-    if (m_jitEngine && m_compiler) {
+    if (!m_noJit && m_jitEngine && m_compiler) {
         m_compiler->compileNamedFunction(ctx->block(), ctx->paramList(), internalJitName);
         m_pendingJitFunctions.insert(internalJitName);
         m_jitNameToUserMap[internalJitName] = funcName;
@@ -1360,7 +1707,7 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
 }
 
 void TzdInterpreter::jitPendingModule() {
-    if (!m_jitEngine || !m_compiler || m_pendingJitFunctions.empty()) return;
+    if (m_noJit || !m_jitEngine || !m_compiler || m_pendingJitFunctions.empty()) return;
 
     // 1. 提取模块并加入 JIT 引擎 (注意：此过程会触发编译)
     auto TSM = m_compiler->extractThreadSafeModule();
@@ -1451,7 +1798,12 @@ void TzdInterpreter::jitPendingModule() {
         }
     }
 
-    // 6. 清理状态
+    // 6. Register worker pointers for TCO cross-function calls
+    for (const std::string& symbol : m_pendingJitFunctions) {
+        m_jitEngine->registerWorkerForSymbol(symbol);
+    }
+
+    // 7. 清理状态
     m_pendingJitFunctions.clear();
     m_jitNameToUserMap.clear();
 }
@@ -1926,10 +2278,10 @@ std::any TzdInterpreter::visitPostfixExpr(TzdLangParser::PostfixExprContext* ctx
             std::string fieldName = memCtx->IDENTIFIER()->getText();
             if (leftObj.type == TzdValue::INSTANCE) {
                 TzdInstance* inst = leftObj.instanceVal;
-                if (inst->fields.count(fieldName)) {
-                    TzdValue& fieldRef = inst->fields.at(fieldName);
-                    TzdValue oldVal = fieldRef;
-                    performIncrement(fieldRef);
+                TzdValue* fieldRef = inst->getMemberPtr(fieldName);
+                if (fieldRef) {
+                    TzdValue oldVal = *fieldRef;
+                    performIncrement(*fieldRef);
                     return oldVal;
                 }
             }
@@ -2028,8 +2380,9 @@ std::any TzdInterpreter::visitPrefixExpr(TzdLangParser::PrefixExprContext* ctx) 
             std::string fieldName = memCtx->IDENTIFIER()->getText();
             if (leftObj.type == TzdValue::INSTANCE) {
                 TzdInstance* inst = leftObj.instanceVal;
-                if (inst->fields.count(fieldName)) {
-                    return performIncrement(inst->fields.at(fieldName));
+                TzdValue* fieldRef = inst->getMemberPtr(fieldName);
+                if (fieldRef) {
+                    return performIncrement(*fieldRef);
                 }
             }
             else if (leftObj.type == TzdValue::CLASS_DEF) {
@@ -2413,7 +2766,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.column = (int)methodCtx->getStart()->getCharPositionInLine();
 
             // --- JIT 编译部分 ---
-            if (m_jitEngine && m_compiler) {
+            if (!m_noJit && m_jitEngine && m_compiler) {
                 std::string jitName = fullName + "_" + mName;
                 try {
                     m_compiler->compileClassMethod(ctx, methodCtx, jitName);
@@ -2438,7 +2791,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             parseParamList(smCtx->paramList(), m.params, m.paramTypes);
 
             // --- JIT 编译部分 ---
-            if (m_jitEngine && m_compiler) {
+            if (!m_noJit && m_jitEngine && m_compiler) {
                 std::string jitName = fullName + "_" + mName;
                 // 静态方法不需要 this
                 m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName);
@@ -2473,7 +2826,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                 }
             }
 
-            if (m_jitEngine && m_compiler) {
+            if (!m_noJit && m_jitEngine && m_compiler) {
                 std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(ctorInfo.paramCount);
                 ctorInfo.jitSymbolName = jitName;
                 try {
@@ -2606,7 +2959,7 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
             for (auto const& [name, field] : currentCls->fields) {
                 if (!field.isStatic && field.initExpr) {
                     TzdValue initVal = std::any_cast<TzdValue>(visit(field.initExpr));
-                    inst->fields[name] = initVal;
+                    inst->setMember(name, initVal);
                     scopes.back()[name] = initVal;
                 }
             }
@@ -2633,7 +2986,7 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
         if (ctor) {
             TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
             ctorFunc.jittedPtr = ctor->jittedPtr;
-            ctorFunc.instanceVal = inst;
+            ctorFunc.setInstance(inst);
             this->callFunction(ctorFunc, args);
         }
     }
@@ -2646,6 +2999,24 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
 }
 
 // --- 成员访问 (.) ---
+// Resolve (and cache) the TzdSelector + member name for a member-access AST
+// site. The cache is keyed by the AST node pointer and is stable for the
+// lifetime of the loaded module; the selector/name are immutable once
+// interned. Only the selector and name are cached — never an unguarded
+// receiver/method pointer, since the receiver type at a site may change.
+MemberAccessSiteCache& TzdInterpreter::resolveMemberAccessSite(
+    antlr4::ParserRuleContext* ctx, const std::string& memberName) {
+    auto it = m_memberSelectorCache.find(ctx);
+    if (it != m_memberSelectorCache.end() && it->second.resolved) {
+        return it->second;
+    }
+    auto& entry = m_memberSelectorCache[ctx];
+    entry.name = memberName;
+    entry.selector = tzdInternSelector(memberName);
+    entry.resolved = true;
+    return entry;
+}
+
 std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprContext* ctx) {
 
     // 1. 获取左侧 atom 的原始文本 (比如 "this" 或 "t2")
@@ -2666,17 +3037,34 @@ std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprCo
     }
 
     std::string memberName = ctx->IDENTIFIER()->getText();
+    // Intern once per AST site; subsequent visits skip re-extraction.
+    MemberAccessSiteCache& site = resolveMemberAccessSite(ctx, memberName);
+    TzdSelector selector = site.selector;
 
     if (baseResolved) {
         // --- 情况 A: 静态成员访问 (Class.staticVar) ---
         if (base.type == TzdValue::CLASS_DEF && base.classDefVal) {
             TzdClassDef* cls = base.classDefVal;
-            // 找静态变量
+            // Selector-based dispatch table lookup (immutable once registered).
+            if (const TzdMemberSlot* slot = cls->tzdDispatch.find(selector)) {
+                if (slot->staticValue) {
+                    TzdValue res = *slot->staticValue;
+                    return res;
+                }
+                if (slot->method && slot->method->isStatic) {
+                    TzdValue f;
+                    f.type = TzdValue::FUNCTION;
+                    f.name = slot->method->name;
+                    f.params = slot->method->params;
+                    f.funcBody = slot->method->body;
+                    return f;
+                }
+            }
+            // Fallback to string-based lookup (bridges dispatch-table gaps).
             if (cls->staticValues.count(memberName)) {
                 TzdValue res = cls->staticValues[memberName];
                 return res;
             }
-            // 找静态方法
             ClassMethod* method = cls->findMethod(memberName);
             if (method && method->isStatic) {
                 TzdValue f;
@@ -2692,7 +3080,10 @@ std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprCo
         // 关键点：不仅检查 INSTANCE 类型，还检查 instanceVal 是否存在（防止类型标识丢失）
         if ((base.type == TzdValue::INSTANCE || base.instanceVal != nullptr) && base.type != TzdValue::CLASS_DEF) {
             try {
-                return base.instanceVal->getMember(memberName);
+                // Selector-based member lookup; precedence: instance field,
+                // inherited static value, then method. The string name is
+                // passed alongside for error messages / package fallback.
+                return base.instanceVal->getMember(selector, memberName);
             }
             catch (const std::exception& e) {
                 // 如果 getMember 抛出错误，直接向上抛出详细的 OOP 错误，而不是被末尾覆盖
@@ -2857,7 +3248,7 @@ std::any TzdInterpreter::visitSuperExpr(TzdLangParser::SuperExprContext* ctx) {
 
     TzdValue ctorFunc(parentClass->simpleName, parentCtor->params, parentCtor->body);
     ctorFunc.jittedPtr = parentCtor->jittedPtr;
-    ctorFunc.instanceVal = thisVal.instanceVal;
+    ctorFunc.setInstance(thisVal.instanceVal);
 
     std::unordered_map<std::string, TzdValue> superScope;
     superScope["this"] = thisVal;
@@ -2880,11 +3271,189 @@ std::any TzdInterpreter::visitSuperExpr(TzdLangParser::SuperExprContext* ctx) {
 
 
 std::any TzdInterpreter::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
-    // 1. 获取函数对象 (通过 getVariable，它会自动根据重定义后的 scopes 找到最新版本)
+    // 1. 检测是否为直接成员调用 obj.method(args) 或 Class.method(args)。
+    //    若是且接收者为实例/类，则直接分发，避免构造并拷贝 bound TzdValue。
+    auto* memAccess = dynamic_cast<TzdLangParser::MemberAccessExprContext*>(ctx->atom());
+
+    if (memAccess) {
+        // callee-before-args: 先解析接收者，再求值实参。
+        TzdValue base;
+        bool baseResolved = false;
+        try {
+            std::any val = visit(memAccess->atom());
+            if (val.has_value()) {
+                base = std::any_cast<TzdValue>(val);
+                baseResolved = true;
+            }
+        }
+        catch (...) {
+            baseResolved = false;
+        }
+
+        if (baseResolved) {
+            std::string memberName = memAccess->IDENTIFIER()->getText();
+            MemberAccessSiteCache& site = resolveMemberAccessSite(memAccess, memberName);
+            TzdSelector selector = site.selector;
+
+            // --- 实例成员直接调用 ---
+            if ((base.type == TzdValue::INSTANCE || base.instanceVal != nullptr) &&
+                base.type != TzdValue::CLASS_DEF && base.instanceVal != nullptr) {
+                TzdInstance* inst = base.instanceVal;
+                const TzdMemberSlot* slot =
+                    inst->definition ? inst->definition->tzdDispatch.find(selector) : nullptr;
+
+                // callable fields take precedence over methods.
+                if (slot && slot->fieldIndex >= 0) {
+                    TzdValue* fieldPtr = &inst->fieldValues[slot->fieldIndex];
+                    if (fieldPtr->type == TzdValue::FUNCTION ||
+                        fieldPtr->type == TzdValue::NATIVE_FUNCTION) {
+                        std::vector<TzdValue> args;
+                        if (ctx->exprList()) {
+                            for (auto expr : ctx->exprList()->expression())
+                                args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                        }
+                        try { return callFunction(*fieldPtr, args); }
+                        catch (const TzdReturnException& e) { return e.value; }
+                        catch (const TzdRuntimeException&) { throw; }
+                        catch (const TzdThrowException&) { throw; }
+                        catch (const std::exception& e) {
+                            throw TzdRuntimeException(e.what(), ctx->getStart());
+                        }
+                    }
+                }
+                if (slot && slot->staticValue &&
+                    (slot->staticValue->type == TzdValue::FUNCTION ||
+                     slot->staticValue->type == TzdValue::NATIVE_FUNCTION)) {
+                    std::vector<TzdValue> args;
+                    if (ctx->exprList()) {
+                        for (auto expr : ctx->exprList()->expression())
+                            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                    }
+                    try { return callFunction(*slot->staticValue, args); }
+                    catch (const TzdReturnException& e) { return e.value; }
+                    catch (const TzdRuntimeException&) { throw; }
+                    catch (const TzdThrowException&) { throw; }
+                    catch (const std::exception& e) {
+                        throw TzdRuntimeException(e.what(), ctx->getStart());
+                    }
+                }
+
+                // 方法：直接调用，避免 bound TzdValue 拷贝。
+                if (slot && slot->method) {
+                    std::vector<TzdValue> args;
+                    if (ctx->exprList()) {
+                        for (auto expr : ctx->exprList()->expression())
+                            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                    }
+                    try { return callMethod(*slot->method, inst, args); }
+                    catch (const TzdReturnException& e) { return e.value; }
+                    catch (const TzdRuntimeException&) { throw; }
+                    catch (const TzdThrowException&) { throw; }
+                    catch (const std::exception& e) {
+                        throw TzdRuntimeException(e.what(), ctx->getStart());
+                    }
+                }
+
+                // 分发表未命中：回退到 getMember(selector, name)（已避免重复求值接收者）。
+                TzdValue bound;
+                try {
+                    bound = inst->getMember(selector, memberName);
+                }
+                catch (const std::exception& e) {
+                    throw TzdRuntimeException(e.what(), ctx->getStart());
+                }
+                std::vector<TzdValue> args;
+                if (ctx->exprList()) {
+                    for (auto expr : ctx->exprList()->expression())
+                        args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                }
+                try { return callFunction(bound, args); }
+                catch (const TzdReturnException& e) { return e.value; }
+                catch (const TzdRuntimeException&) { throw; }
+                catch (const TzdThrowException&) { throw; }
+                catch (const std::exception& e) {
+                    throw TzdRuntimeException(e.what(), ctx->getStart());
+                }
+            }
+
+            // --- 类静态成员直接调用 ---
+            if (base.type == TzdValue::CLASS_DEF && base.classDefVal) {
+                TzdClassDef* cls = base.classDefVal;
+                const TzdMemberSlot* slot = cls->tzdDispatch.find(selector);
+
+                // callable static field precedence.
+                if (slot && slot->staticValue &&
+                    (slot->staticValue->type == TzdValue::FUNCTION ||
+                     slot->staticValue->type == TzdValue::NATIVE_FUNCTION)) {
+                    std::vector<TzdValue> args;
+                    if (ctx->exprList()) {
+                        for (auto expr : ctx->exprList()->expression())
+                            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                    }
+                    try { return callFunction(*slot->staticValue, args); }
+                    catch (const TzdReturnException& e) { return e.value; }
+                    catch (const TzdRuntimeException&) { throw; }
+                    catch (const TzdThrowException&) { throw; }
+                    catch (const std::exception& e) {
+                        throw TzdRuntimeException(e.what(), ctx->getStart());
+                    }
+                }
+                if (slot && slot->method && slot->method->isStatic) {
+                    std::vector<TzdValue> args;
+                    if (ctx->exprList()) {
+                        for (auto expr : ctx->exprList()->expression())
+                            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                    }
+                    try { return callMethod(*slot->method, nullptr, args); }
+                    catch (const TzdReturnException& e) { return e.value; }
+                    catch (const TzdRuntimeException&) { throw; }
+                    catch (const TzdThrowException&) { throw; }
+                    catch (const std::exception& e) {
+                        throw TzdRuntimeException(e.what(), ctx->getStart());
+                    }
+                }
+
+                // 分发表未命中：回退到字符串查找（已避免重复求值接收者）。
+                TzdValue val;
+                bool found = false;
+                if (cls->staticValues.count(memberName)) {
+                    val = cls->staticValues[memberName];
+                    found = true;
+                }
+                if (!found) {
+                    ClassMethod* m = cls->findMethod(memberName);
+                    if (m && m->isStatic) {
+                        val.type = TzdValue::FUNCTION;
+                        val.name = m->name;
+                        val.params = m->params;
+                        val.funcBody = m->body;
+                        found = true;
+                    }
+                }
+                if (found) {
+                    std::vector<TzdValue> args;
+                    if (ctx->exprList()) {
+                        for (auto expr : ctx->exprList()->expression())
+                            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+                    }
+                    try { return callFunction(val, args); }
+                    catch (const TzdReturnException& e) { return e.value; }
+                    catch (const TzdRuntimeException&) { throw; }
+                    catch (const TzdThrowException&) { throw; }
+                    catch (const std::exception& e) {
+                        throw TzdRuntimeException(e.what(), ctx->getStart());
+                    }
+                }
+            }
+            // base 已解析但非实例/类：落入普通路径（包名降级由 visitMemberAccessExpr 处理）。
+        }
+        // base 未解析（包名场景）：落入普通路径。
+    }
+
+    // 2. 普通调用路径 (非成员调用、逃逸的 bound 方法、包名降级等均保持原行为)
     TzdValue funcVal = std::any_cast<TzdValue>(visit(ctx->atom()));
     std::string funcNameForError = ctx->atom()->getText();
 
-    // 2. 解析本次调用的实参
     std::vector<TzdValue> args;
     if (ctx->exprList()) {
         for (auto expr : ctx->exprList()->expression()) {
@@ -2892,7 +3461,6 @@ std::any TzdInterpreter::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         }
     }
 
-    // 3. 统一分发调用逻辑
     try {
         return callFunction(funcVal, args);
     }

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <any>
 #include <map>
@@ -55,6 +55,7 @@ namespace fs = std::filesystem;
 
 class TzdClassDef;
 class TzdInstance;
+struct ClassMethod; // forward-declared for callMethod(); fully defined in TzdOop.h
 
 std::string Utf8ToAnsi(const std::string& str);
 
@@ -103,7 +104,8 @@ struct TzdValue {
         ENUM_VAL,       // ????
         ERROR_VAL,      // ???????? (???? Go ?? error)
         FUTURE,         // ????? / Promise (????)
-        ANY_REF         // ??????????? (std::any)
+        ANY_REF,        // ??????????? (std::any)
+        TENSOR          // PyTorch tensor (auto-managed VRAM lifecycle)
     };
     std::vector<std::string> annotations;
     Type type = NONE;
@@ -134,7 +136,17 @@ struct TzdValue {
 
     TzdValue() : type(NONE), lVal(0), dVal(0.0), bVal(false), instanceVal(nullptr) {}
     TzdValue(TzdClassDef* c) : type(CLASS_DEF), classDefVal(c) {}
-    TzdValue(TzdInstance* i) : type(INSTANCE), instanceVal(i) {}
+    TzdValue(TzdInstance* i);
+
+    // 引用计数拷贝控制（定义见 TzdInterpreter.cpp）：
+    // 仅在 instanceVal 非空时 retain/release，与 type 无关——因为方法绑定值
+    // (type=FUNCTION/NATIVE_FUNCTION) 也会持有 instanceVal 作为 receiver。
+    TzdValue(const TzdValue& o);
+    TzdValue(TzdValue&& o) noexcept;
+    TzdValue& operator=(const TzdValue& o);
+    TzdValue& operator=(TzdValue&& o) noexcept;
+    ~TzdValue();
+    void setInstance(TzdInstance* i);
 
     TzdValue(double v) : type(DOUBLE), dVal(v) {}
     TzdValue(float v) : type(FLOAT), dVal((double)v) {}
@@ -176,15 +188,26 @@ struct TzdValue {
     void (*jittedPtr)(void*, void*) = nullptr;
 };
 
+// 释放池槽位中残留的实例引用（定义见 TzdInterpreter.cpp）。
+// 用 out-of-line 助手避免 next() 内联体在此要求 TzdInstance 完整类型——
+// TzdOop.cpp 经循环 include 编译时 TzdInstance 尚未定义。
+void tzdPoolSlotReleaseInstance(TzdValue* v);
+
+// 栈溢出检测（定义见 TzdInterpreter.cpp），解释器与 JIT 调用桥共用
+bool tzdStackNearOverflow();
+
 struct JitValuePool {
-    static const size_t POOL_SIZE = 262144;
-    TzdValue storage[POOL_SIZE];
+    static const size_t POOL_SIZE = 4096;
+    std::vector<TzdValue> storage;
     size_t cursor = 0;
 
     inline TzdValue* next() {
+        if (storage.empty()) storage.resize(POOL_SIZE);
         size_t next_cursor = (cursor + 1) & (POOL_SIZE - 1);
         TzdValue* v = &storage[cursor];
         cursor = next_cursor;
+        // 复用槽位前先释放上一个实例引用——JIT 热路径泄漏拦截点
+        tzdPoolSlotReleaseInstance(v);
         [[unlikely]] if (v->type >= TzdValue::STRING) {
             switch (v->type) {
             case TzdValue::STRING: v->sVal.clear(); break;
@@ -199,9 +222,13 @@ struct JitValuePool {
     }
 
     void reset() { cursor = 0; }
+
+    ~JitValuePool() {
+        for (auto& item : storage) item.instanceVal = nullptr;
+    }
 };
 
-static thread_local JitValuePool g_JitPool;
+extern thread_local JitValuePool g_JitPool;
 
 class TzdRuntimeException : public std::runtime_error {
 public:
@@ -245,11 +272,32 @@ public:
         const std::vector<std::string>& stackTrace = {});
 };
 
-class TzdJitCompiler;
+class TzdJitEngine;
+class TzdCompiler;
+
+// Forward declarations for bytecode VM (defined in TzdBytecode.h)
+struct BytecodeModule;
+class TzdBytecodeVM;
+
+// Selector cache for a single AST member-access site. Keyed by the AST node
+// pointer (stable for the lifetime of the loaded module). Only the selector
+// and the member name are cached — never an unguarded receiver/method
+// pointer, since the receiver type at a site may change between calls.
+struct MemberAccessSiteCache {
+    TzdSelector selector = 0;
+    std::string name;
+    bool resolved = false;
+};
+
+struct TzdCallFrame {
+    TzdValue* thisPtr = nullptr;
+    TzdValue* args = nullptr;
+    int argCount = 0;
+};
 
 class TzdInterpreter : public TzdLangBaseVisitor {
 public:
-    friend class TzdJitCompiler;
+    friend class TzdCompiler;
     LastPlotState m_lastPlot;
     std::unique_ptr<TzdJitEngine> m_jitEngine;
     std::unique_ptr<TzdCompiler> m_compiler;
@@ -271,16 +319,8 @@ public:
     std::vector<fs::path> m_scriptPathStack;
    
     std::string resolveImportPath(const std::string& inputPath);
-    TzdInterpreter() {
-        m_jitEngine = std::make_unique<TzdJitEngine>();
-        m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "main_module");
-        scopes.push_back({});
-    }
-
-    ~TzdInterpreter() {
-        for (auto mod : loadedModules) delete mod;
-        loadedModules.clear();
-    }
+    TzdInterpreter();
+    ~TzdInterpreter(); // defined in .cpp (needs BytecodeModule complete type)
 
     void compileScriptToMemory(const std::string& code);
 
@@ -291,6 +331,11 @@ public:
 
     void loadScript(std::string code);
     void loadScriptFromFile(const std::string& filePath);
+
+    // Compile script to bytecode file (implementation in .cpp uses TzdBytecode.h)
+    bool compileToBytecodeFile(const std::string& code, const std::string& outPath);
+    // Load and execute bytecode file
+    bool executeBytecodeFile(const std::string& bcPath);
 
     void addIncludePath(const std::string& path) {
         m_includePaths.push_back(path);
@@ -332,6 +377,14 @@ public:
     void mapJitSymbolsToValue();
 
     TzdValue callFunction(const TzdValue& func, const std::vector<TzdValue>& args);
+
+    // Direct method call that avoids building (and copying) a bound TzdValue.
+    // `method` is the resolved ClassMethod entry; `receiver` is the actual
+    // instance (nullptr for static methods). Preserves arg/type checks, stack
+    // traces, debugger fallback and JIT behaviour. Native methods invoke
+    // their native wrapper; script methods go through JIT or tree-walk.
+    TzdValue callMethod(ClassMethod& method, TzdInstance* receiver,
+        const std::vector<TzdValue>& args);
 
     TzdValue executeFunction(const TzdValue& funcVal, const std::vector<TzdValue>& args);
 
@@ -438,6 +491,7 @@ public:
 
     std::vector<std::vector<TzdValue>> m_argFrameStack;
     std::vector<TzdValue*> m_argPtrStack;
+    std::vector<TzdCallFrame> m_callFrameStack;
 
     size_t m_callDepth = 0;
     size_t m_maxCallDepth = 4096;
@@ -445,6 +499,54 @@ public:
     std::vector<std::string> m_callStackFrames;
     std::vector<std::string> m_debugFileStack;
     bool m_silentMode = false;
+    bool m_noJit = false; // When true, disable all JIT compilation (interpreter-only mode)
+
+    // Bytecode VM integration: when set, script functions are executed
+    // via the bytecode VM instead of tree-walking interpretation.
+    std::unique_ptr<BytecodeModule> m_bytecodeModule;
+    std::unique_ptr<TzdBytecodeVM> m_bytecodeVM;
+    bool m_useBytecodeVM = false;
+
+    // When true (--interpreter / --tree-walk), force pure tree-walk: disable
+    // JIT (m_noJit) and prevent the bytecode VM from engaging. loadScript()
+    // must not re-enable the bytecode VM while this flag is set.
+    bool m_forceInterpreter = false;
+
+    // Per-AST-site selector cache. Keyed by the MemberAccessExpr AST node
+    // pointer (stable for the lifetime of the loaded module).
+    std::unordered_map<const antlr4::ParserRuleContext*, MemberAccessSiteCache> m_memberSelectorCache;
+
+private:
+    // Common core shared by callFunction() (script branch) and callMethod()
+    // (script branch). Takes the actual receiver separately rather than
+    // embedding it in a bound TzdValue, and reads function metadata by
+    // reference — no template TzdValue copy. Preserves arg/type checks,
+    // stack traces, debugger fallback (skip JIT when g_DebugActive), and JIT
+    // behaviour. Scope unwinding is exception-safe for every path.
+    TzdValue callScriptFunction(const std::string& name,
+        const std::vector<std::string>& params,
+        const std::vector<std::string>& paramTypes,
+        TzdLangParser::BlockContext* funcBody,
+        void (*jittedPtr)(void*, void*),
+        TzdInstance* receiver,
+        const std::vector<TzdValue>& args,
+        const std::string& sourceFile,
+        int line);
+
+    // Resolve (and cache) the TzdSelector + member name for a member-access
+    // AST site. The cache is keyed by the AST node pointer and is stable for
+    // the lifetime of the loaded module; the selector/name are immutable once
+    // interned.
+    MemberAccessSiteCache& resolveMemberAccessSite(
+        antlr4::ParserRuleContext* ctx, const std::string& memberName);
 };
 
 extern TzdInterpreter* g_CurrentInterpreter;
+
+// ============================================================================
+// Tensor lifecycle management hooks (implemented in TzdPyTorch.cpp)
+// These are weak/no-op when PyTorch is not linked; TzdValue copy control
+// calls them for TENSOR-type values to guarantee zero VRAM leaks.
+// ============================================================================
+extern "C" void tzdTensorRetain(void* ptr);
+extern "C" void tzdTensorRelease(void* ptr);

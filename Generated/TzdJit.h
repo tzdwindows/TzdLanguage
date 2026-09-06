@@ -2,6 +2,7 @@
 // 1. ??????? (C++ Standard Library)
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <memory>
 #include <any>
@@ -17,6 +18,11 @@
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 
 #include "TzdLangBaseVisitor.h"
+#include "TzdOop.h"
+
+// Forward declaration to break circular include dependency
+// (TzdOop.h includes TzdInterpreter.h which includes TzdJit.h which includes TzdOop.h)
+class TzdClassDef;
 
 /**
  * TzdJitEngine: ???? LLVM ?????????????????????????
@@ -49,6 +55,9 @@ public:
     // ?? Compiler ???????? ThreadSafeContext ????
     llvm::orc::ThreadSafeContext& getThreadSafeContext();
 
+    // Register worker pointer for on-demand compiled functions (TCO support)
+    void registerWorkerForSymbol(const std::string& internalName);
+
     // DataLayout / Triple
     const llvm::DataLayout& getDataLayout() const;
     std::string getTargetTriple() const;
@@ -75,8 +84,14 @@ private:
 class TzdCompiler : public TzdLangBaseVisitor {
 public:
     TzdCompiler(TzdJitEngine& jit, const std::string& moduleName);
-    
+    virtual ~TzdCompiler();
+
     llvm::Value* toNativeBool(llvm::Value* val);
+
+    // Inline rt_store_native_to_ptr: direct GEP+Store on TzdValue fields
+    void inlineStoreNativeToPtr(llvm::Value* dest, llvm::Value* nativeDouble);
+    // Inline rt_to_double_fast: direct GEP+Load on TzdValue.dVal
+    llvm::Value* inlineToDoubleFast(llvm::Value* src);
 
     std::unique_ptr<llvm::Module> getModule();
      std::unique_ptr<llvm::Module> extractModule();
@@ -167,11 +182,11 @@ public:
     virtual std::any visitThrowStmt(TzdLangParser::ThrowStmtContext* ctx) override;
 
 private:
-    llvm::LLVMContext& m_context;
     TzdJitEngine& m_jitEngine;
+    llvm::orc::ThreadSafeContext m_tsc;
+    llvm::LLVMContext& m_context;
     llvm::IRBuilder<> m_builder;
     std::unique_ptr<llvm::Module> m_module;
-    llvm::orc::ThreadSafeContext m_tsc;
 
     std::unordered_map<std::string, llvm::Value*> m_namedValues;
 
@@ -189,7 +204,8 @@ private:
     const int TYPE_FIELD_INDEX = 1; // annotations ?? 0, type ?? 1
     const int DVAL_INDEX = 3;       // name ?? 2, dVal ?? 3
 
-    std::unordered_map<std::string, llvm::AllocaInst*> m_nativeDoubleLocals;
+    std::unordered_map<std::string, llvm::Value*> m_nativeDoubleLocals;
+    std::unordered_set<std::string> m_declaredLocals;
     llvm::Value* castToNativeDouble(llvm::Value* val);
     llvm::Value* boxDouble(llvm::Value* nativeVal);
 
@@ -201,4 +217,15 @@ private:
     std::vector<llvm::BasicBlock*> m_switchEndStack;
 
     bool emitMemberIncDec(llvm::Value*& result, TzdLangParser::ExpressionContext* lhsCtx, bool isInc, bool isPrefix);
+
+private:
+    // 【新增】当前正在编译的类定义，用于 JIT 原生字段访问
+    TzdClassDef* m_currentClassDef = nullptr;
+    std::unordered_map<std::string, int> m_currentClassFieldMap;
+
+    // 【tzd selector dispatch】编译期将成员名内联为常量 TzdSelector（i32），
+    // 消除成员读/写热路径的字符串查找。m_selectorIds 仅缓存本编译器实例内
+    // 已解析的映射，真正进程级唯一性由 tzdInternSelector 保证。
+    TzdSelector internSelectorConstant(const std::string& name);
+    std::unordered_map<std::string, TzdSelector> m_selectorIds;
 };

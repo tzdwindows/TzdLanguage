@@ -1,10 +1,13 @@
-﻿#include "../Res/TzdStrings.h"
+#include "../Res/TzdStrings.h"
 #include <iostream>
 #include <fstream>
 #include <chrono>
 #include <cstring>
 #include <csetjmp>
+#include <cstddef>
 #include <unordered_map>
+#include <mutex>
+#include <shared_mutex>
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Error.h"
@@ -19,8 +22,12 @@
 
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "llvm/Transforms/Scalar/EarlyCSE.h" 
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
+#include "llvm/Transforms/IPO/Inliner.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/TargetParser/Host.h"
@@ -38,14 +45,22 @@
 using namespace llvm;
 using namespace llvm::orc;
 
+thread_local JitValuePool g_JitPool;
+
 // ======= 尾递归优化(TRE)上下文 =======
-static std::vector<std::string> s_currentFuncParamNames;
-static llvm::BasicBlock* s_tailRecurseBB = nullptr;
-static bool s_inTailPosition = false;
-static llvm::Function* s_currentWorkerFunc = nullptr;
+static thread_local std::vector<std::string> s_currentFuncParamNames;
+static thread_local llvm::BasicBlock* s_tailRecurseBB = nullptr;
+static thread_local bool s_inTailPosition = false;
+static thread_local llvm::Function* s_currentWorkerFunc = nullptr;
+static thread_local llvm::Function* s_currentNativeWorkerFunc = nullptr;
+static thread_local bool s_compilingNativeWorker = false;
+// Compile-time map: function base name → worker Function* for direct call optimization
+static std::unordered_map<std::string, llvm::Function*> s_compiledWorkers;
+static std::unordered_map<std::string, llvm::Function*> s_compiledNativeWorkers;
 static std::unordered_map<std::string, void*> s_workerPointers;
-static std::vector<std::tuple<llvm::Value*, llvm::Value*, int>> s_tryJmpBufStack;
-static int s_loopLevel = 0;
+static std::shared_mutex s_workerPointersMutex;
+static thread_local std::vector<std::tuple<llvm::Value*, llvm::Value*, int>> s_tryJmpBufStack;
+static thread_local int s_loopLevel = 0;
 
 std::string formatSourcePath(const std::string& fullPath);
 std::string unescapeString(const std::string& input);
@@ -72,6 +87,11 @@ static Value* castAnyToValue(const std::any& a, const char* where) {
     }
     return std::any_cast<Value*>(a);
 }
+
+// TzdValue field offsets for inlined GEP+Store/Load (eliminates rt_ function calls)
+static constexpr size_t TZD_TYPE_OFFSET = offsetof(TzdValue, type);
+static constexpr size_t TZD_DVAL_OFFSET = offsetof(TzdValue, dVal);
+static_assert(TZD_TYPE_OFFSET > 0, "type offset must be > 0 (after annotations vector)");
 
 static std::string getParamName(TzdLangParser::ParamContext* p) {
     if (!p) return "arg";
@@ -179,6 +199,8 @@ struct VariableInfo {
     llvm::Value* address;
 };
 
+// tzdInternSelector(name) and tzdGetSelectorName(sel) are centrally defined in TzdOop.cpp.
+
 extern "C" {
     TzdValue* g_LastJitValue = nullptr;
     static thread_local jmp_buf* g_tzdFatalJmp = nullptr;
@@ -191,6 +213,7 @@ extern "C" {
     }
 
     void* rt_get_worker_ptr(const char* funcName) {
+        std::shared_lock<std::shared_mutex> lock(s_workerPointersMutex);
         auto it = s_workerPointers.find(funcName);
         if (it != s_workerPointers.end()) {
             return it->second;
@@ -270,6 +293,17 @@ extern "C" {
     }
 
     void* rt_get_arg(int index) {
+        if (!g_CurrentInterpreter) return g_JitPool.next();
+        if (!g_CurrentInterpreter->m_callFrameStack.empty()) {
+            const auto& frame = g_CurrentInterpreter->m_callFrameStack.back();
+            if (frame.thisPtr) {
+                if (index == 0) return frame.thisPtr;
+                if (frame.args && (index - 1) < frame.argCount) return &frame.args[index - 1];
+            } else {
+                if (frame.args && index < frame.argCount) return &frame.args[index];
+            }
+            return g_JitPool.next();
+        }
         if (g_CurrentInterpreter->m_argPtrStack.empty()) return g_JitPool.next();
         return &g_CurrentInterpreter->m_argPtrStack.back()[index];
     }
@@ -289,7 +323,25 @@ extern "C" {
                 break;
             }
         }
-        if (!funcObjPtr) return g_JitPool.next();
+        if (!funcObjPtr) {
+            // Debug: check worker pointers
+            std::shared_lock<std::shared_mutex> wlock(s_workerPointersMutex);
+            auto wit = s_workerPointers.find(funcName);
+            if (wit != s_workerPointers.end()) {
+                // Found in worker pointers — call directly
+                TzdValue* res = g_JitPool.next();
+                auto jitPtr = reinterpret_cast<void(*)(void*, void*)>(wit->second);
+                // Build arg frame
+                g_CurrentInterpreter->m_argPtrStack.push_back((TzdValue*)args);
+                std::unordered_map<std::string, TzdValue> jitScope;
+                g_CurrentInterpreter->scopes.push_back(jitScope);
+                jitPtr(g_CurrentInterpreter, res);
+                g_CurrentInterpreter->scopes.pop_back();
+                g_CurrentInterpreter->m_argPtrStack.pop_back();
+                return res;
+            }
+            return g_JitPool.next();
+        }
 
         if (funcObjPtr->type == TzdValue::FUNCTION && funcObjPtr->jittedPtr) {
             TzdValue* res = g_JitPool.next();
@@ -639,15 +691,8 @@ extern "C" {
 
     void rt_store_native_to_ptr(void* dest, double val) {
         if (!dest) return;
-
-        // 为了防止 dest 里的 std::string 和 std::vector 结构由于垃圾字节引发后续崩溃
-        // 先从 JIT 池获取一个“合法且安全”的空对象
-        TzdValue* safe = g_JitPool.next();
-        safe->type = TzdValue::DOUBLE;
-        safe->dVal = val;
-
-        // 用 memcpy 直接暴力覆盖未初始化内存，使其变为合法状态
-        memcpy(dest, safe, sizeof(TzdValue));
+        TzdValue* v = reinterpret_cast<TzdValue*>(dest);
+        *v = TzdValue(val);
     }
 
     void rt_set_last_ret(void* val) {
@@ -667,12 +712,22 @@ extern "C" {
         }
         TzdValue* v = g_JitPool.next();
         v->type = TzdValue::INSTANCE;
-        v->instanceVal = new TzdInstance(def);
+        v->setInstance(new TzdInstance(def));
         return v;
     }
 
+    static thread_local const char* s_lastClassName = nullptr;
+    static thread_local TzdClassDef* s_lastClassDef = nullptr;
+
     void* rt_create_inst_args(const char* name, int argCount, TzdValue* args) {
-        TzdClassDef* def = TzdOopManager::getClass(name);
+        TzdClassDef* def = (name && name == s_lastClassName) ? s_lastClassDef : nullptr;
+        if (!def) {
+            def = TzdOopManager::getClass(name);
+            if (def) {
+                s_lastClassName = name;
+                s_lastClassDef = def;
+            }
+        }
         if (!def) {
             if (g_CurrentInterpreter) g_CurrentInterpreter->reportJitError(std::string("找不到类定义: '") + name + "' (是否忘记 import?)");
             return g_JitPool.next();
@@ -680,7 +735,7 @@ extern "C" {
 
         TzdValue* instVal = g_JitPool.next();
         instVal->type = TzdValue::INSTANCE;
-        instVal->instanceVal = new TzdInstance(def);
+        instVal->setInstance(new TzdInstance(def));
 
         ClassConstructor* ctor = def->findConstructor((size_t)argCount);
         if (!ctor && argCount == 0 && !def->constructors.empty()) {
@@ -690,45 +745,27 @@ extern "C" {
 
         if (ctor->jittedPtr) {
             TzdValue* ignored = g_JitPool.next();
-            constexpr int kInlineCtorArgs = 8;
-            if (argCount + 1 <= kInlineCtorArgs) {
-                TzdValue frameInline[kInlineCtorArgs];
-                frameInline[0] = *instVal;
-                for (int i = 0; i < argCount; ++i) frameInline[i + 1] = args[i];
-                g_CurrentInterpreter->m_argPtrStack.push_back(frameInline);
+            g_CurrentInterpreter->m_callFrameStack.push_back({ instVal, args, argCount });
 
-                // 【修改】：基于构造函数（ctor）的 sourceFile 和 line 字段，拼接 Java 风格构造函数栈帧
-                std::string fileLoc = formatSourcePath(ctor->sourceFile);
-                int line = ctor->line;
-                std::string frameName = std::string(def->fullName) + "." + def->simpleName;
-                frameName += " (" + fileLoc;
-                if (line > 0) frameName += ":" + std::to_string(line);
-                frameName += ") (JIT Compiled)";
-
-                g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            if (!TzdDebugger::g_DebugActive) {
                 ctor->jittedPtr(g_CurrentInterpreter, ignored);
-                g_CurrentInterpreter->m_callStackFrames.pop_back();
-                g_CurrentInterpreter->m_argPtrStack.pop_back();
+                g_CurrentInterpreter->m_callFrameStack.pop_back();
+                return instVal;
             }
-            else {
-                std::vector<TzdValue> frame;
-                frame.reserve((size_t)argCount + 1);
-                frame.push_back(*instVal);
-                for (int i = 0; i < argCount; ++i) frame.push_back(args[i]);
-                g_CurrentInterpreter->m_argPtrStack.push_back(frame.data());
 
-                std::string fileLoc = formatSourcePath(ctor->sourceFile);
-                int line = ctor->line;
-                std::string frameName = std::string(def->fullName) + "." + def->simpleName;
-                frameName += " (" + fileLoc;
-                if (line > 0) frameName += ":" + std::to_string(line);
-                frameName += ") (JIT Compiled)";
+            // 【修改】：基于构造函数（ctor）的 sourceFile 和 line 字段，拼接 Java 风格构造函数栈帧
+            std::string fileLoc = formatSourcePath(ctor->sourceFile);
+            int line = ctor->line;
+            std::string frameName = std::string(def->fullName) + "." + def->simpleName;
+            frameName += " (" + fileLoc;
+            if (line > 0) frameName += ":" + std::to_string(line);
+            frameName += ") (JIT Compiled)";
 
-                g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
-                ctor->jittedPtr(g_CurrentInterpreter, ignored);
-                g_CurrentInterpreter->m_callStackFrames.pop_back();
-                g_CurrentInterpreter->m_argPtrStack.pop_back();
-            }
+            g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            ctor->jittedPtr(g_CurrentInterpreter, ignored);
+            g_CurrentInterpreter->m_callStackFrames.pop_back();
+            g_CurrentInterpreter->m_callFrameStack.pop_back();
+            return instVal;
         }
         else if (g_CurrentInterpreter && ctor->body) {
             std::vector<TzdValue> callArgs;
@@ -736,7 +773,7 @@ extern "C" {
             for (int i = 0; i < argCount; ++i) callArgs.push_back(args[i]);
             TzdValue ctorFunc(def->simpleName, ctor->params, ctor->body);
             ctorFunc.jittedPtr = ctor->jittedPtr;
-            ctorFunc.instanceVal = instVal->instanceVal;
+            ctorFunc.setInstance(instVal->instanceVal);
 
             ctorFunc.sourceFile = ctor->sourceFile;
             ctorFunc.line = ctor->line;
@@ -816,61 +853,144 @@ extern "C" {
         return poolVal;
     }
 
-    void* rt_get_member(void* inst, const char* name) {
+    void* rt_tzd_get_member(void* inst, int32_t selector, const char* name);
+
+    void* rt_tzd_call_method(void* objPtr, int32_t selector, const char* name, int argCount, TzdValue* args) {
+        if (!objPtr || !g_CurrentInterpreter) return g_JitPool.next();
+        TzdValue* v = (TzdValue*)objPtr;
+        if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
+            TzdClassDef* cls = v->instanceVal->definition;
+            if (const TzdMemberSlot* slot = cls->tzdDispatch.find((TzdSelector)selector)) {
+                if (slot->method && slot->method->jittedPtr) {
+                    TzdValue* result = g_JitPool.next();
+                    g_CurrentInterpreter->m_callFrameStack.push_back({ v, args, argCount });
+                    slot->method->jittedPtr(g_CurrentInterpreter, result);
+                    g_CurrentInterpreter->m_callFrameStack.pop_back();
+                    return result;
+                }
+            }
+        }
+        void* callee = rt_tzd_get_member(objPtr, selector, name);
+        return rt_call_value_fast(callee, argCount, args);
+    }
+
+    // ------------------------------------------------------------------
+    // tzd selector dispatch — bound-method 构造助手
+    // rt_tzd_get_member 的 selector 热路径与 tzd_get_member_by_name 的 name 回退
+    // 路径共用这两个助手，保证 selector 路径与旧 name 路径语义完全一致。
+    // 复用 g_JitPool 槽位时全量覆盖函数元数据，避免上一轮残留泄漏。
+    // ------------------------------------------------------------------
+    static TzdValue* tzd_make_class_method_value(ClassMethod* method) {
+        TzdValue* res = g_JitPool.next();
+        res->nativeFunc = nullptr;            // 清除残留 native 句柄
+        res->jittedPtr = method->jittedPtr;   // 读 live method->jittedPtr
+        res->funcBody = method->body;
+        res->params = method->params;
+        res->paramTypes = method->paramTypes;
+        res->sourceFile = method->sourceFile;
+        res->line = method->line;
+        res->column = method->column;
+        res->name = method->name;
+        res->type = method->isNative ? TzdValue::NATIVE_FUNCTION : TzdValue::FUNCTION;
+        if (method->isNative) res->nativeFunc = method->nativeWrapper;
+        return res;
+    }
+
+    static TzdValue* tzd_make_bound_method_value(TzdInstance* recv, ClassMethod* method) {
+        TzdValue* res = g_JitPool.next();
+        res->name = method->name;
+        res->setInstance(recv);              // NEVER raw assign — 走 refcount retain/release
+        res->jittedPtr = method->jittedPtr;  // 读 live method->jittedPtr（JIT 重编后即时可见）
+        res->sourceFile = method->sourceFile;
+        res->line = method->line;
+        res->column = method->column;
+        res->nativeFunc = nullptr;           // 默认清空，避免池槽位残留
+        if (method->isNative) {
+            res->type = TzdValue::NATIVE_FUNCTION;
+            res->nativeFunc = method->nativeWrapper;
+            res->funcBody = method->body;
+            res->params = method->params;
+            res->paramTypes = method->paramTypes;
+        }
+        else {
+            res->type = TzdValue::FUNCTION;
+            if (method->jittedPtr && !TzdDebugger::g_DebugActive) {
+                // 热路径：call bridge 直接用 jittedPtr，跳过 params/body 拷贝；
+                // 但仍清空这些字段，避免池槽位上一轮残留的 func 元数据。
+                res->funcBody = nullptr;
+                res->params.clear();
+                res->paramTypes.clear();
+            }
+            else {
+                // 逃逸 / 调试 / 未 JIT：保留 params/body 供 debug 回退与解释器回退。
+                res->funcBody = method->body;
+                res->params = method->params;
+                res->paramTypes = method->paramTypes;
+            }
+        }
+        return res;
+    }
+
+    // name-based 解析核心（不内联 selector，供回退使用；不递归回 rt_get_member）。
+    static TzdValue* tzd_get_member_by_name(void* inst, const char* name) {
         TzdValue* v = (TzdValue*)inst;
         if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
             if (TzdValue* direct = v->classDefVal->findStaticValue(name)) return direct;
             if (ClassMethod* method = v->classDefVal->findMethod(name)) {
-                TzdValue* res = g_JitPool.next();
-                res->type = method->isNative ? TzdValue::NATIVE_FUNCTION : TzdValue::FUNCTION;
-                res->sourceFile = method->sourceFile;
-                res->line = method->line;
-                res->column = method->column;
-                res->name = method->name;
-                res->params = method->params;
-                res->funcBody = method->body;
-                res->jittedPtr = method->jittedPtr;
-                if (method->isNative) res->nativeFunc = method->nativeWrapper;
-                return res;
+                return tzd_make_class_method_value(method);
             }
         }
         if (v->type == TzdValue::INSTANCE && v->instanceVal) {
             if (TzdValue* direct = v->instanceVal->getMemberPtr(name)) {
                 return direct;
             }
-
             if (v->instanceVal->definition) {
                 if (ClassMethod* method = v->instanceVal->definition->findMethod(name)) {
-                    TzdValue* res = g_JitPool.next();
-                    res->name = method->name;
-                    res->instanceVal = v->instanceVal;
-                    res->jittedPtr = method->jittedPtr;
-                    res->sourceFile = method->sourceFile;
-                    res->line = method->line;
-                    res->column = method->column;
-
-                    if (method->isNative) {
-                        res->type = TzdValue::NATIVE_FUNCTION;
-                        res->nativeFunc = method->nativeWrapper;
-                    }
-                    else {
-                        res->type = TzdValue::FUNCTION;
-                        // In the hot path (JIT on + method already jitted), avoid copying
-                        // params/body vectors every call; call bridge uses jittedPtr directly.
-                        if (!(method->jittedPtr && !TzdDebugger::g_DebugActive)) {
-                            res->funcBody = method->body;
-                            res->params = method->params;
-                            res->paramTypes = method->paramTypes;
-                        }
-                    }
-                    return res;
+                    return tzd_make_bound_method_value(v->instanceVal, method);
                 }
             }
         }
         return g_JitPool.next();
     }
 
-    void rt_store_member(void* inst, const char* name, void* val) {
+    // selector 热路径：O(1) dispatch table，name 仅作冷路径诊断/回退。
+    void* rt_tzd_get_member(void* inst, int32_t selector, const char* name) {
+        TzdValue* v = (TzdValue*)inst;
+        if (selector != 0) {
+            if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
+                if (const TzdMemberSlot* slot =
+                        v->instanceVal->definition->tzdDispatch.find((TzdSelector)selector)) {
+                    // 实例字段优先：返回活动槽指针（零拷贝）。
+                    if (slot->fieldIndex >= 0) {
+                        if (TzdValue* direct = v->instanceVal->getMemberPtrByIndex(slot->fieldIndex))
+                            return direct;
+                    }
+                    if (slot->method) {
+                        return tzd_make_bound_method_value(v->instanceVal, slot->method);
+                    }
+                }
+            }
+            else if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
+                if (const TzdMemberSlot* slot =
+                        v->classDefVal->tzdDispatch.find((TzdSelector)selector)) {
+                    // 类访问：staticValue 在 method 之前（isStatic 语义）。
+                    if (slot->staticValue) return slot->staticValue;
+                    if (slot->method) return tzd_make_class_method_value(slot->method);
+                }
+            }
+        }
+        // 冷路径：selector 未解析或表未命中 —— name 解析（不再内联，避免递归）。
+        return tzd_get_member_by_name(inst, name);
+    }
+
+    // 兼容入口：旧 emit 点仍以 name 调用；此处做 slow interning 后委托 selector 路径。
+    void* rt_get_member(void* inst, const char* name) {
+        TzdSelector sel = name ? tzdInternSelector(name) : 0;
+        return rt_tzd_get_member(inst, (int32_t)sel, name);
+    }
+
+    // name-based 写入核心。
+    static void tzd_store_member_by_name(void* inst, const char* name, void* val) {
         if (!inst || !val) return;
         TzdValue* v = (TzdValue*)inst;
         TzdValue copy = *(TzdValue*)val;
@@ -883,6 +1003,42 @@ extern "C" {
         if (v->type == TzdValue::INSTANCE && v->instanceVal) {
             v->instanceVal->setMember(name, copy);
         }
+    }
+
+    // selector 热路径写入。
+    void rt_tzd_store_member(void* inst, int32_t selector, const char* name, void* val) {
+        if (!inst || !val) return;
+        TzdValue* v = (TzdValue*)inst;
+        TzdValue* src = (TzdValue*)val;
+        if (selector != 0) {
+            if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
+                if (const TzdMemberSlot* slot =
+                        v->instanceVal->definition->tzdDispatch.find((TzdSelector)selector)) {
+                    if (slot->fieldIndex >= 0) {
+                        // setMemberByIndex 经 operator= 全量覆盖，清除上一轮残留
+                        // 的 func 元数据（params/body/jittedPtr），避免陈旧。
+                        v->instanceVal->setMemberByIndex(slot->fieldIndex, *src);
+                        return;
+                    }
+                }
+            }
+            else if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
+                if (const TzdMemberSlot* slot =
+                        v->classDefVal->tzdDispatch.find((TzdSelector)selector)) {
+                    if (slot->staticValue) {
+                        *slot->staticValue = *src;
+                        return;
+                    }
+                }
+            }
+        }
+        tzd_store_member_by_name(inst, name, val);
+    }
+
+    // 兼容入口。
+    void rt_store_member(void* inst, const char* name, void* val) {
+        TzdSelector sel = name ? tzdInternSelector(name) : 0;
+        rt_tzd_store_member(inst, (int32_t)sel, name, val);
     }
 
     void* rt_create_lambda_value(const char* lambdaName) {
@@ -1000,7 +1156,7 @@ extern "C" {
 
         TzdValue ctorFunc(parent->simpleName, parentCtor->params, parentCtor->body);
         ctorFunc.jittedPtr = parentCtor->jittedPtr;
-        ctorFunc.instanceVal = inst;
+        ctorFunc.setInstance(inst);
 
         // 【修复】：复制源文件与行列元数据，确保继承链的 JIT 堆栈能够正常定位
         ctorFunc.sourceFile = parentCtor->sourceFile;
@@ -1021,7 +1177,7 @@ extern "C" {
     void rt_set_fatal_jmp(void* buf) { g_tzdFatalJmp = static_cast<jmp_buf*>(buf); }
 
     void rt_free_jmp_buf(void* buf) {
-        delete static_cast<jmp_buf*>(buf);
+        delete[] static_cast<jmp_buf*>(buf);
     }
 
     /*int rt_enter_try_buf(void* buf) {
@@ -1207,6 +1363,7 @@ void TzdJitEngine::jitModule(std::unique_ptr<Module> M) {
             if (lastUnderscore != std::string::npos && lastUnderscore + 1 < baseName.size() && baseName[lastUnderscore + 1] == 'v') {
                 baseName = baseName.substr(0, lastUnderscore);
             }
+            std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
             s_workerPointers[baseName] = ptr;
         }
     }
@@ -1246,10 +1403,36 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         internalName + "_worker",
         m_module.get()
     );
-    workerFunc->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
-    workerFunc->setVisibility(GlobalValue::DefaultVisibility);
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
+
+    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
+    {
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledWorkers[base] = workerFunc;
+        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
+    }
+
+    // Phase B: Create native double worker for function specialization.
+    // Only for functions with parameters — 0-param functions have no benefit.
+    Function* nativeWorkerFunc = nullptr;
+    if (argCount > 0) {
+        std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
+        for (int i = 0; i < argCount; ++i) {
+            nativeWorkerArgs.push_back(m_doubleTy);
+        }
+        nativeWorkerFunc = Function::Create(
+            FunctionType::get(m_doubleTy, nativeWorkerArgs, false),
+            Function::ExternalLinkage,
+            internalName + "_worker_native",
+            m_module.get()
+        );
+        nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+    s_currentNativeWorkerFunc = nativeWorkerFunc;
 
     // 2. Entry 依然返回 void
     std::vector<Type*> entryArgs = { m_ptrTy, m_ptrTy };
@@ -1259,8 +1442,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         internalName,
         m_module.get()
     );
-    entryFunc->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
-    entryFunc->setVisibility(GlobalValue::DefaultVisibility);
 
     BasicBlock* entryBB = BasicBlock::Create(m_context, "entry", entryFunc);
     m_builder.SetInsertPoint(entryBB);
@@ -1276,10 +1457,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             Value* argIdx = ConstantInt::get(Type::getInt32Ty(m_context), i);
             Value* argRaw = m_builder.CreateCall(getRtFunc("rt_get_arg"), { argIdx });
             Value* destPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
-            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { destPtr, argRaw });
         }
     }
     m_builder.CreateCall(workerFunc, { interp, retVal, argsArray });
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+    }
     m_builder.CreateRetVoid();
 
     BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
@@ -1287,6 +1470,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
 
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
+    m_declaredLocals.clear();
     s_currentFuncParamNames.clear();
 
     this->m_currentRetPtr = workerFunc->getArg(1);
@@ -1300,13 +1484,18 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         for (int i = 0; i < argCount; ++i) {
             std::string pName = getParamName(pList[i]);
             s_currentFuncParamNames.push_back(pName);
+            m_declaredLocals.insert(pName);
 
             Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, workerArgsArray, m_builder.getInt32(i));
             AllocaInst* boxedAlloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, pName);
             m_builder.CreateStore(argPtr, boxedAlloc);
             m_namedValues[pName] = boxedAlloc;
 
-            // 注意：已经彻底去除了向 m_nativeDoubleLocals 的写入，确保形参保留原始 TzdValue 指针类型
+            // Native double version — unbox at entry for fast numeric access + native worker
+            Value* nativeVal = inlineToDoubleFast(argPtr);
+            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+            m_builder.CreateStore(nativeVal, nativeAlloc);
+            m_nativeDoubleLocals[pName] = nativeAlloc;
         }
     }
 
@@ -1321,6 +1510,54 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
     }
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
+
+    // Phase B: Compile native worker body — params are direct doubles, no TzdValue unbox
+    if (argCount > 0 && nativeWorkerFunc) {
+        BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
+        m_builder.SetInsertPoint(nativeEntryBB);
+
+        m_namedValues.clear();
+        m_nativeDoubleLocals.clear();
+        m_declaredLocals.clear();
+        s_currentFuncParamNames.clear();
+
+        // Native worker has no retVal slot — returns double directly
+        m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+
+        BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
+        s_tailRecurseBB = nativeBodyBB;
+
+        if (ctx->paramList()) {
+            auto pList = ctx->paramList()->param();
+            for (int i = 0; i < argCount; ++i) {
+                std::string pName = getParamName(pList[i]);
+                s_currentFuncParamNames.push_back(pName);
+                m_declaredLocals.insert(pName);
+
+                // Store double arg into alloca — mem2reg will promote to register.
+                // Using alloca so tail-recursion path (CreateStore) works correctly.
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeWorkerFunc->getArg(i + 1), nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
+        }
+
+        m_builder.CreateBr(nativeBodyBB);
+        m_builder.SetInsertPoint(nativeBodyBB);
+
+        visit(ctx->block());
+
+        if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+        }
+    }
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
 }
 
 
@@ -1333,6 +1570,8 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
     m_builder.SetInsertPoint(bb);
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
+    m_declaredLocals.clear();
+    m_declaredLocals.insert("this");
     m_currentRetPtr = func->getArg(1);
 
     Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
@@ -1344,6 +1583,7 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         auto pList = methodCtx->paramList()->param();
         for (int i = 0; i < (int)pList.size(); ++i) {
             std::string pName = getParamName(pList[i]);
+            m_declaredLocals.insert(pName);
             Value* argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i + 1) });
             AllocaInst* alloc = m_builder.CreateAlloca(m_ptrTy, nullptr, pName);
             m_builder.CreateStore(argVal, alloc);
@@ -1365,6 +1605,8 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
     m_builder.SetInsertPoint(bb);
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
+    m_declaredLocals.clear();
+    m_declaredLocals.insert("this");
     m_currentRetPtr = func->getArg(1);
 
     Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
@@ -1372,10 +1614,11 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
     m_builder.CreateStore(thisVal, thisAlloc);
     m_namedValues["this"] = thisAlloc;
 
-        if (ctorCtx->paramList()) {
-            auto pList = ctorCtx->paramList()->param();
-            for (int i = 0; i < (int)pList.size(); ++i) {
-                std::string pName = getParamName(pList[i]);
+    if (ctorCtx->paramList()) {
+        auto pList = ctorCtx->paramList()->param();
+        for (int i = 0; i < (int)pList.size(); ++i) {
+            std::string pName = getParamName(pList[i]);
+            m_declaredLocals.insert(pName);
             Value* argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i + 1) });
             AllocaInst* alloc = m_builder.CreateAlloca(m_ptrTy, nullptr, pName);
             m_builder.CreateStore(argVal, alloc);
@@ -1389,7 +1632,7 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
             visit(stmt);
         }
         catch (const std::bad_any_cast&) {
-            agentLogJit("D", "compileConstructor.stmt", stmt->getText().substr(0, 80).c_str());
+            //agentLogJit("D", "compileConstructor.stmt", stmt->getText().substr(0, 80).c_str());
             throw;
         }
     }
@@ -1407,10 +1650,36 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         internalName + "_worker",
         m_module.get()
     );
-    workerFunc->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
-    workerFunc->setVisibility(GlobalValue::DefaultVisibility);
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
+
+    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
+    {
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledWorkers[base] = workerFunc;
+        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
+    }
+
+    // Phase B: Create native double worker for function specialization.
+    // Only for functions with parameters — 0-param functions have no benefit.
+    Function* nativeWorkerFunc = nullptr;
+    if (argCount > 0) {
+        std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
+        for (int i = 0; i < argCount; ++i) {
+            nativeWorkerArgs.push_back(m_doubleTy);
+        }
+        nativeWorkerFunc = Function::Create(
+            FunctionType::get(m_doubleTy, nativeWorkerArgs, false),
+            Function::ExternalLinkage,
+            internalName + "_worker_native",
+            m_module.get()
+        );
+        nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+    s_currentNativeWorkerFunc = nativeWorkerFunc;
 
     // 2. Entry 依然返回 void 供外部 C++ 解释器调用
     std::vector<Type*> entryArgs = { m_ptrTy, m_ptrTy };
@@ -1420,8 +1689,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         internalName,
         m_module.get()
     );
-    entryFunc->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
-    entryFunc->setVisibility(GlobalValue::DefaultVisibility);
 
     BasicBlock* entryBB = BasicBlock::Create(m_context, "entry", entryFunc);
     m_builder.SetInsertPoint(entryBB);
@@ -1440,6 +1707,9 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         }
     }
     m_builder.CreateCall(workerFunc, { interp, retVal, argsArray });
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+    }
     m_builder.CreateRetVoid();
 
     BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
@@ -1447,6 +1717,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
 
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
+    m_declaredLocals.clear();
     s_currentFuncParamNames.clear();
 
     this->m_currentRetPtr = workerFunc->getArg(1);
@@ -1460,14 +1731,22 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         for (int i = 0; i < argCount; ++i) {
             std::string pName = getParamName(pList[i]);
             s_currentFuncParamNames.push_back(pName);
+            m_declaredLocals.insert(pName);
 
             Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, workerArgsArray, m_builder.getInt32(i));
 
+            // Boxed version (for non-numeric access like string concatenation)
             AllocaInst* boxedAlloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, pName);
             m_builder.CreateStore(argPtr, boxedAlloc);
             m_namedValues[pName] = boxedAlloc;
 
-            // 注意：已经彻底去除了向 m_nativeDoubleLocals 的写入，确保形参保留原始 TzdValue 指针类型
+            // Native double version — unbox at function entry for fast numeric access.
+            // visitIdExpr checks m_nativeDoubleLocals first, returning the double.
+            // Inline unbox: direct GEP+Load on dVal field (no function call)
+            Value* nativeVal = inlineToDoubleFast(argPtr);
+            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+            m_builder.CreateStore(nativeVal, nativeAlloc);
+            m_nativeDoubleLocals[pName] = nativeAlloc;
         }
     }
 
@@ -1482,6 +1761,53 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
     }
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
+
+    // Phase B: Compile native worker body — params are direct doubles, no TzdValue unbox
+    if (argCount > 0 && nativeWorkerFunc) {
+        BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
+        m_builder.SetInsertPoint(nativeEntryBB);
+
+        m_namedValues.clear();
+        m_nativeDoubleLocals.clear();
+        m_declaredLocals.clear();
+        s_currentFuncParamNames.clear();
+
+        m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+
+        BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
+        s_tailRecurseBB = nativeBodyBB;
+
+        if (params) {
+            auto pList = params->param();
+            for (int i = 0; i < argCount; ++i) {
+                std::string pName = getParamName(pList[i]);
+                s_currentFuncParamNames.push_back(pName);
+                m_declaredLocals.insert(pName);
+
+                // Store double arg into alloca — mem2reg will promote to register.
+                // Using alloca so tail-recursion path (CreateStore) works correctly.
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeWorkerFunc->getArg(i + 1), nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
+        }
+
+        m_builder.CreateBr(nativeBodyBB);
+        m_builder.SetInsertPoint(nativeBodyBB);
+
+        visit(block);
+
+        if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+        }
+    }
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
 }
 
 
@@ -1516,7 +1842,17 @@ TzdJitEngine::TzdJitEngine()
     registerRuntimeSymbols();
 }
 
-TzdJitEngine::~TzdJitEngine() {}
+TzdJitEngine::~TzdJitEngine() {
+    // Leak LLJIT and ThreadSafeContext to avoid stack overflow during
+    // LLVM internal cleanup at program exit.
+    (void)m_lljit.release();
+
+    // Move ThreadSafeContext to a heap-allocated container that is never
+    // destroyed, so the LLVMContext's refcount never hits zero.
+    static std::vector<llvm::orc::ThreadSafeContext>* s_leaked = nullptr;
+    if (!s_leaked) s_leaked = new std::vector<llvm::orc::ThreadSafeContext>();
+    s_leaked->push_back(std::move(m_tsc));
+}
 
 void TzdJitEngine::initLLJIT() {}
 
@@ -1571,6 +1907,11 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_get_member", { m_ptrTy, m_ptrTy });
     addFunc("rt_store_member", { m_ptrTy, m_ptrTy, m_ptrTy }, m_voidTy);
+
+    // tzd selector dispatch —— 热路径用 i32 常量 selector，name 仅冷诊断。
+    addFunc("rt_tzd_get_member", { m_ptrTy, m_int32Ty, m_ptrTy });
+    addFunc("rt_tzd_store_member", { m_ptrTy, m_int32Ty, m_ptrTy, m_ptrTy }, m_voidTy);
+    addFunc("rt_tzd_call_method", { m_ptrTy, m_int32Ty, m_ptrTy, m_int32Ty, m_ptrTy });
 
     addFunc("rt_cast", { m_ptrTy, m_ptrTy });
     addFunc("rt_type_check", { m_ptrTy, m_ptrTy }, m_boolTy);
@@ -1653,16 +1994,107 @@ Function* TzdCompiler::getRtFunc(const std::string& name) {
     return f;
 }
 
+void TzdJitEngine::registerWorkerForSymbol(const std::string& internalName) {
+    std::string workerName = internalName + "_worker";
+    if (void* ptr = lookupSymbolAsPtr(workerName)) {
+        std::string baseName = internalName;
+        size_t lastUnderscore = baseName.find_last_of('_');
+        if (lastUnderscore != std::string::npos && lastUnderscore + 1 < baseName.size() && baseName[lastUnderscore + 1] == 'v') {
+            baseName = baseName.substr(0, lastUnderscore);
+        }
+        std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
+        s_workerPointers[baseName] = ptr;
+    } else if (void* entryPtr = lookupSymbolAsPtr(internalName)) {
+        // Fallback: use entry function if worker not found
+        std::string baseName = internalName;
+        size_t lastUnderscore = baseName.find_last_of('_');
+        if (lastUnderscore != std::string::npos && lastUnderscore + 1 < baseName.size() && baseName[lastUnderscore + 1] == 'v') {
+            baseName = baseName.substr(0, lastUnderscore);
+        }
+        std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
+        s_workerPointers[baseName] = entryPtr;
+    }
+}
+
 void TzdJitEngine::addModule(ThreadSafeModule TSM) {
     if (!m_lljit) {
         errs() << "addModule: LLJIT is not initialized\n";
         return;
     }
 
-    if (auto Err = m_lljit->addIRModule(std::move(TSM))) {
-        errs() << "addIRModule failed: " << toString(std::move(Err)) << "\n";
+    // Pre-compile the IR module to an object buffer manually, then add the
+    // object file to the JIT.  This bypasses IRCompileLayer::emit() which
+    // destroys the Module after compilation — that destruction overflows the
+    // stack due to a CRT ABI mismatch (/MT in TzdTools vs /MD in LLVM SDK).
+    std::unique_ptr<MemoryBuffer> objBuffer;
+
+    {
+        // Lock the ThreadSafeContext to safely access the Module
+        auto lock = TSM.getContext().getLock();
+        Module* M = TSM.getModuleUnlocked();
+        if (!M) return;
+
+        // Run LLVM optimization passes on the module before compilation.
+        // Analysis managers are leaked (static) — their destructors overflow
+        // the stack when freeing analysis results referencing large IR graphs.
+        {
+            static llvm::ModuleAnalysisManager* MAM = nullptr;
+            static llvm::FunctionAnalysisManager* FAM = nullptr;
+            static llvm::CGSCCAnalysisManager* CGAM = nullptr;
+            static llvm::LoopAnalysisManager* LAM = nullptr;
+            static bool s_init = false;
+            if (!s_init) {
+                s_init = true;
+                MAM = new llvm::ModuleAnalysisManager();
+                FAM = new llvm::FunctionAnalysisManager();
+                CGAM = new llvm::CGSCCAnalysisManager();
+                LAM = new llvm::LoopAnalysisManager();
+                llvm::PassBuilder PB;
+                PB.registerModuleAnalyses(*MAM);
+                PB.registerFunctionAnalyses(*FAM);
+                PB.registerCGSCCAnalyses(*CGAM);
+                PB.registerLoopAnalyses(*LAM);
+                PB.crossRegisterProxies(*LAM, *FAM, *CGAM, *MAM);
+            }
+            // Phase C: AlwaysInliner for native workers + function passes
+            llvm::CGSCCPassManager CGPM;
+            CGPM.addPass(llvm::AlwaysInlinerPass());
+
+            llvm::FunctionPassManager FPM;
+            FPM.addPass(llvm::PromotePass());         // mem2reg
+            FPM.addPass(llvm::EarlyCSEPass(true));    // common subexpression elimination
+            FPM.addPass(llvm::DCEPass());             // dead code elimination
+            llvm::ModulePassManager MPM;
+            MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(std::move(CGPM)));
+            MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+            MPM.run(*M, *MAM);
+            MPM.run(*M, *MAM);
+        }
+
+        // Use the JIT's own compiler to compile IR to object code
+        auto& compiler = m_lljit->getIRCompileLayer().getCompiler();
+        auto result = compiler(*M);
+
+        if (!result) {
+            errs() << "Pre-compile failed: " << toString(result.takeError()) << "\n";
+            return;
+        }
+
+        objBuffer = std::move(*result);
+    }
+    // Lock released here
+
+    // Add the pre-compiled object file to the JIT
+    if (auto Err = m_lljit->addObjectFile(std::move(objBuffer))) {
+        errs() << "addObjectFile failed: " << toString(std::move(Err)) << "\n";
         consumeError(std::move(Err));
     }
+
+    // Leak the ThreadSafeModule (and the IR Module + LLVMContext inside it)
+    // to prevent Module destruction.  Process exit reclaims all memory.
+    static std::vector<ThreadSafeModule>* s_leakedModules = nullptr;
+    if (!s_leakedModules) s_leakedModules = new std::vector<ThreadSafeModule>();
+    s_leakedModules->push_back(std::move(TSM));
 }
 
 LLVMContext& TzdJitEngine::getContext() {
@@ -1706,6 +2138,7 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_create_inst", (void*)&rt_create_inst);
     bind("rt_create_inst_args", (void*)&rt_create_inst_args);
     bind("rt_get_member", (void*)&rt_get_member);
+    bind("rt_tzd_get_member", (void*)&rt_tzd_get_member);
     bind("rt_print", (void*)&rt_print);
     bind("rt_create_native_val", (void*)&rt_create_native_val);
     bind("g_last_ret", (void*)&g_LastJitValue);
@@ -1732,6 +2165,8 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_set_last_ret", (void*)&rt_set_last_ret);
     bind("rt_call_sub", (void*)&rt_call_sub);
     bind("rt_store_member", (void*)&rt_store_member);
+    bind("rt_tzd_store_member", (void*)&rt_tzd_store_member);
+    bind("rt_tzd_call_method", (void*)&rt_tzd_call_method);
     bind("rt_cast", (void*)&rt_cast);
     bind("rt_type_check", (void*)&rt_type_check);
     bind("rt_call_super", (void*)&rt_call_super);
@@ -1802,10 +2237,17 @@ void TzdJitEngine::registerRuntimeSymbols() {
 
 TzdCompiler::TzdCompiler(TzdJitEngine& jit, const std::string& modName)
     : m_jitEngine(jit),
-    m_context(jit.getContext()),
-    m_builder(m_context),
-    m_tsc(jit.getThreadSafeContext())
+    m_tsc(std::make_unique<llvm::LLVMContext>()),
+    m_context(*m_tsc.getContext()),
+    m_builder(m_context)
 {
+    s_currentFuncParamNames.clear();
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
+    s_currentWorkerFunc = nullptr;
+    s_tryJmpBufStack.clear();
+    s_loopLevel = 0;
+
     m_module = std::make_unique<llvm::Module>(modName, m_context);
     m_module->setDataLayout(jit.getDataLayout());
     m_module->setTargetTriple(jit.getTargetTriple());
@@ -1827,51 +2269,54 @@ TzdCompiler::TzdCompiler(TzdJitEngine& jit, const std::string& modName)
     }
 }
 
+TzdCompiler::~TzdCompiler() {
+    m_builder.ClearInsertionPoint();
+
+    s_currentFuncParamNames.clear();
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
+    s_currentWorkerFunc = nullptr;
+    s_tryJmpBufStack.clear();
+    s_loopLevel = 0;
+
+    if (m_module) {
+        // Leak the Module to avoid heap corruption from LLVM ABI mismatch.
+        m_module.release();
+    }
+
+    // Leak the ThreadSafeContext (LLVMContext) to avoid stack overflow
+    // during LLVMContext destruction.  Move to a heap container that is
+    // never destroyed — process exit reclaims all memory.
+    static std::vector<llvm::orc::ThreadSafeContext>* s_leaked = nullptr;
+    if (!s_leaked) s_leaked = new std::vector<llvm::orc::ThreadSafeContext>();
+    s_leaked->push_back(std::move(m_tsc));
+}
+
 
 llvm::orc::ThreadSafeModule TzdCompiler::extractThreadSafeModule() {
     if (!m_module) {
         return llvm::orc::ThreadSafeModule(nullptr, m_tsc);
     }
 
-    // 1. 首先物理清理所有无前驱的死代码块
-    for (auto& F : *m_module) {
-        if (!F.isDeclaration()) {
-            llvm::removeUnreachableBlocks(F);
-        }
-    }
-
-    // 2. 验证模块合法性
+    // 1. Clean up dead code blocks
     if (llvm::verifyModule(*m_module, &llvm::errs())) {
-        llvm::errs() << "\n>>> [JIT FATAL ERROR]: Module verification failed! \n";
-        llvm::errs() << "========== [ DUMPING GENERATED LLVM IR CODE ] ==========\n";
-        m_module->print(llvm::errs(), nullptr);
-        llvm::errs() << "========================================================\n\n";
+        llvm::errs() << "[JIT] Module verification failed!\n";
         return llvm::orc::ThreadSafeModule(nullptr, m_tsc);
     }
 
-    //m_module->print(llvm::errs(), nullptr);
+    // Move ownership of the module to the ThreadSafeModule.
+    // The JIT engine will own the Module and properly destroy it when done.
+    // m_module becomes null — the destructor's reset() is a safe no-op.
+    auto moduleForJIT = std::move(m_module);
 
-    LoopAnalysisManager LAM;
-    FunctionAnalysisManager FAM;
-    CGSCCAnalysisManager CGAM;
-    ModuleAnalysisManager MAM;
-    PassBuilder PB;
-    PB.registerModuleAnalyses(MAM);
-    PB.registerCGSCCAnalyses(CGAM);
-    PB.registerFunctionAnalyses(FAM);
-    PB.registerLoopAnalyses(LAM);
-    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+    m_builder.ClearInsertionPoint();
+    m_namedValues.clear();
+    m_nativeDoubleLocals.clear();
+    m_currentRetPtr = nullptr;
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
 
-    ModulePassManager MPM;
-    FunctionPassManager FPM;
-    FPM.addPass(llvm::PromotePass());
-    FPM.addPass(llvm::SimplifyCFGPass());
-    FPM.addPass(llvm::EarlyCSEPass(true));
-    FPM.addPass(llvm::DCEPass());
-    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
-    MPM.run(*m_module, MAM);
-
-    return llvm::orc::ThreadSafeModule(std::move(m_module), m_tsc);
+    return llvm::orc::ThreadSafeModule(std::move(moduleForJIT), m_tsc);
 }
 
 Value* TzdCompiler::boxToTzdValue(Value* val) {
@@ -1934,6 +2379,7 @@ std::any TzdCompiler::visitBlock(TzdLangParser::BlockContext* ctx) {
 
 std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
     std::string name = ctx->variableDeclaration()->IDENTIFIER()->getText();
+    m_declaredLocals.insert(name);
     Value* initVal = nullptr;
     if (ctx->variableDeclaration()->expression()) {
         initVal = std::any_cast<Value*>(visit(ctx->variableDeclaration()->expression()));
@@ -1942,16 +2388,24 @@ std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
         initVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
     }
     if (initVal->getType()->isDoubleTy()) {
-        AllocaInst* alloc = m_builder.CreateAlloca(m_doubleTy, nullptr, name + "_native");
+        AllocaInst* alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
         m_builder.CreateStore(initVal, alloc);
         m_nativeDoubleLocals[name] = alloc;
+        // Also store to scope so nested functions can access via rt_get_var_ptr
+        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+        Value* boxedVal = boxToTzdValue(initVal);
+        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
         return std::any();
     }
     Value* boxedVal = boxToTzdValue(initVal);
-    Value* stableVal = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxedVal });
     AllocaInst* alloca = CreateEntryBlockAlloca(name);
-    m_builder.CreateStore(stableVal, alloca);
+    m_builder.CreateStore(boxedVal, alloca);
     m_namedValues[name] = alloca;
+    // Also store to scope so nested functions can access via rt_get_var_ptr
+    {
+        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
+    }
     return std::any();
 }
 
@@ -1994,8 +2448,8 @@ std::any TzdCompiler::visitIfStmt(TzdLangParser::IfStmtContext* ctx) {
 
     Function* func = m_builder.GetInsertBlock()->getParent();
     BasicBlock* thenBB = BasicBlock::Create(m_context, "then", func);
-    BasicBlock* elseBB = BasicBlock::Create(m_context, "else");
     BasicBlock* mergeBB = BasicBlock::Create(m_context, "ifcont");
+    BasicBlock* elseBB = ctx->KW_ELSE() ? BasicBlock::Create(m_context, "else") : nullptr;
 
     m_builder.CreateCondBr(isTrue, thenBB, ctx->KW_ELSE() ? elseBB : mergeBB);
 
@@ -2254,7 +2708,12 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
 std::any TzdCompiler::visitIdExpr(TzdLangParser::IdExprContext* ctx) {
     std::string name = ctx->IDENTIFIER()->getText();
     if (m_nativeDoubleLocals.count(name)) {
-        Value* val = m_builder.CreateLoad(m_doubleTy, m_nativeDoubleLocals[name], name);
+        Value* slot = m_nativeDoubleLocals[name];
+        // Direct double arg (native worker) — already a double, return as-is
+        if (slot->getType()->isDoubleTy()) {
+            return std::any((Value*)slot);
+        }
+        Value* val = m_builder.CreateLoad(m_doubleTy, slot, name);
         return std::any((Value*)val);
     }
     if (m_namedValues.count(name)) {
@@ -2285,27 +2744,29 @@ std::any TzdCompiler::visitStringExpr(TzdLangParser::StringExprContext* ctx) {
 std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) {
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
+    if (!ctx->PLUS()) {
+        Value* lNative = L->getType()->isDoubleTy() ? L : inlineToDoubleFast(L);
+        Value* rNative = R->getType()->isDoubleTy() ? R : inlineToDoubleFast(R);
+        Value* res = m_builder.CreateFSub(lNative, rNative, "subtmp");
+        return std::any((Value*)res);
+    }
     if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy()) {
-        Value* res = ctx->PLUS() ? m_builder.CreateFAdd(L, R, "addtmp")
-            : m_builder.CreateFSub(L, R, "subtmp");
+        Value* res = m_builder.CreateFAdd(L, R, "addtmp");
         return std::any((Value*)res);
     }
     if (L->getType()->isDoubleTy() && R->getType()->isPointerTy()) {
-        Value* rNative = m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { R });
-        Value* res = ctx->PLUS() ? m_builder.CreateFAdd(L, rNative, "addtmp")
-            : m_builder.CreateFSub(L, rNative, "subtmp");
+        Value* rNative = inlineToDoubleFast(R);
+        Value* res = m_builder.CreateFAdd(L, rNative, "addtmp");
         return std::any((Value*)res);
     }
     if (R->getType()->isDoubleTy() && L->getType()->isPointerTy()) {
-        Value* lNative = m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { L });
-        Value* res = ctx->PLUS() ? m_builder.CreateFAdd(lNative, R, "addtmp")
-            : m_builder.CreateFSub(lNative, R, "subtmp");
+        Value* lNative = inlineToDoubleFast(L);
+        Value* res = m_builder.CreateFAdd(lNative, R, "addtmp");
         return std::any((Value*)res);
     }
     Value* boxedL = boxToTzdValue(L);
     Value* boxedR = boxToTzdValue(R);
-    const char* rtFunc = ctx->PLUS() ? "rt_op_add" : "rt_op_sub";
-    Value* res = m_builder.CreateCall(getRtFunc(rtFunc), { boxedL, boxedR });
+    Value* res = m_builder.CreateCall(getRtFunc("rt_op_add"), { boxedL, boxedR });
     return std::any((Value*)res);
 }
 std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* ctx) {
@@ -2390,17 +2851,20 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
     }
     if (memberCtx) {
         Value* obj = castAnyToValue(visit(memberCtx->atom()), "visitAssignmentExpr.memberObj");
-        Value* nameStr = m_builder.CreateGlobalStringPtr(memberCtx->IDENTIFIER()->getText());
+        std::string memberName = memberCtx->IDENTIFIER()->getText();
+        Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
+        TzdSelector sel = internSelectorConstant(memberName);
         Value* boxedRhs = boxToTzdValue(rhs);
         if (isCompound) {
-            Value* oldVal = m_builder.CreateCall(getRtFunc("rt_get_member"), { obj, nameStr });
+            Value* oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_member"),
+                { obj, m_builder.getInt32((int32_t)sel), nameStr });
             const char* opFn = opText == "+=" ? "rt_op_add" :
                 opText == "-=" ? "rt_op_sub" :
                 opText == "*=" ? "rt_op_mul" : "rt_op_div";
             boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { oldVal, boxedRhs });
         }
-        Value* stableRhs = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxedRhs });
-        m_builder.CreateCall(getRtFunc("rt_store_member"), { obj, nameStr, stableRhs });
+        m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
+            { obj, m_builder.getInt32((int32_t)sel), nameStr, boxedRhs });
         return boxedRhs;
     }
 
@@ -2418,6 +2882,12 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
             else if (opText == "/=") newVal = m_builder.CreateFDiv(oldVal, nativeRhs);
         }
         m_builder.CreateStore(newVal, m_nativeDoubleLocals[name]);
+        if (!m_declaredLocals.count(name)) {
+            // Persist to scope chain so global variables are visible outside
+            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+            Value* boxedVal = boxToTzdValue(newVal);
+            m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
+        }
         return newVal;
     }
 
@@ -2429,6 +2899,12 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
         AllocaInst* alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
         m_builder.CreateStore(rhs, alloc);
         m_nativeDoubleLocals[name] = alloc;
+        // Only persist to scope for non-local variables (globals, outer scope vars)
+        if (!m_declaredLocals.count(name)) {
+            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+            Value* boxedRhs = boxToTzdValue(rhs);
+            m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedRhs });
+        }
         return rhs;
     }
 
@@ -2455,15 +2931,19 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
     else if (m_namedValues.count("this")) {
         Value* thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"]);
         Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-        Value* stableRhs = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxedRhs });
-        m_builder.CreateCall(getRtFunc("rt_store_member"), { thisPtr, nameStr, stableRhs });
+        TzdSelector sel = internSelectorConstant(name);
+        m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
+            { thisPtr, m_builder.getInt32((int32_t)sel), nameStr, boxedRhs });
     }
     else {
-        // 第一次出现的指针类型变量：直接用 alloca 管理，不写 scope hashmap
         Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxedRhs });
         AllocaInst* alloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, name + "_local");
         m_builder.CreateStore(stable, alloc);
         m_namedValues[name] = alloc;
+        if (!m_declaredLocals.count(name)) {
+            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+            m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, stable });
+        }
     }
     return boxedRhs;
 }
@@ -2500,7 +2980,7 @@ std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
         Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
         Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
         if (argRaw->getType()->isDoubleTy()) {
-            m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { argPtr, argRaw });
+            inlineStoreNativeToPtr(argPtr, argRaw);
         }
         else {
             m_builder.CreateCall(getRtFunc("rt_copy_value"), { argPtr, boxToTzdValue(argRaw) });
@@ -2510,10 +2990,24 @@ std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
     return (Value*)m_builder.CreateCall(getRtFunc("rt_create_inst_args"), { name, m_builder.getInt32(argCount), argsArray });
 }
 
+// 编译期内联 selector：成员名 -> 常量 TzdSelector（i32）写进 IR，
+// 消除运行期字符串查找。m_selectorIds 仅缓存本编译器实例已解析映射，
+// 进程级唯一性由 tzdInternSelector 保证。
+TzdSelector TzdCompiler::internSelectorConstant(const std::string& name) {
+    auto it = m_selectorIds.find(name);
+    if (it != m_selectorIds.end()) return it->second;
+    TzdSelector sel = tzdInternSelector(name);
+    m_selectorIds.emplace(name, sel);
+    return sel;
+}
+
 std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprContext* ctx) {
     Value* obj = std::any_cast<Value*>(visit(ctx->atom()));
-    Value* name = m_builder.CreateGlobalStringPtr(ctx->IDENTIFIER()->getText());
-    return (Value*)m_builder.CreateCall(getRtFunc("rt_get_member"), { obj, name });
+    std::string memberName = ctx->IDENTIFIER()->getText();
+    Value* name = m_builder.CreateGlobalStringPtr(memberName);
+    TzdSelector sel = internSelectorConstant(memberName);
+    return (Value*)m_builder.CreateCall(getRtFunc("rt_tzd_get_member"),
+        { obj, m_builder.getInt32((int32_t)sel), name });
 }
 
 std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
@@ -2528,6 +3022,22 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
         s_inTailPosition = oldTailState;
     }
 
+    // If the expression was a tail call, it already generated ret/unreachable
+    // in both fast and slow paths.  The current insert block now has a terminator.
+    // We must NOT emit any more instructions into it — doing so would place
+    // instructions after the terminator, causing "Terminator found in the middle
+    // of a basic block!" verification failures.
+    // Create a fresh dead block so any subsequent (unreachable) statements have
+    // a valid insertion point, and compileNamedFunction's default-return logic
+    // can terminate it.
+    if (m_builder.GetInsertBlock() && m_builder.GetInsertBlock()->getTerminator()) {
+        BasicBlock* deadAfterTail = BasicBlock::Create(
+            m_context, "dead_after_tailcall",
+            m_builder.GetInsertBlock()->getParent());
+        m_builder.SetInsertPoint(deadAfterTail);
+        return std::any();
+    }
+
     // ======= 强制展开回收动作 (防止 try 块内 return 导致 jmp_buf 泄露) =======
     for (auto it = s_tryJmpBufStack.rbegin(); it != s_tryJmpBufStack.rend(); ++it) {
         m_builder.CreateCall(getRtFunc("rt_set_catch_jmp"), { std::get<1>(*it) });
@@ -2537,7 +3047,8 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
 
     if (m_currentRetPtr) {
         if (retValRaw && retValRaw->getType()->isDoubleTy()) {
-            // 如果是原生数字，直接写值
+            // 如果是原生数字，直接写值 (rt_store_native_to_ptr has runtime NULL check
+            // — m_currentRetPtr can be NULL when called from self-recursion bypass)
             m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, retValRaw });
         }
         else if (retValRaw) {
@@ -2553,8 +3064,7 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
     // 绝不让高频自递归污染和更新全局 g_last_ret
     if (retValRaw && currentName.find("_worker") == std::string::npos) {
         Value* boxed = boxToTzdValue(retValRaw);
-        Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxed });
-        m_builder.CreateCall(getRtFunc("rt_set_last_ret"), { stable });
+        m_builder.CreateCall(getRtFunc("rt_set_last_ret"), { boxed });
     }
 
     // [绝杀修改]：如果是 Worker 函数，直接用底层寄存器返回原生数字
@@ -2699,19 +3209,20 @@ std::any TzdCompiler::visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprC
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
 
-    if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy()) {
-        Value* res = nullptr;
-        if (ctx->MUL()) res = m_builder.CreateFMul(L, R, "multmp");
-        else if (ctx->DIV()) res = m_builder.CreateFDiv(L, R, "divtmp");
-        else res = m_builder.CreateFRem(L, R, "modtmp");
-        return std::any((Value*)res);
-    }
+    Value* lNative = L->getType()->isDoubleTy() ? L : inlineToDoubleFast(L);
+    Value* rNative = R->getType()->isDoubleTy() ? R : inlineToDoubleFast(R);
 
-    Value* boxedL = boxToTzdValue(L);
-    Value* boxedR = boxToTzdValue(R);
-    const char* rtFunc = ctx->MUL() ? "rt_op_mul" :
-        ctx->DIV() ? "rt_op_div" : "rt_op_mod";
-    Value* res = m_builder.CreateCall(getRtFunc(rtFunc), { boxedL, boxedR });
+    Value* res = nullptr;
+    if (ctx->MUL()) res = m_builder.CreateFMul(lNative, rNative, "multmp");
+    else if (ctx->DIV()) res = m_builder.CreateFDiv(lNative, rNative, "divtmp");
+    else {
+        // Adaptive integer specialization for %: fmod is a slow library call,
+        // but srem is a single idiv instruction. Convert to i64 for integer modulo.
+        Value* lInt = m_builder.CreateFPToSI(lNative, Type::getInt64Ty(m_context), "l2int");
+        Value* rInt = m_builder.CreateFPToSI(rNative, Type::getInt64Ty(m_context), "r2int");
+        Value* remInt = m_builder.CreateSRem(lInt, rInt, "modint");
+        res = m_builder.CreateSIToFP(remInt, m_doubleTy, "int2dbl");
+    }
     return std::any((Value*)res);
 }
 std::any TzdCompiler::visitPowerExpr(TzdLangParser::PowerExprContext* ctx) {
@@ -2734,13 +3245,17 @@ bool TzdCompiler::emitMemberIncDec(llvm::Value*& result, TzdLangParser::Expressi
     if (!memCtx) return false;
 
     Value* obj = std::any_cast<Value*>(visit(memCtx->atom()));
-    Value* nameStr = m_builder.CreateGlobalStringPtr(memCtx->IDENTIFIER()->getText());
-    Value* oldVal = m_builder.CreateCall(getRtFunc("rt_get_member"), { obj, nameStr });
+    std::string memberName = memCtx->IDENTIFIER()->getText();
+    Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
+    TzdSelector sel = internSelectorConstant(memberName);
+    Value* oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_member"),
+        { obj, m_builder.getInt32((int32_t)sel), nameStr });
     Value* one = m_builder.CreateCall(getRtFunc("rt_create_num"), { ConstantFP::get(m_doubleTy, 1.0) });
     const char* opFunc = isInc ? "rt_op_add" : "rt_op_sub";
     Value* newVal = m_builder.CreateCall(getRtFunc(opFunc), { oldVal, one });
     Value* stableNew = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { newVal });
-    m_builder.CreateCall(getRtFunc("rt_store_member"), { obj, nameStr, stableNew });
+    m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
+        { obj, m_builder.getInt32((int32_t)sel), nameStr, stableNew });
     result = isPrefix ? newVal : oldVal;
     return true;
 }
@@ -2802,8 +3317,10 @@ std::any TzdCompiler::visitPostfixExpr(TzdLangParser::PostfixExprContext* ctx) {
     else if (m_namedValues.count("this") && !m_namedValues.count(name)) {
         Value* thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"]);
         Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+        TzdSelector sel = internSelectorConstant(name);
         Value* stableNew = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { newVal });
-        m_builder.CreateCall(getRtFunc("rt_store_member"), { thisPtr, nameStr, stableNew });
+        m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
+            { thisPtr, m_builder.getInt32((int32_t)sel), nameStr, stableNew });
     }
     else {
         // 情况 3: 全局变量
@@ -3001,9 +3518,12 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();
 
-    // 剥离版本号和 _worker 后缀，获取真正的函数原始名字
+    // 剥离版本号和 _worker / _worker_native 后缀，获取真正的函数原始名字
     std::string baseName = currentName;
-    if (currentName.size() > 7 && currentName.substr(currentName.size() - 7) == "_worker") {
+    if (currentName.size() > 14 && currentName.substr(currentName.size() - 14) == "_worker_native") {
+        baseName = currentName.substr(0, currentName.size() - 14);
+    }
+    else if (currentName.size() > 7 && currentName.substr(currentName.size() - 7) == "_worker") {
         baseName = currentName.substr(0, currentName.size() - 7);
     }
     size_t lastUnderscore = baseName.find_last_of('_');
@@ -3037,12 +3557,29 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         m_builder.CreateBr(s_tailRecurseBB);
         BasicBlock* deadBB = BasicBlock::Create(m_context, "unreachable_after_tre", currentFunc);
         m_builder.SetInsertPoint(deadBB);
+        m_builder.CreateUnreachable();
         return std::any((Value*)ConstantFP::get(m_doubleTy, 0.0));
     }
 
     // ==============================================================
-    // 2. [直接自递归旁路] (调用自身的 Worker，不走 C++ 运行时)
+    // 2. [直接自递归旁路] (调用自身的 Native Worker，直接传 double)
     // ==============================================================
+    if (funcName == baseName && s_currentNativeWorkerFunc) {
+        // Phase B: Call native worker with double args directly — no arg array!
+        Value* interp = currentFunc->getArg(0);
+        std::vector<Value*> callArgs;
+        callArgs.push_back(interp);
+        for (int i = 0; i < argCount; ++i) {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
+            s_inTailPosition = oldTail;
+            // Ensure arg is double (castToNativeDouble handles both doubles and pointers)
+            callArgs.push_back(castToNativeDouble(argRaw));
+        }
+        Value* nativeDoubleResult = m_builder.CreateCall(s_currentNativeWorkerFunc, callArgs);
+        return std::any((Value*)nativeDoubleResult);
+    }
     if (funcName == baseName && s_currentWorkerFunc) {
         Value* argsArray = CreateEntryBlockAlloca(m_tzdValueTy, m_builder.getInt32(argCount > 0 ? argCount : 1), "rec_args");
         if (argCount > 0) {
@@ -3056,7 +3593,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
             Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
             if (argRaw->getType()->isDoubleTy()) {
-                m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { argPtr, argRaw });
+                inlineStoreNativeToPtr(argPtr, argRaw);
             }
             else {
                 m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { argPtr, boxToTzdValue(argRaw) });
@@ -3071,6 +3608,26 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     // ==============================================================
     // 3. 动态函数调用 / 间接相互递归 / 原生函数系统调用
     // ==============================================================
+
+    // Phase D: Direct native worker call for known JIT-compiled functions.
+    // Bypasses args array, rt_init_tzd_value, inlineStoreNativeToPtr, rt_create_num.
+    // This makes non-recursive function calls as fast as C function calls.
+    if (auto nativeIt = s_compiledNativeWorkers.find(funcName); nativeIt != s_compiledNativeWorkers.end()) {
+        Function* nativeWorker = nativeIt->second;
+        Value* interp = currentFunc->getArg(0);
+        std::vector<Value*> callArgs;
+        callArgs.push_back(interp);
+        for (int i = 0; i < argCount; ++i) {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
+            s_inTailPosition = oldTail;
+            callArgs.push_back(castToNativeDouble(argRaw));
+        }
+        Value* result = m_builder.CreateCall(nativeWorker, callArgs);
+        return std::any((Value*)result);
+    }
+
     Value* argsArray = nullptr;
 
     // 【核心改进 1】：若处于尾部，且参数个数不大于当前函数参数个数，直接复用当前函数的输入参数数组，避免分配新的栈内存
@@ -3099,7 +3656,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         Value* argRaw = evaluatedArgs[i];
         Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
         if (argRaw->getType()->isDoubleTy()) {
-            m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { argPtr, argRaw });
+            inlineStoreNativeToPtr(argPtr, argRaw);
         }
         else {
             m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { argPtr, boxToTzdValue(argRaw) });
@@ -3107,6 +3664,15 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     }
 
     if (!dynamic_cast<TzdLangParser::IdExprContext*>(ctx->atom())) {
+        if (auto memberCtx = dynamic_cast<TzdLangParser::MemberAccessExprContext*>(ctx->atom())) {
+            Value* obj = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.memberObj");
+            std::string memberName = memberCtx->IDENTIFIER()->getText();
+            Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
+            TzdSelector sel = internSelectorConstant(memberName);
+            Value* resPtr = m_builder.CreateCall(getRtFunc("rt_tzd_call_method"),
+                { obj, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
+            return std::any((Value*)resPtr);
+        }
         Value* callee = castAnyToValue(visit(ctx->atom()), "visitCallExpr.callee");
         Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { callee, m_builder.getInt32(argCount), argsArray });
         return std::any((Value*)resPtr);
@@ -3136,18 +3702,19 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         Value* interp = currentFunc->getArg(0);
 
         CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, m_currentRetPtr, argsArray });
-        fastRes->setTailCallKind(CallInst::TCK_MustTail);
+        fastRes->setTailCallKind(CallInst::TCK_Tail);  // Use Tail (not MustTail) for safety
         m_builder.CreateRet(fastRes);
 
         // -- Slow Path: 回退到普通 C++ 函数 --
         m_builder.SetInsertPoint(slowCallBB);
         Value* slowResPtr = m_builder.CreateCall(getRtFunc("rt_call_sub_fast"), { funcNameStr, m_builder.getInt32(argCount), argsArray });
-        Value* slowRes = m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { slowResPtr });
+        Value* slowRes = inlineToDoubleFast(slowResPtr);
         m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, slowRes });
         m_builder.CreateRet(slowRes);
 
         BasicBlock* deadBB = BasicBlock::Create(m_context, "tail_call_unreachable", currentFunc);
         m_builder.SetInsertPoint(deadBB);
+        m_builder.CreateUnreachable();
 
         return std::any((Value*)ConstantFP::get(m_doubleTy, 0.0));
     }
@@ -3156,33 +3723,30 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     BasicBlock* mergeBB = BasicBlock::Create(m_context, "merge_call", currentFunc);
     m_builder.CreateCondBr(isWorkerValid, fastCallBB, slowCallBB);
 
-    AllocaInst* resDoubleSlot = CreateEntryBlockAlloca(m_doubleTy, nullptr, "dyn_call_res");
+    // Use pointer slot — both paths return TzdValue* (preserves strings/objects)
+    AllocaInst* resPtrSlot = CreateEntryBlockAlloca(m_ptrTy, nullptr, "dyn_call_res");
 
     m_builder.SetInsertPoint(fastCallBB);
 
-    // 【新增】：推入当前的 JIT 栈帧
-    m_builder.CreateCall(getRtFunc("rt_push_jit_frame"), { funcNameStr });
-
+    // Direct worker call — no JIT frame push/pop (eliminates string formatting overhead)
     std::vector<Type*> workerSignature = { m_ptrTy, m_ptrTy, m_ptrTy };
     FunctionType* workerFTy = FunctionType::get(m_doubleTy, workerSignature, false);
     Value* interp = currentFunc->getArg(0);
     Value* dummyResSlotFast = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
     CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, dummyResSlotFast, argsArray });
-    m_builder.CreateStore(fastRes, resDoubleSlot);
-
-    // 【新增】：执行完毕，弹出 JIT 栈帧
-    m_builder.CreateCall(getRtFunc("rt_pop_jit_frame"));
+    Value* boxedFast = m_builder.CreateCall(getRtFunc("rt_create_num"), { fastRes });
+    m_builder.CreateStore(boxedFast, resPtrSlot);
 
     m_builder.CreateBr(mergeBB);
 
     m_builder.SetInsertPoint(slowCallBB);
     Value* slowResPtr = m_builder.CreateCall(getRtFunc("rt_call_sub_fast"), { funcNameStr, m_builder.getInt32(argCount), argsArray });
-    Value* slowRes = m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { slowResPtr });
-    m_builder.CreateStore(slowRes, resDoubleSlot);
+    // Keep TzdValue* directly — preserves strings/objects from interpreter
+    m_builder.CreateStore(slowResPtr, resPtrSlot);
     m_builder.CreateBr(mergeBB);
 
     m_builder.SetInsertPoint(mergeBB);
-    Value* finalRes = m_builder.CreateLoad(m_doubleTy, resDoubleSlot, "call_res");
+    Value* finalRes = m_builder.CreateLoad(m_ptrTy, resPtrSlot, "call_res");
     return std::any((Value*)finalRes);
 }
 
@@ -3272,7 +3836,40 @@ std::any TzdCompiler::visitNullExpr(TzdLangParser::NullExprContext* ctx) {
     return (Value*)m_builder.CreateCall(getRtFunc("rt_create_null"));
 }
 std::any TzdCompiler::visitExprStmt(TzdLangParser::ExprStmtContext* ctx) { return visit(ctx->expression()); }
-std::any TzdCompiler::visitFunDeclStmt(TzdLangParser::FunDeclStmtContext* ctx) { return visit(ctx->functionDeclaration()); }
+std::any TzdCompiler::visitFunDeclStmt(TzdLangParser::FunDeclStmtContext* ctx) {
+    // Must save/restore JIT compilation context — just like visitLambdaExpr.
+    // Without this, compileNamedFunction for the nested function clobbers
+    // m_currentRetPtr, s_currentWorkerFunc, s_tailRecurseBB, etc.,
+    // causing null operands in the parent function's IR.
+    auto* savedInsertBlock = m_builder.GetInsertBlock();
+    auto savedNamedValues = m_namedValues;
+    auto savedNativeLocals = m_nativeDoubleLocals;
+    auto savedParamNames = s_currentFuncParamNames;
+    auto* savedTailBB = s_tailRecurseBB;
+    auto* savedWorkerFunc = s_currentWorkerFunc;
+    auto* savedRetPtr = m_currentRetPtr;
+    bool savedTailState = s_inTailPosition;
+
+    auto result = visit(ctx->functionDeclaration());
+
+    // Register nested functions with the interpreter so they can be found
+    // by rt_call_sub_fast and rt_get_worker_ptr at runtime.
+    if (g_CurrentInterpreter) {
+        std::string funcName = ctx->functionDeclaration()->IDENTIFIER()->getText();
+        g_CurrentInterpreter->m_pendingJitFunctions.insert(funcName);
+    }
+
+    m_builder.SetInsertPoint(savedInsertBlock);
+    m_namedValues = savedNamedValues;
+    m_nativeDoubleLocals = savedNativeLocals;
+    s_currentFuncParamNames = savedParamNames;
+    s_tailRecurseBB = savedTailBB;
+    s_currentWorkerFunc = savedWorkerFunc;
+    m_currentRetPtr = savedRetPtr;
+    s_inTailPosition = savedTailState;
+
+    return result;
+}
 
 Value* TzdCompiler::castToNativeDouble(Value* val) {
     if (!val) return ConstantFP::get(m_doubleTy, 0.0);
@@ -3286,8 +3883,35 @@ Value* TzdCompiler::castToNativeDouble(Value* val) {
         return m_builder.CreateUIToFP(val, m_doubleTy, "bool2double");
     }
 
-    // 3. 只有当它是 TzdValue* 指针时，才调用运行时函数
-    return m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { val });
+    // 3. 只有当它是 TzdValue* 指针时，inline GEP+Load dVal
+    return inlineToDoubleFast(val);
+}
+
+// Inline rt_store_native_to_ptr: directly write type=DOUBLE and dVal=val via GEP
+// Eliminates a C function call per argument store in recursive calls
+void TzdCompiler::inlineStoreNativeToPtr(Value* dest, Value* nativeDouble) {
+    // Cast to i8* for byte-offset GEP
+    Value* rawPtr = m_builder.CreateBitCast(dest,
+        llvm::PointerType::get(llvm::Type::getInt8Ty(m_context), 0));
+    // Write type = DOUBLE (bitcast i8* to i32* for correct store type)
+    Value* typePtr = m_builder.CreateConstGEP1_32(
+        llvm::Type::getInt8Ty(m_context), rawPtr, (uint32_t)TZD_TYPE_OFFSET);
+    Value* typeTypedPtr = m_builder.CreateBitCast(typePtr,
+        llvm::PointerType::get(m_int32Ty, 0));
+    m_builder.CreateStore(m_builder.getInt32((uint32_t)TzdValue::DOUBLE), typeTypedPtr);
+    // Write dVal = nativeDouble
+    Value* dValPtr = m_builder.CreateConstGEP1_32(
+        llvm::Type::getInt8Ty(m_context), rawPtr, (uint32_t)TZD_DVAL_OFFSET);
+    Value* dValTypedPtr = m_builder.CreateBitCast(dValPtr,
+        llvm::PointerType::get(m_doubleTy, 0));
+    m_builder.CreateStore(nativeDouble, dValTypedPtr);
+}
+
+// Inline rt_to_double_fast: just calls rt_to_double_fast.
+// Full inlining (GEP+Load dVal) is unsafe for non-DOUBLE types (INT stores in lVal).
+// Phase B (native worker specialization) will eliminate this call entirely for self-recursion.
+Value* TzdCompiler::inlineToDoubleFast(Value* src) {
+    return m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { src }, "to_double");
 }
 
 llvm::Value* TzdCompiler::boxDouble(llvm::Value* nativeVal) {

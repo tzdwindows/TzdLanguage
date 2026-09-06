@@ -4,10 +4,14 @@
 //
 
 #include <iostream>
+#include <atomic>
+#include <cstring>
 
 #include "TzdCommandSystem.h"
 
 #include <MinHook.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 
 typedef void(__cdecl* TRASH_FREE)(void*);
 TRASH_FREE pStaticFree = nullptr;
@@ -17,18 +21,30 @@ bool g_InJitCleanup = false;
 // 使用 thread_local 防止递归重入
 static thread_local bool g_InSafeCheck = false;
 
+// ============================================================
+// Free 调用历史记录器 (环形缓冲区)
+// ============================================================
+static constexpr int MAX_FREE_RECORDS = 64;
+static constexpr int MAX_STACK_FRAMES = 32;
+
+struct FreeRecord {
+    void* ptr;
+    USHORT frameCount;
+    void* frames[MAX_STACK_FRAMES];
+};
+
+static FreeRecord g_freeRecords[MAX_FREE_RECORDS];
+static std::atomic<int> g_freeRecordIdx{0};
+static std::atomic<bool> g_crashPrinted{false};
+
 // 辅助函数：将 SEH 逻辑隔离，避免 C2712 错误
-// 这个函数只负责询问系统：这个堆是否认识这个指针
 bool IsValidHeapPointer(HANDLE hHeap, void* p) {
     __try {
-        // HeapSize 是最安全的探测方式。
-        // 如果指针不属于该堆，它返回 (SIZE_T)-1，且通常不会崩溃。
         if (hHeap != NULL && HeapSize(hHeap, 0, p) != (SIZE_T)-1) {
             return true;
         }
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        // 捕获所有访问冲突，确保不崩溃
     }
     return false;
 }
@@ -71,46 +87,112 @@ bool IsSafePointer(void* p) {
     return isSafe;
 }
 
+// 打印最近 N 条 free 记录 (含调用栈)
+static void PrintFreeHistory(const char* reason, void* badPtr) {
+    if (g_crashPrinted.exchange(true)) return;
+
+    // 用低级 I/O 避免 std::cerr 在栈溢出时二次崩溃
+    FILE* f = nullptr;
+    fopen_s(&f, "free_crash_log.txt", "w");
+    if (!f) return;
+
+    fprintf(f, "=== %s ===\n", reason);
+    fprintf(f, "Problematic pointer: %p\n\n", badPtr);
+
+    int current = g_freeRecordIdx.load(std::memory_order_relaxed);
+    fprintf(f, "Last %d free() calls (most recent first):\n", MAX_FREE_RECORDS);
+    for (int i = 0; i < MAX_FREE_RECORDS; i++) {
+        int idx = ((current - 1 - i) % MAX_FREE_RECORDS + MAX_FREE_RECORDS) % MAX_FREE_RECORDS;
+        auto& r = g_freeRecords[idx];
+        if (r.ptr == nullptr && r.frameCount == 0) continue;
+
+        fprintf(f, "\n[%d] free(%p)\n", MAX_FREE_RECORDS - i, r.ptr);
+
+        // 解析符号
+        for (USHORT f2 = 0; f2 < r.frameCount; f2++) {
+            DWORD64 disp = 0;
+            char buffer[sizeof(SYMBOL_INFO) + 512];
+            SYMBOL_INFO* sym = (SYMBOL_INFO*)buffer;
+            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+            sym->MaxNameLen = 511;
+
+            DWORD64 addr = (DWORD64)r.frames[f2];
+            if (SymFromAddr(GetCurrentProcess(), addr, &disp, sym)) {
+                IMAGEHLP_MODULE64 modInfo;
+                memset(&modInfo, 0, sizeof(modInfo));
+                modInfo.SizeOfStruct = sizeof(modInfo);
+                SymGetModuleInfo64(GetCurrentProcess(), addr, &modInfo);
+
+                fprintf(f, "  %s!%s+0x%llx  [0x%llx]\n",
+                    modInfo.ModuleName,
+                    sym->Name,
+                    (unsigned long long)disp,
+                    (unsigned long long)addr);
+            } else {
+                fprintf(f, "  0x%llx\n", (unsigned long long)addr);
+            }
+        }
+    }
+
+    fprintf(f, "\n=== END OF LOG ===\n");
+    fflush(f);
+    fclose(f);
+
+    // 同时输出到 stderr
+    std::cerr << "\n*** " << reason << " (ptr=" << badPtr << ") ***" << std::endl;
+    std::cerr << "See free_crash_log.txt for full free history." << std::endl;
+}
+
+// 向量化异常处理：捕获栈溢出/堆损坏，在崩溃前输出记录
+static LONG WINAPI CrashVEH(EXCEPTION_POINTERS* ep) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if (code == 0xC00000FD /*STATUS_STACK_OVERFLOW*/ ||
+        code == 0xC0000374 /*STATUS_HEAP_CORRUPTION*/) {
+        PrintFreeHistory("VEH: Stack overflow / Heap corruption", nullptr);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 void __cdecl DetourFree(void* p) {
     if (p == nullptr) return;
-    if (!IsSafePointer(p)) {
-        return;
-    }
+
+    // 记录本次 free 调用 (环形缓冲区)
+    int idx = g_freeRecordIdx.fetch_add(1, std::memory_order_relaxed) % MAX_FREE_RECORDS;
+    g_freeRecords[idx].ptr = p;
+    g_freeRecords[idx].frameCount = RtlCaptureStackBackTrace(
+        1, MAX_STACK_FRAMES, g_freeRecords[idx].frames, NULL);
+
+    // 始终调用真正的 free — 只记录，不跳过
+    // 跳过 free 会破坏 LLVM 内部分配器状态
     __try {
         if (pStaticFree) {
             pStaticFree(p);
         }
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
+        PrintFreeHistory("Exception during free()", p);
     }
 }
 
 void InitHook() {
+    // 注册向量异常处理器 (在崩溃前输出记录)
+    AddVectoredExceptionHandler(0, CrashVEH);
+
+    // 初始化符号服务器 (用于解析调用栈地址到函数名)
+    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    SymInitialize(GetCurrentProcess(), NULL, TRUE);
+
+    // Hook free()
     if (MH_Initialize() != MH_OK) return;
     if (MH_CreateHook(&free, &DetourFree, reinterpret_cast<LPVOID*>(&pStaticFree)) == MH_OK) {
         MH_EnableHook(&free);
-        //std::cout << TzdSys::MOD_FREE_HOOK << std::endl;
     }
 }
 
 
 int main(int argc, char* argv[]) {
-    InitHook();
-    Gdiplus::GdiplusStartupInput gsi;
-    ULONG_PTR gToken;
-    Gdiplus::GdiplusStartup(&gToken, &gsi, NULL);
+    // InitHook();  // Temporarily disabled for testing
     TzdCommandSystem system;
     system.start(argc, argv);
     return 0;
 }
-
-// 运行程序: Ctrl + F5 或调试 >“开始执行(不调试)”菜单
-// 调试程序: F5 或调试 >“开始调试”菜单
-
-// 入门使用技巧: 
-//   1. 使用解决方案资源管理器窗口添加/管理文件
-//   2. 使用团队资源管理器窗口连接到源代码管理
-//   3. 使用输出窗口查看生成输出和其他消息
-//   4. 使用错误列表窗口查看错误
-//   5. 转到“项目”>“添加新项”以创建新的代码文件，或转到“项目”>“添加现有项”以将现有代码文件添加到项目
-//   6. 将来，若要再次打开此项目，请转到“文件”>“打开”>“项目”并选择 .sln 文件

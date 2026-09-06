@@ -19,6 +19,13 @@ private:
     static void regIO(TzdInterpreter* interp);
     static void regRuntime(TzdInterpreter* interp);
     static void regPlot(TzdInterpreter* interp);
+    static void regString(TzdInterpreter* interp);
+    static void regArray(TzdInterpreter* interp);
+    static void regJson(TzdInterpreter* interp);
+    static void regFileSystem(TzdInterpreter* interp);
+    static void regConv(TzdInterpreter* interp);
+    static void regExtraMath(TzdInterpreter* interp);
+    static void regExtended(TzdInterpreter* interp);
 
     // ���?���
     static Eigen::MatrixXd toEigen(const TzdValue& arr);
