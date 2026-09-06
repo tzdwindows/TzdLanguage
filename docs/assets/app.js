@@ -197,7 +197,7 @@ function initCopyButtons() {
 }
 
 // ----------------------------------------------------------------------------
-// 3. Interactive Code Playground & Custom Apple Dropdown Component
+// 3. Interactive Code Playground & Dynamic Visual Engine
 // ----------------------------------------------------------------------------
 const playgroundPresets = {
     fib: {
@@ -248,70 +248,21 @@ print("耗时: " + duration + " 秒 (LLVM ORC JIT 无装箱原生特化)");`,
   0014: CALL_FUNC fib(1) [inline cache: hit]
   0015: ADD
   0016: RET
-  0017: RET_VOID`
-    },
-
-    oop: {
-        title: "面向对象继承与虚方法多态",
-        icon: "🏛️",
-        code: `// 面向对象继承、虚方法分发与多态
-class Shape {
-    var string name;
-    Shape(n) { this.name = n; }
-    fun area() { return 0.0; }
-    fun describe() {
-        print(this.name + " 面积: " + this.area());
-    }
-}
-
-class Circle extends Shape {
-    var double radius;
-    Circle(r) : super("Circle") {
-        this.radius = r;
-    }
-    fun area() {
-        return 3.1415926535 * this.radius * this.radius;
-    }
-}
-
-class Rectangle extends Shape {
-    var double w;
-    var double h;
-    Rectangle(width, height) : super("Rectangle") {
-        this.w = width;
-        this.h = height;
-    }
-    fun area() {
-        return this.w * this.h;
-    }
-}
-
-var shapes = [new Circle(5.0), new Rectangle(4.0, 6.0)];
-for (i = 0; i < len(shapes); i = i + 1) {
-    shapes[i].describe();
-}`,
-        output: `[Runtime] 初始化对象系统 TzdOopManager...
-[GC] BumpPointerArena 新生代快速分配 2 个对象实例 (Chunk 64KB)
-[Invoke] 执行虚方法多态分发:
-Circle 面积: 78.5398163375
-Rectangle 面积: 24.0
->>> 进程以退出码 0 正常结束。`,
-        bytecode: `; BytecodeModule: Shape / Circle / Rectangle
-.class Shape
-  .field name
-  .method area()
-  .method describe()
-.class Circle : Shape
-  .field radius
-  .method area() [override]
-.class Rectangle : Shape
-  .field w
-  .field h
-  .method area() [override]`
+  0017: RET_VOID`,
+        metrics: {
+            jitTier: "Tier 1 Native",
+            execTime: "0.0014s",
+            mem: "64 KB (Arena)",
+            speedup: "+250% 🚀",
+            hudIcon: "⚡",
+            hudTitle: "JIT 原生特化已完成",
+            hudSubtitle: "生成 worker_native(double) · 消除 100% 堆栈装箱",
+            hudMetric: "0.0014s"
+        }
     },
 
     torch: {
-        title: "LibTorch 神经网络前向推理",
+        title: "LibTorch 神经网络推理 (张量动态流转)",
         icon: "🧠",
         code: `// LibTorch 原生张量与神经网络前向推理
 import "torch/All.tzd";
@@ -353,11 +304,80 @@ tensor([[0.7324, 0.2676],
   0003: CALL_METHOD add(1)
   0004: CALL_NATIVE torch_randn(2)
   0005: CALL_METHOD forward(1)
-  0006: RET`
+  0006: RET`,
+        metrics: {
+            jitTier: "LibTorch C++",
+            execTime: "0.0008s",
+            mem: "128 KB (Tensors)",
+            speedup: "No GIL ⚡",
+            hudIcon: "🧠",
+            hudTitle: "LibTorch 原生张量推理完成",
+            hudSubtitle: "C++ SIMD 硬件矢量加速 · 0ms Python GIL 延迟",
+            hudMetric: "0.0008s"
+        }
+    },
+
+    threads: {
+        title: "原生多线程并发调度 (无锁并行泳道)",
+        icon: "🧵",
+        code: `// 原生多线程并发驱动与无锁调度
+import "thread/Thread.tzd";
+
+fun workerTask(id: int, count: int) {
+    var sum = 0;
+    for (i = 0; i < count; i++) {
+        sum = sum + (i * 2 + 1);
+    }
+    print("Worker [" + id + "] 向量计算完成，总和: " + sum);
+}
+
+// 启动 3 个内核级工作线程
+var t1 = new Thread(fun() { workerTask(1, 200000); });
+var t2 = new Thread(fun() { workerTask(2, 200000); });
+var t3 = new Thread(fun() { workerTask(3, 200000); });
+
+t1.start();
+t2.start();
+t3.start();
+
+print("主线程正在分发任务...");
+
+t1.join();
+t2.join();
+t3.join();
+print("所有工作线程安全汇合，完成无锁并发运算。");`,
+        output: `[ConcurrencyManager] 初始化系统级线程池...
+[Kernel] 绑定 C++ std::thread 原生多核心调度
+主线程正在分发任务...
+[Worker 1] 分配至 CPU Core #2，执行向量计算...
+[Worker 2] 分配至 CPU Core #3，执行向量计算...
+[Worker 3] 分配至 CPU Core #4，执行向量计算...
+Worker [1] 向量计算完成，总和: 40000000000
+Worker [2] 向量计算完成，总和: 40000000000
+Worker [3] 向量计算完成，总和: 40000000000
+所有工作线程安全汇合，完成无锁并发运算。
+[Metrics] 4 核心并发满载，零死锁 (Lock-Free Barrier Sync)
+>>> 进程以退出码 0 正常结束。`,
+        bytecode: `; BytecodeModule: Native Thread Concurrency
+  0000: NEW_THREAD_OBJECT
+  0001: STORE_VAR t1
+  0002: CALL_METHOD start() [Native thread fork]
+  0003: CALL_METHOD join()  [Barrier wait]
+  0004: RET`,
+        metrics: {
+            jitTier: "4x Threads",
+            execTime: "0.0032s",
+            mem: "256 KB (Stack)",
+            speedup: "4x Core 🚀",
+            hudIcon: "🧵",
+            hudTitle: "原生多线程无锁并发完成",
+            hudSubtitle: "内核级 std::thread 驱动 · 4 核心 100% 满载运行",
+            hudMetric: "4.8 Gops"
+        }
     },
 
     loop: {
-        title: "100万次循环与整除指令特化",
+        title: "100万次循环与整除特化 (单硬件 idiv 指令)",
         icon: "🔄",
         code: `// 1,000,000 次热点数学与整除循环 (验证 idiv 硬件指令)
 var sum = 0;
@@ -396,17 +416,857 @@ print("100万次循环耗时: " + elapsed + " 秒 (超越 JDK 20 HotSpot 1.5x)")
   0011: JMP_FALSE 0014
   0012: LOAD_VAR sum
   0013: ADD
-  0014: JMP 0002 [Backedge hot count++]`
+  0014: JMP 0002 [Backedge hot count++]`,
+        metrics: {
+            jitTier: "x86_64 idiv",
+            execTime: "0.0021s",
+            mem: "0 KB (Regs)",
+            speedup: "+150% 🚀",
+            hudIcon: "🔄",
+            hudTitle: "100万次循环优化完毕",
+            hudSubtitle: "单条硬件 idiv 指令特化 · mem2reg 消除栈局部变量",
+            hudMetric: "0.0021s"
+        }
     }
 };
 
+// ----------------------------------------------------------------------------
+// TzdDynamicVisualEngine (HTML5 Canvas 60FPS Video-Grade Runtime Renderer)
+// ----------------------------------------------------------------------------
+class TzdDynamicVisualEngine {
+    constructor(canvas, callbacks = {}) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.callbacks = callbacks;
+        this.preset = 'fib';
+        this.state = 'idle'; // 'idle' | 'running' | 'completed'
+        this.progress = 0;   // 0.0 -> 1.0
+        this.startTime = 0;
+        this.duration = 2000; // 2 seconds total simulation
+        this.jitTriggered = false;
+
+        // FPS tracking
+        this.lastFrameTime = performance.now();
+        this.frameCount = 0;
+        this.fps = 60;
+        this.lastFpsCalc = performance.now();
+
+        // Particles, Sparks and Shockwaves
+        this.ambientStars = [];
+        this.particles = [];
+        this.sparks = [];
+        this.shockwaves = [];
+
+        this.width = 0;
+        this.height = 0;
+
+        this.initAmbientStars();
+        this.resize();
+
+        window.addEventListener('resize', () => this.resize());
+        this.loop = this.loop.bind(this);
+        requestAnimationFrame(this.loop);
+    }
+
+    initAmbientStars() {
+        this.ambientStars = [];
+        for (let i = 0; i < 35; i++) {
+            this.ambientStars.push({
+                x: Math.random(),
+                y: Math.random(),
+                size: 0.8 + Math.random() * 1.5,
+                alpha: 0.1 + Math.random() * 0.35,
+                speedY: -(0.00015 + Math.random() * 0.0003),
+                pulse: Math.random() * Math.PI * 2
+            });
+        }
+    }
+
+    resize() {
+        if (!this.canvas) return;
+        const rect = this.canvas.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        this.width = rect.width;
+        this.height = rect.height;
+        this.canvas.width = rect.width * dpr;
+        this.canvas.height = rect.height * dpr;
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    setPreset(key) {
+        this.preset = key;
+        this.resetSimulation();
+    }
+
+    startSimulation() {
+        this.state = 'running';
+        this.startTime = performance.now();
+        this.progress = 0;
+        this.jitTriggered = false;
+        this.particles = [];
+        this.shockwaves = [];
+        this.sparks = [];
+
+        // Seed initial burst for specific presets
+        if (this.preset === 'torch') {
+            this.initTorchParticles();
+        }
+    }
+
+    resetSimulation() {
+        this.state = 'idle';
+        this.progress = 0;
+        this.jitTriggered = false;
+        this.particles = [];
+        this.shockwaves = [];
+        this.sparks = [];
+    }
+
+    initTorchParticles() {
+        this.particles = [];
+        for (let i = 0; i < 36; i++) {
+            this.particles.push({
+                stage: Math.floor(Math.random() * 3), // 0: in->h1, 1: h1->h2, 2: h2->out
+                fromIdx: Math.floor(Math.random() * 4),
+                toIdx: Math.floor(Math.random() * 5),
+                t: Math.random(),
+                speed: 0.008 + Math.random() * 0.012,
+                size: 2.2 + Math.random() * 1.8,
+                color: i % 2 === 0 ? '#38BDF8' : '#818CF8'
+            });
+        }
+    }
+
+    triggerShockwave(x, y, color = '#00F2FE') {
+        this.shockwaves.push({
+            x, y,
+            radius: 8,
+            maxRadius: Math.max(this.width, this.height) * 0.85,
+            color,
+            alpha: 0.95
+        });
+
+        // Burst sparks
+        for (let i = 0; i < 32; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 2.5 + Math.random() * 5.5;
+            this.sparks.push({
+                x, y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                alpha: 1,
+                decay: 0.02 + Math.random() * 0.03,
+                size: 1.5 + Math.random() * 2.2,
+                color: Math.random() > 0.3 ? '#00F2FE' : '#38BDF8'
+            });
+        }
+    }
+
+    loop(timestamp) {
+        // Measure FPS
+        this.frameCount++;
+        if (timestamp - this.lastFpsCalc >= 500) {
+            this.fps = Math.round((this.frameCount * 1000) / (timestamp - this.lastFpsCalc));
+            this.frameCount = 0;
+            this.lastFpsCalc = timestamp;
+            if (this.callbacks.onFps) {
+                this.callbacks.onFps(this.fps);
+            }
+        }
+
+        // Update progress if running
+        if (this.state === 'running') {
+            const elapsed = timestamp - this.startTime;
+            const rawP = Math.min(1, elapsed / this.duration);
+            // Ease out cubic
+            this.progress = 1 - Math.pow(1 - rawP, 3);
+
+            if (this.callbacks.onProgress) {
+                this.callbacks.onProgress(this.progress, rawP);
+            }
+
+            if (rawP >= 1) {
+                this.state = 'completed';
+                this.progress = 1;
+                if (this.callbacks.onComplete) {
+                    this.callbacks.onComplete(this.preset);
+                }
+            }
+        }
+
+        // Render Frame
+        this.render(timestamp);
+
+        requestAnimationFrame(this.loop);
+    }
+
+    render(time) {
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+        if (!w || !h) return;
+
+        // Clear canvas with subtle radial backdrop
+        ctx.clearRect(0, 0, w, h);
+
+        // Faint cyber grid lines
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.018)';
+        ctx.lineWidth = 1;
+        const gridStep = 40;
+        for (let x = gridStep; x < w; x += gridStep) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+        }
+        for (let y = gridStep; y < h; y += gridStep) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+
+        // Ambient floating stars
+        this.ambientStars.forEach(star => {
+            star.y += star.speedY;
+            if (star.y < 0) star.y = 1;
+            const sx = star.x * w;
+            const sy = star.y * h;
+            const alpha = star.alpha * (0.6 + 0.4 * Math.sin(time * 0.002 + star.pulse));
+            ctx.fillStyle = `rgba(148, 163, 184, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, star.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Draw Scenario Graphics
+        if (this.preset === 'fib') {
+            this.renderFib(time, this.progress);
+        } else if (this.preset === 'torch') {
+            this.renderTorch(time, this.progress);
+        } else if (this.preset === 'threads') {
+            this.renderThreads(time, this.progress);
+        } else if (this.preset === 'loop') {
+            this.renderLoop(time, this.progress);
+        }
+
+        // Render Shockwaves
+        for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+            const sw = this.shockwaves[i];
+            sw.radius += (sw.maxRadius - sw.radius) * 0.07 + 3.5;
+            sw.alpha -= 0.022;
+
+            if (sw.alpha <= 0 || sw.radius >= sw.maxRadius) {
+                this.shockwaves.splice(i, 1);
+                continue;
+            }
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(0, 242, 254, ${sw.alpha})`;
+            ctx.lineWidth = 2.5;
+            ctx.shadowColor = '#00F2FE';
+            ctx.shadowBlur = 16;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Render Sparks
+        for (let i = this.sparks.length - 1; i >= 0; i--) {
+            const sp = this.sparks[i];
+            sp.x += sp.vx;
+            sp.y += sp.vy;
+            sp.vx *= 0.94;
+            sp.vy *= 0.94;
+            sp.alpha -= sp.decay;
+
+            if (sp.alpha <= 0) {
+                this.sparks.splice(i, 1);
+                continue;
+            }
+
+            ctx.save();
+            ctx.fillStyle = sp.color;
+            ctx.globalAlpha = Math.max(0, sp.alpha);
+            ctx.shadowColor = sp.color;
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(sp.x, sp.y, sp.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Scenario 1: Fibonacci Recursive Tree & Quantum JIT Surge
+    // ------------------------------------------------------------------------
+    renderFib(time, p) {
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+
+        // Tree structure: 4 levels (1 + 2 + 4 + 8 = 15 nodes)
+        const levels = 4;
+        const nodes = [];
+        const levelY = [55, 130, 215, 305];
+
+        let nodeCounter = 0;
+        for (let l = 0; l < levels; l++) {
+            const count = Math.pow(2, l);
+            const y = levelY[l] || (55 + l * 80);
+            for (let i = 0; i < count; i++) {
+                const x = (w / (count + 1)) * (i + 1);
+                nodes.push({
+                    idx: nodeCounter++,
+                    level: l,
+                    x, y,
+                    label: l === 0 ? "fib(5)" : (l === 1 ? (i === 0 ? "fib(4)" : "fib(3)") : (l === 2 ? (i % 2 === 0 ? "fib(3)" : "fib(2)") : (i % 2 === 0 ? "fib(2)" : "fib(1)")))
+                });
+            }
+        }
+
+        // Trigger JIT shockwave at p >= 0.44
+        const isJitted = p >= 0.44;
+        if (this.state === 'running' && isJitted && !this.jitTriggered) {
+            this.jitTriggered = true;
+            this.triggerShockwave(nodes[0].x, nodes[0].y, '#00F2FE');
+        }
+
+        // Draw connections
+        for (let i = 0; i < 7; i++) {
+            const parent = nodes[i];
+            const leftChild = nodes[2 * i + 1];
+            const rightChild = nodes[2 * i + 2];
+
+            [leftChild, rightChild].forEach(child => {
+                if (!child) return;
+                const isBranchActive = this.state === 'idle' 
+                    ? false 
+                    : (isJitted || child.idx <= Math.floor(p / 0.44 * 15));
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(parent.x, parent.y);
+                ctx.lineTo(child.x, child.y);
+
+                if (isJitted) {
+                    ctx.strokeStyle = 'rgba(0, 242, 254, 0.75)';
+                    ctx.lineWidth = 2.2;
+                    ctx.shadowColor = '#00F2FE';
+                    ctx.shadowBlur = 10;
+                } else if (isBranchActive) {
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+                    ctx.lineWidth = 1.8;
+                    ctx.shadowColor = '#38BDF8';
+                    ctx.shadowBlur = 6;
+                } else {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+                    ctx.lineWidth = 1.2;
+                }
+                ctx.stroke();
+                ctx.restore();
+            });
+        }
+
+        // Draw nodes
+        nodes.forEach((n) => {
+            const isLit = this.state === 'idle'
+                ? true
+                : (isJitted || n.idx <= Math.floor(p / 0.44 * 15));
+
+            const radius = n.level === 0 ? 17 : (n.level === 1 ? 15 : (n.level === 2 ? 13 : 11));
+            const pulseScale = this.state === 'idle'
+                ? 1 + 0.05 * Math.sin(time * 0.003 + n.idx)
+                : (isJitted ? 1 + 0.08 * Math.sin(time * 0.008 + n.idx) : (isLit ? 1.05 : 1));
+
+            ctx.save();
+            ctx.translate(n.x, n.y);
+            ctx.scale(pulseScale, pulseScale);
+
+            // Outer glow ring
+            ctx.beginPath();
+            ctx.arc(0, 0, radius + 4, 0, Math.PI * 2);
+            if (isJitted) {
+                ctx.fillStyle = 'rgba(0, 242, 254, 0.22)';
+                ctx.shadowColor = '#00F2FE';
+                ctx.shadowBlur = 14;
+            } else if (isLit && this.state !== 'idle') {
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+                ctx.shadowColor = '#38BDF8';
+                ctx.shadowBlur = 8;
+            } else {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+            }
+            ctx.fill();
+
+            // Core node body
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            if (isJitted) {
+                const grad = ctx.createRadialGradient(0, 0, 1, 0, 0, radius);
+                grad.addColorStop(0, '#FFFFFF');
+                grad.addColorStop(0.5, '#00F2FE');
+                grad.addColorStop(1, '#0284C7');
+                ctx.fillStyle = grad;
+                ctx.strokeStyle = '#38BDF8';
+            } else if (isLit && this.state !== 'idle') {
+                const grad = ctx.createRadialGradient(0, 0, 1, 0, 0, radius);
+                grad.addColorStop(0, '#7DD3FC');
+                grad.addColorStop(0.8, '#0284C7');
+                grad.addColorStop(1, '#0C4A6E');
+                ctx.fillStyle = grad;
+                ctx.strokeStyle = '#38BDF8';
+            } else {
+                ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            }
+            ctx.lineWidth = 1.5;
+            ctx.fill();
+            ctx.stroke();
+
+            // Label text
+            if (n.level < 3 || w > 480) {
+                ctx.font = `${radius >= 15 ? 10 : 8.5}px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = isJitted ? '#042F2E' : (isLit ? '#FFFFFF' : '#94A3B8');
+                ctx.fillText(n.label, 0, 0);
+            }
+
+            ctx.restore();
+        });
+
+        // Top stage badge in canvas
+        ctx.save();
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        if (isJitted) {
+            ctx.fillStyle = '#00F2FE';
+            ctx.shadowColor = '#00F2FE';
+            ctx.shadowBlur = 8;
+            ctx.fillText("⚡ Tier 1 LLVM JIT: worker_native(ptr, double) 无装箱原生特化", w / 2, 22);
+        } else if (this.state === 'running') {
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillText(`[Tier 0 Bytecode VM] 递归树下钻中 · 调用计数: ${Math.min(50, Math.floor(p / 0.44 * 50))}/50`, w / 2, 22);
+        } else {
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillText("递归调用拓扑图 · 等待 JIT 热点提升", w / 2, 22);
+        }
+        ctx.restore();
+    }
+
+    // ------------------------------------------------------------------------
+    // Scenario 2: LibTorch Neural Network & Forward Tensor Stream
+    // ------------------------------------------------------------------------
+    renderTorch(time, p) {
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+
+        const layers = [
+            { name: "输入 x: [2, 4]", count: 4, x: w * 0.16, color: '#38BDF8' },
+            { name: "Linear+ReLU (16)", count: 5, x: w * 0.38, color: '#818CF8' },
+            { name: "Linear+ReLU (8)",  count: 4, x: w * 0.62, color: '#A855F7' },
+            { name: "Softmax y: [2, 2]",count: 2, x: w * 0.84, color: '#34D399' }
+        ];
+
+        // Draw connections between layers
+        for (let l = 0; l < layers.length - 1; l++) {
+            const curL = layers[l];
+            const nextL = layers[l + 1];
+            const curSpacing = 42;
+            const nextSpacing = 42;
+            const curStartY = (h / 2) - ((curL.count - 1) * curSpacing) / 2;
+            const nextStartY = (h / 2) - ((nextL.count - 1) * nextSpacing) / 2;
+
+            for (let i = 0; i < curL.count; i++) {
+                const y1 = curStartY + i * curSpacing;
+                for (let j = 0; j < nextL.count; j++) {
+                    const y2 = nextStartY + j * nextSpacing;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(curL.x, y1);
+                    ctx.lineTo(nextL.x, y2);
+                    const isActive = this.state !== 'idle' && (p * 3 > l);
+                    ctx.strokeStyle = isActive ? 'rgba(129, 140, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)';
+                    ctx.lineWidth = isActive ? 1.2 : 0.8;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Draw traveling tensor particles
+        if (this.state !== 'idle' && this.particles.length) {
+            this.particles.forEach(pt => {
+                pt.t += pt.speed * (this.state === 'running' ? 1.4 : 0.6);
+                if (pt.t > 1) {
+                    pt.t = 0;
+                    pt.stage = (pt.stage + 1) % 3;
+                    pt.fromIdx = Math.floor(Math.random() * layers[pt.stage].count);
+                    pt.toIdx = Math.floor(Math.random() * layers[pt.stage + 1].count);
+                }
+
+                const l1 = layers[pt.stage];
+                const l2 = layers[pt.stage + 1];
+                const spacing1 = 42;
+                const spacing2 = 42;
+                const y1 = (h / 2) - ((l1.count - 1) * spacing1) / 2 + pt.fromIdx * spacing1;
+                const y2 = (h / 2) - ((l2.count - 1) * spacing2) / 2 + pt.toIdx * spacing2;
+
+                const px = l1.x + (l2.x - l1.x) * pt.t;
+                const py = y1 + (y2 - y1) * pt.t;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(px, py, pt.size, 0, Math.PI * 2);
+                ctx.fillStyle = pt.color;
+                ctx.shadowColor = pt.color;
+                ctx.shadowBlur = 8;
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+
+        // Draw neurons in each layer
+        layers.forEach((l, lIdx) => {
+            const spacing = 42;
+            const startY = (h / 2) - ((l.count - 1) * spacing) / 2;
+
+            // Column Header
+            ctx.save();
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+            ctx.fillStyle = l.color;
+            ctx.textAlign = 'center';
+            ctx.fillText(l.name, l.x, startY - 26);
+            ctx.restore();
+
+            for (let i = 0; i < l.count; i++) {
+                const ny = startY + i * spacing;
+                const isActivated = this.state !== 'idle' && (p * 3.5 >= lIdx);
+
+                ctx.save();
+                ctx.translate(l.x, ny);
+
+                // Halo
+                ctx.beginPath();
+                ctx.arc(0, 0, 16, 0, Math.PI * 2);
+                ctx.fillStyle = isActivated ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.03)';
+                if (isActivated) {
+                    ctx.shadowColor = l.color;
+                    ctx.shadowBlur = 10;
+                }
+                ctx.fill();
+
+                // Core
+                ctx.beginPath();
+                ctx.arc(0, 0, 11, 0, Math.PI * 2);
+                ctx.fillStyle = isActivated ? l.color : 'rgba(30, 41, 59, 0.8)';
+                ctx.strokeStyle = isActivated ? '#FFFFFF' : 'rgba(255, 255, 255, 0.2)';
+                ctx.lineWidth = 1.5;
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        });
+
+        // Top banner text
+        ctx.save();
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        if (p >= 0.8) {
+            ctx.fillStyle = '#34D399';
+            ctx.shadowColor = '#34D399';
+            ctx.shadowBlur = 8;
+            ctx.fillText("🧠 C++ LibTorch 原生 SIMD 张量前向推理完成 (零 Python GIL 延迟)", w / 2, 22);
+        } else if (this.state === 'running') {
+            ctx.fillStyle = '#818CF8';
+            ctx.fillText("Sequential 级联前向传播中 · 原生张量数据流转", w / 2, 22);
+        } else {
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillText("多层神经网络拓扑结构 · 点击【运行模拟】推演张量计算图", w / 2, 22);
+        }
+        ctx.restore();
+    }
+
+    // ------------------------------------------------------------------------
+    // Scenario 3: Native Multithreading Parallel Swimlanes
+    // ------------------------------------------------------------------------
+    renderThreads(time, p) {
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+
+        const lanes = [
+            { tag: "T0 (Main)", name: "主分发调度器", color: '#38BDF8', freq: 4.5 },
+            { tag: "W1 (Core 2)", name: "工作线程: 向量加法", color: '#818CF8', freq: 5.2 },
+            { tag: "W2 (Core 3)", name: "工作线程: 矩阵乘法", color: '#A855F7', freq: 6.0 },
+            { tag: "W3 (Core 4)", name: "工作线程: 异步 I/O 汇合", color: '#10B981', freq: 4.8 }
+        ];
+
+        const trackX = 110;
+        const trackW = w - trackX - 35;
+        const laneH = 46;
+        const startY = (h / 2) - ((lanes.length * 68) / 2) + 20;
+
+        lanes.forEach((lane, idx) => {
+            const ly = startY + idx * 68;
+
+            // Lane Tag Pill
+            ctx.save();
+            ctx.font = '10.5px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = lane.color;
+            ctx.fillText(lane.tag, trackX - 14, ly + laneH / 2 - 8);
+            ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillText(lane.name, trackX - 14, ly + laneH / 2 + 8);
+            ctx.restore();
+
+            // Track Rail Background
+            ctx.save();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.lineWidth = 1;
+            this.drawRoundRect(ctx, trackX, ly, trackW, laneH, 10);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // Active Progress Fill
+            const laneProgress = this.state === 'idle'
+                ? 0.15
+                : Math.min(1, p * (1 + (idx % 2 === 0 ? 0.04 : -0.03)));
+
+            const currentW = trackW * laneProgress;
+
+            if (currentW > 0) {
+                ctx.save();
+                // Clip within track
+                ctx.beginPath();
+                this.drawRoundRect(ctx, trackX, ly, currentW, laneH, 10);
+                ctx.clip();
+
+                // Gradient track body
+                const grad = ctx.createLinearGradient(trackX, 0, trackX + currentW, 0);
+                grad.addColorStop(0, 'rgba(255, 255, 255, 0.03)');
+                grad.addColorStop(0.85, lane.color + '44');
+                grad.addColorStop(1, lane.color + 'AA');
+                ctx.fillStyle = grad;
+                ctx.fillRect(trackX, ly, currentW, laneH);
+
+                // Oscillating Harmonic Waveform inside track
+                ctx.beginPath();
+                for (let x = 0; x <= currentW; x += 3) {
+                    const waveAmp = (this.state === 'running' ? 12 : 5) * Math.sin((x / trackW) * Math.PI);
+                    const wy = ly + laneH / 2 + Math.sin((x * 0.06) + (time * 0.006 * lane.freq) + idx) * waveAmp;
+                    if (x === 0) ctx.moveTo(trackX + x, wy);
+                    else ctx.lineTo(trackX + x, wy);
+                }
+                ctx.strokeStyle = lane.color;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = lane.color;
+                ctx.shadowBlur = 6;
+                ctx.stroke();
+
+                // Leading glowing laser head
+                ctx.beginPath();
+                ctx.arc(trackX + currentW - 2, ly + laneH / 2, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.shadowColor = lane.color;
+                ctx.shadowBlur = 12;
+                ctx.fill();
+
+                ctx.restore();
+            }
+        });
+
+        // Lock-free sync barrier guide line (flashes when completed)
+        if (p >= 0.95) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(trackX + trackW, startY - 10);
+            ctx.lineTo(trackX + trackW, startY + lanes.length * 68 - 10);
+            ctx.strokeStyle = '#34D399';
+            ctx.lineWidth = 2.5;
+            ctx.shadowColor = '#34D399';
+            ctx.shadowBlur = 16;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Top Status
+        ctx.save();
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        if (p >= 0.95) {
+            ctx.fillStyle = '#10B981';
+            ctx.shadowColor = '#10B981';
+            ctx.shadowBlur = 8;
+            ctx.fillText("🧵 4 核心并发满载已汇合 (Barrier Join 零锁死)", w / 2, 22);
+        } else if (this.state === 'running') {
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillText("内核级 C++ std::thread 无锁并行调度中...", w / 2, 22);
+        } else {
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillText("多线程并发泳道 · 点击【运行模拟】推演无锁流水线", w / 2, 22);
+        }
+        ctx.restore();
+    }
+
+    // ------------------------------------------------------------------------
+    // Scenario 4: 1 Million Loop & Hardware idiv Specialization
+    // ------------------------------------------------------------------------
+    renderLoop(time, p) {
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+
+        const cx = w / 2;
+        const cy = h / 2 - 5;
+        const radius = Math.min(w, h) * 0.29;
+
+        const isJitted = p >= 0.35;
+        const countVal = Math.floor(p * 1000000);
+
+        // Rotating Stator Ring
+        const spinSpeed = isJitted ? 0.005 : 0.0015;
+        const baseAngle = time * spinSpeed;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        // Outer Ring segments
+        const segments = 24;
+        for (let i = 0; i < segments; i++) {
+            const a1 = baseAngle + (i * Math.PI * 2) / segments;
+            const a2 = a1 + (Math.PI * 2) / segments * 0.65;
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, a1, a2);
+            ctx.strokeStyle = isJitted 
+                ? (i % 2 === 0 ? '#00F2FE' : '#38BDF8') 
+                : 'rgba(255, 255, 255, 0.12)';
+            ctx.lineWidth = isJitted ? 3 : 2;
+            if (isJitted) {
+                ctx.shadowColor = '#00F2FE';
+                ctx.shadowBlur = 8;
+            }
+            ctx.stroke();
+        }
+
+        // Inner Core Card
+        const cardW = 120;
+        const cardH = 80;
+        ctx.beginPath();
+        this.drawRoundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 12);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.strokeStyle = isJitted ? '#00F2FE' : 'rgba(255, 255, 255, 0.16)';
+        ctx.lineWidth = 1.5;
+        if (isJitted) {
+            ctx.shadowColor = '#00F2FE';
+            ctx.shadowBlur = 12;
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        // Core Text inside Card
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = isJitted ? '#00F2FE' : '#94A3B8';
+        ctx.fillText("TzdCore ALU", 0, -16);
+
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.fillStyle = isJitted ? '#FFFFFF' : '#E2E8F0';
+        ctx.fillText(isJitted ? "idiv (x86_64)" : "fmod() [VM]", 0, 6);
+
+        ctx.font = '9.5px -apple-system, BlinkMacSystemFont, monospace';
+        ctx.fillStyle = '#34D399';
+        ctx.fillText("FPToSI + SRem", 0, 24);
+
+        ctx.restore();
+
+        // Number Counter below ring
+        ctx.save();
+        ctx.font = 'bold 18px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = isJitted ? '#34D399' : '#F8FAFC';
+        if (isJitted) {
+            ctx.shadowColor = '#34D399';
+            ctx.shadowBlur = 10;
+        }
+        ctx.fillText(`循环计数: ${countVal.toLocaleString()} / 1,000,000`, cx, cy + radius + 32);
+
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.fillStyle = '#94A3B8';
+        ctx.fillText("累加结果: sum = 249,999,500,000", cx, cy + radius + 52);
+        ctx.restore();
+
+        // Top Status text
+        ctx.save();
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        if (isJitted) {
+            ctx.fillStyle = '#00F2FE';
+            ctx.shadowColor = '#00F2FE';
+            ctx.shadowBlur = 8;
+            ctx.fillText("⚡ 取模特化: 单条硬件 idiv 指令 (超越 HotSpot 1.5x)", w / 2, 22);
+        } else if (this.state === 'running') {
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillText("Tier 0 循环计数器累计中 ... 即将触发热点", w / 2, 22);
+        } else {
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillText("100万次循环基准 · 点击【运行模拟】观察硬件整除特化", w / 2, 22);
+        }
+        ctx.restore();
+    }
+
+    drawRoundRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Interactive Playground Controller
+// ----------------------------------------------------------------------------
 function initPlayground() {
     const editor = document.getElementById('pg-editor');
     const terminal = document.getElementById('pg-output');
     const runBtn = document.getElementById('pg-run-btn');
     const clearBtn = document.getElementById('pg-clear-btn');
-    const viewOutputTab = document.getElementById('pg-view-output');
-    const viewBytecodeTab = document.getElementById('pg-view-bytecode');
+    const canvas = document.getElementById('pg-visual-canvas');
+    const idleHint = document.getElementById('pg-canvas-idle-hint');
+    const hudOverlay = document.getElementById('pg-canvas-hud');
+    const termOverlay = document.getElementById('pg-term-overlay');
+    const statusPill = document.getElementById('pg-status-pill');
+    const statusDot = document.getElementById('pg-status-dot');
+    const statusText = document.getElementById('pg-status-text');
+
+    // Micro Status Bar Elements
+    const statJitTier = document.getElementById('stat-jit-tier');
+    const statExecTime = document.getElementById('stat-exec-time');
+    const statMem = document.getElementById('stat-mem');
+    const statSpeedup = document.getElementById('stat-speedup');
+    const statFps = document.getElementById('stat-fps');
+
+    // Dual-mode switcher tabs
+    const tabVisual = document.getElementById('pg-tab-visual');
+    const tabTerminal = document.getElementById('pg-tab-terminal');
+    const viewOutputSubtab = document.getElementById('pg-view-output');
+    const viewBytecodeSubtab = document.getElementById('pg-view-bytecode');
 
     // Custom Dropdown Elements
     const dropdownContainer = document.getElementById('pg-custom-dropdown');
@@ -416,22 +1276,92 @@ function initPlayground() {
     const dropdownMenu = document.getElementById('pg-dropdown-menu');
     const dropdownOptions = document.querySelectorAll('.apple-dropdown-option');
 
-    if (!editor || !terminal || !runBtn) return;
+    if (!editor || !canvas || !runBtn) return;
 
     let currentPreset = 'fib';
-    let currentView = 'output'; // 'output' or 'bytecode'
+    let currentTermView = 'output'; // 'output' or 'bytecode'
+
+    // Initialize HTML5 Canvas Visual Engine
+    const visualEngine = new TzdDynamicVisualEngine(canvas, {
+        onProgress: (p, rawP) => {
+            const data = playgroundPresets[currentPreset];
+            if (!data) return;
+
+            // Update live metrics bar
+            if (rawP < 0.44) {
+                if (statJitTier) statJitTier.textContent = "Tier 0 (VM)";
+            } else {
+                if (statJitTier) statJitTier.textContent = data.metrics.jitTier;
+            }
+
+            if (statExecTime) {
+                const targetMs = parseFloat(data.metrics.execTime);
+                const currentMs = (targetMs * p).toFixed(4);
+                statExecTime.textContent = currentMs + "s";
+            }
+        },
+        onFps: (fpsVal) => {
+            if (statFps) statFps.textContent = fpsVal + " FPS";
+        },
+        onComplete: (presetKey) => {
+            const data = playgroundPresets[presetKey];
+            if (!data) return;
+
+            // Status Pill
+            if (statusDot) {
+                statusDot.className = 'status-dot completed';
+            }
+            if (statusText) statusText.textContent = "执行完成 (Tier 1 Native)";
+
+            // Micro stats final values
+            if (statJitTier) statJitTier.textContent = data.metrics.jitTier;
+            if (statExecTime) statExecTime.textContent = data.metrics.execTime;
+            if (statMem) statMem.textContent = data.metrics.mem;
+            if (statSpeedup) statSpeedup.textContent = data.metrics.speedup;
+
+            // Show HUD Card Overlay
+            if (hudOverlay) {
+                const hudIcon = document.getElementById('hud-icon');
+                const hudTitle = document.getElementById('hud-title');
+                const hudSubtitle = document.getElementById('hud-subtitle');
+                const hudMetric = document.getElementById('hud-metric');
+
+                if (hudIcon) hudIcon.textContent = data.metrics.hudIcon;
+                if (hudTitle) hudTitle.textContent = data.metrics.hudTitle;
+                if (hudSubtitle) hudSubtitle.textContent = data.metrics.hudSubtitle;
+                if (hudMetric) hudMetric.textContent = data.metrics.hudMetric;
+
+                hudOverlay.classList.add('show');
+            }
+        }
+    });
 
     function loadPreset(key) {
         currentPreset = key;
         const data = playgroundPresets[key];
-        if (data) {
-            editor.value = data.code;
-            if (currentView === 'output') {
-                terminal.innerHTML = `<span class="out-sys">[就绪] 点击“运行模拟”查看执行细节与 JIT 动态提升输出...</span>`;
-            } else {
-                terminal.innerHTML = `<pre class="out-sys">${escapeHtml(data.bytecode)}</pre>`;
-            }
+        if (!data) return;
+
+        editor.value = data.code;
+        if (terminal) {
+            terminal.innerHTML = `<span class="out-sys">[就绪] 点击“运行模拟”观察动态渲染视窗与 JIT 提升...</span>`;
         }
+
+        // Reset visual engine
+        visualEngine.setPreset(key);
+
+        // Reset HUD & Idle hints
+        if (hudOverlay) hudOverlay.classList.remove('show');
+        if (idleHint) idleHint.classList.remove('hide');
+
+        // Reset status pill
+        if (statusDot) statusDot.className = 'status-dot';
+        if (statusText) statusText.textContent = "就绪 (Ready)";
+
+        // Reset micro stats bar
+        if (statJitTier) statJitTier.textContent = "Tier 0 (VM)";
+        if (statExecTime) statExecTime.textContent = "--";
+        if (statMem) statMem.textContent = data.metrics.mem;
+        if (statSpeedup) statSpeedup.textContent = "--";
     }
 
     // Custom Dropdown Interactions
@@ -467,7 +1397,6 @@ function initPlayground() {
             });
         });
 
-        // Close on click outside
         document.addEventListener('click', (e) => {
             if (!dropdownContainer.contains(e.target)) {
                 dropdownContainer.classList.remove('open');
@@ -475,7 +1404,6 @@ function initPlayground() {
             }
         });
 
-        // Close on ESC
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && dropdownContainer.classList.contains('open')) {
                 dropdownContainer.classList.remove('open');
@@ -484,55 +1412,77 @@ function initPlayground() {
         });
     }
 
-    // Fallback for native select if still present
-    const nativeSelect = document.getElementById('pg-preset-select');
-    if (nativeSelect) {
-        nativeSelect.addEventListener('change', (e) => loadPreset(e.target.value));
-    }
-
-    // Run button with simulated streaming output
+    // Run button triggers simulation
     runBtn.addEventListener('click', () => {
-        terminal.innerHTML = `<span class="out-info">[正在编译与执行中...]</span>\n`;
-        setTimeout(() => {
+        // Hide idle hint & HUD
+        if (idleHint) idleHint.classList.add('hide');
+        if (hudOverlay) hudOverlay.classList.remove('show');
+
+        // Switch status pill
+        if (statusDot) statusDot.className = 'status-dot running';
+        if (statusText) statusText.textContent = "正在模拟运行...";
+
+        // Start visual canvas engine
+        visualEngine.startSimulation();
+
+        // Populate terminal in background simultaneously
+        if (terminal) {
             const data = playgroundPresets[currentPreset];
-            if (currentView === 'output') {
+            if (currentTermView === 'output') {
                 const lines = (data ? data.output : ">>> 执行完成。").split('\n');
                 terminal.innerHTML = '';
                 lines.forEach((line, idx) => {
                     setTimeout(() => {
                         let colorClass = 'out-sys';
                         if (line.includes('Tier') || line.includes('Profiler') || line.includes('LLVM') || line.includes('GC') || line.includes('Torch')) colorClass = 'out-info';
-                        else if (line.includes('结果') || line.includes('耗时') || line.includes('正常结束') || line.includes('输出')) colorClass = 'out-success';
+                        else if (line.includes('结果') || line.includes('耗时') || line.includes('正常结束') || line.includes('完成') || line.includes('输出')) colorClass = 'out-success';
                         else if (line.includes('警告') || line.includes('Err')) colorClass = 'out-warn';
 
                         terminal.innerHTML += `<div class="${colorClass}">${escapeHtml(line)}</div>`;
                         terminal.scrollTop = terminal.scrollHeight;
-                    }, idx * 65);
+                    }, idx * 60);
                 });
             } else {
                 terminal.innerHTML = `<pre class="out-info">${escapeHtml(data ? data.bytecode : "; No bytecode available")}</pre>`;
             }
-        }, 120);
+        }
     });
 
-    // Clear button
-    clearBtn.addEventListener('click', () => {
-        terminal.innerHTML = `<span class="out-sys">控制台已清空。</span>`;
-    });
-
-    // Output vs Bytecode view toggles
-    if (viewOutputTab && viewBytecodeTab) {
-        viewOutputTab.addEventListener('click', () => {
-            currentView = 'output';
-            viewOutputTab.classList.add('active');
-            viewBytecodeTab.classList.remove('active');
-            const data = playgroundPresets[currentPreset];
-            terminal.innerHTML = `<span class="out-sys">${escapeHtml(data.output)}</span>`;
+    // Reset button
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            loadPreset(currentPreset);
         });
-        viewBytecodeTab.addEventListener('click', () => {
-            currentView = 'bytecode';
-            viewBytecodeTab.classList.add('active');
-            viewOutputTab.classList.remove('active');
+    }
+
+    // Dual-Mode View Switcher (Dynamic Visual Engine vs Terminal/IR)
+    if (tabVisual && tabTerminal && termOverlay) {
+        tabVisual.addEventListener('click', () => {
+            tabVisual.classList.add('active');
+            tabTerminal.classList.remove('active');
+            termOverlay.style.display = 'none';
+        });
+
+        tabTerminal.addEventListener('click', () => {
+            tabTerminal.classList.add('active');
+            tabVisual.classList.remove('active');
+            termOverlay.style.display = 'flex';
+        });
+    }
+
+    // Terminal Sub-tabs (Output vs Bytecode)
+    if (viewOutputSubtab && viewBytecodeSubtab && terminal) {
+        viewOutputSubtab.addEventListener('click', () => {
+            currentTermView = 'output';
+            viewOutputSubtab.classList.add('active');
+            viewBytecodeSubtab.classList.remove('active');
+            const data = playgroundPresets[currentPreset];
+            terminal.innerHTML = `<div class="out-sys">${escapeHtml(data.output)}</div>`;
+        });
+        viewBytecodeSubtab.addEventListener('click', () => {
+            currentTermView = 'bytecode';
+            viewBytecodeSubtab.classList.add('active');
+            viewOutputSubtab.classList.remove('active');
             const data = playgroundPresets[currentPreset];
             terminal.innerHTML = `<pre class="out-info">${escapeHtml(data.bytecode)}</pre>`;
         });

@@ -380,19 +380,19 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
                   </div>
                   <i data-lucide="check" class="opt-check"></i>
                 </div>
-                <div class="apple-dropdown-option" data-value="oop" role="option" aria-selected="false">
-                  <div class="opt-icon-badge">🏛️</div>
-                  <div class="opt-content">
-                    <span class="opt-name">面向对象继承与多态</span>
-                    <span class="opt-desc">类定义、super 构造链与虚方法分发</span>
-                  </div>
-                  <i data-lucide="check" class="opt-check"></i>
-                </div>
                 <div class="apple-dropdown-option" data-value="torch" role="option" aria-selected="false">
                   <div class="opt-icon-badge">🧠</div>
                   <div class="opt-content">
                     <span class="opt-name">LibTorch 神经网络推理</span>
-                    <span class="opt-desc">Sequential 级联模型与原生张量算子</span>
+                    <span class="opt-desc">Sequential 级联模型与原生张量流转</span>
+                  </div>
+                  <i data-lucide="check" class="opt-check"></i>
+                </div>
+                <div class="apple-dropdown-option" data-value="threads" role="option" aria-selected="false">
+                  <div class="opt-icon-badge">🧵</div>
+                  <div class="opt-content">
+                    <span class="opt-name">原生多线程并发调度</span>
+                    <span class="opt-desc">内核级并行泳道与无锁流水线推进</span>
                   </div>
                   <i data-lucide="check" class="opt-check"></i>
                 </div>
@@ -413,7 +413,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
               <i data-lucide="play" style="width:14px;height:14px;"></i>
               <span>运行模拟</span>
             </button>
-            <button id="pg-clear-btn" class="btn-apple-glass" style="padding:0.35rem 0.85rem;font-size:0.8rem;">清空控制台</button>
+            <button id="pg-clear-btn" class="btn-apple-glass" style="padding:0.35rem 0.85rem;font-size:0.8rem;">重置演示</button>
           </div>
         </div>
 
@@ -422,16 +422,86 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
             <textarea id="pg-editor" class="playground-textarea" spellcheck="false"></textarea>
           </div>
 
-          <div class="playground-term-zone">
-            <div class="playground-term-header">
-              <div style="display:flex;gap:0.6rem;">
-                <span id="pg-view-output" class="glass-tab-btn active" style="padding:2px 8px;">执行输出</span>
-                <span id="pg-view-bytecode" class="glass-tab-btn" style="padding:2px 8px;">底层字节码 (IR)</span>
+          <!-- Dynamic Visual Graphics Viewport + Micro Status Bar -->
+          <div class="playground-visual-zone">
+            <!-- Top Mode Switcher Bar -->
+            <div class="visual-zone-header">
+              <div class="visual-mode-tabs">
+                <button id="pg-tab-visual" class="glass-tab-btn active" type="button">
+                  <span class="pulse-indicator-dot"></span>
+                  <span>动态图形引擎 (Visual Engine)</span>
+                </button>
+                <button id="pg-tab-terminal" class="glass-tab-btn" type="button">
+                  <i data-lucide="terminal" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:2px;"></i>
+                  <span>底层字节码与日志</span>
+                </button>
               </div>
-              <span>TzdInterpreter & Bytecode VM</span>
+              <div class="runtime-status-pill" id="pg-status-pill">
+                <span class="status-dot" id="pg-status-dot"></span>
+                <span id="pg-status-text">就绪 (Ready)</span>
+              </div>
             </div>
-            <div id="pg-output" class="playground-term-output">
-              <span class="out-sys">[就绪] 点击“运行模拟”查看执行细节与 JIT 动态提升输出...</span>
+
+            <!-- Visual Dynamic Viewport Container -->
+            <div class="visual-viewport-container" id="pg-viewport-container">
+              <canvas id="pg-visual-canvas"></canvas>
+
+              <!-- Floating Simulation Start Callout Hint -->
+              <div class="canvas-idle-hint" id="pg-canvas-idle-hint">
+                <div class="idle-hint-badge">
+                  <i data-lucide="play" style="width:12px;height:12px;"></i>
+                  <span>点击上方【运行模拟】推演底层运行</span>
+                </div>
+              </div>
+
+              <!-- Completion Floating HUD Badge Overlay -->
+              <div class="canvas-hud-overlay" id="pg-canvas-hud">
+                <div class="hud-chip-icon" id="hud-icon">⚡</div>
+                <div class="hud-chip-info">
+                  <div class="hud-chip-title" id="hud-title">JIT 原生特化已完成</div>
+                  <div class="hud-chip-subtitle" id="hud-subtitle">动态提升至 Tier 1 Native · 消除 100% 堆栈装箱</div>
+                </div>
+                <div class="hud-stat-highlight" id="hud-metric">0.0014s</div>
+              </div>
+
+              <!-- Log / IR Terminal View (Toggled when switching tabs) -->
+              <div class="playground-term-overlay" id="pg-term-overlay" style="display:none;">
+                <div class="playground-term-subbar">
+                  <span id="pg-view-output" class="glass-subtab-btn active">执行输出</span>
+                  <span id="pg-view-bytecode" class="glass-subtab-btn">底层字节码 (IR)</span>
+                </div>
+                <div id="pg-output" class="playground-term-output">
+                  <span class="out-sys">[就绪] 点击“运行模拟”查看执行细节与 JIT 动态提升输出...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Miniature Translucent Frosted Glass Metrics Bar -->
+            <div class="micro-status-bar">
+              <div class="micro-stat-item">
+                <span class="micro-stat-label">JIT 状态</span>
+                <span class="micro-stat-val text-sky" id="stat-jit-tier">Tier 0 (VM)</span>
+              </div>
+              <div class="micro-stat-divider"></div>
+              <div class="micro-stat-item">
+                <span class="micro-stat-label">执行耗时</span>
+                <span class="micro-stat-val text-green" id="stat-exec-time">--</span>
+              </div>
+              <div class="micro-stat-divider"></div>
+              <div class="micro-stat-item">
+                <span class="micro-stat-label">内存分配</span>
+                <span class="micro-stat-val text-purple" id="stat-mem">64 KB (Arena)</span>
+              </div>
+              <div class="micro-stat-divider"></div>
+              <div class="micro-stat-item">
+                <span class="micro-stat-label">优化增益</span>
+                <span class="micro-stat-val text-amber" id="stat-speedup">--</span>
+              </div>
+              <div class="micro-stat-divider"></div>
+              <div class="micro-stat-item">
+                <span class="micro-stat-label">渲染帧率</span>
+                <span class="micro-stat-val text-emerald" id="stat-fps">60 FPS</span>
+              </div>
             </div>
           </div>
         </div>
