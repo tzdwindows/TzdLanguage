@@ -898,7 +898,7 @@ print("所有线程已安全汇合。");</code></pre>
         <p class="section-subtext">解密 TzdLang 是如何将高级动态代码编译优化为超越 HotSpot 性能的原生机器码</p>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-bottom:2.5rem;">
+      <div class="glass-grid-2col" style="margin-bottom:2.5rem;">
         <!-- Architecture Pipeline Steps -->
         <div class="arch-pipeline-pod reveal-on-scroll delay-1">
           <h3 style="font-size:1.3rem;margin-bottom:0.5rem;display:flex;align-items:center;gap:0.5rem;">
@@ -1010,16 +1010,25 @@ print("所有线程已安全汇合。");</code></pre>
         <p class="section-subtext">从本地 C++ 工具链编译构建到 VSCode 集成开发调试全景</p>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
+      <div class="glass-grid-2col">
         <div class="glass-feature-pod reveal-on-scroll delay-1">
-          <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
-            <i data-lucide="wrench" style="color:#38BDF8;"></i>
-            <span>1. 解释器与 JIT 运行时构建</span>
-          </h4>
-          <p style="color:var(--text-secondary);font-size:0.92rem;">
+          <div class="pod-header-row">
+            <div class="pod-icon-circle"><i data-lucide="wrench"></i></div>
+            <h3 class="pod-title-lg">1. 解释器与 JIT 运行时构建</h3>
+          </div>
+          <p class="pod-text">
             项目采用 C++ 现代技术栈开发，推荐使用 Visual Studio 2019/2022 进行 x64 原生编译构建：
           </p>
-          <pre><code class="language-bash"># 使用 MSBuild 命令行一键编译 Release 版本
+          <div class="mac-terminal-box">
+            <div class="mac-terminal-titlebar">
+              <div class="traffic-lights">
+                <span class="traffic-dot dot-close"></span>
+                <span class="traffic-dot dot-min"></span>
+                <span class="traffic-dot dot-zoom"></span>
+              </div>
+              <span class="mac-terminal-title">Developer Command Prompt (x64)</span>
+            </div>
+            <pre><code class="language-bash"># 使用 MSBuild 命令行一键编译 Release 版本
 "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" TzdTools.sln /p:Configuration=Release /p:Platform=x64
 
 # 运行脚本
@@ -1027,17 +1036,27 @@ TzdTools.exe --runMainTzd=script.tzd
 
 # 执行性能对比基准测试
 TzdTools.exe --runMainTzd=bench_compare.tzd</code></pre>
+          </div>
         </div>
 
         <div class="glass-feature-pod reveal-on-scroll delay-2">
-          <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
-            <i data-lucide="code" style="color:#818CF8;"></i>
-            <span>2. VSCode 扩展安装与断点调试</span>
-          </h4>
-          <p style="color:var(--text-secondary);font-size:0.92rem;">
+          <div class="pod-header-row">
+            <div class="pod-icon-circle"><i data-lucide="code"></i></div>
+            <h3 class="pod-title-lg">2. VSCode 扩展安装与断点调试</h3>
+          </div>
+          <p class="pod-text">
             仓库内置完整的 VSCode 扩展 <code>vscodePlugin/tzdlang</code>，支持语法高亮、调试适配器（DAP）：
           </p>
-          <pre><code class="language-bash"># 打包或安装扩展
+          <div class="mac-terminal-box">
+            <div class="mac-terminal-titlebar">
+              <div class="traffic-lights">
+                <span class="traffic-dot dot-close"></span>
+                <span class="traffic-dot dot-min"></span>
+                <span class="traffic-dot dot-zoom"></span>
+              </div>
+              <span class="mac-terminal-title">launch.json — tzdlang-extension</span>
+            </div>
+            <pre><code class="language-bash"># 打包或安装扩展
 cd vscodePlugin/tzdlang
 npm install && npm run compile
 
@@ -1054,6 +1073,7 @@ npm install && npm run compile
     }
   ]
 }</code></pre>
+          </div>
         </div>
       </div>
     </section>
@@ -1068,13 +1088,13 @@ npm install && npm run compile
         <p class="section-subtext">仓库已内置自动化发布流水线与静态源文件，您可以通过以下任意一种方式在 GitHub 上一键部署此网站！</p>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
+      <div class="glass-grid-2col">
         <div class="glass-feature-pod reveal-on-scroll delay-1">
-          <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
-            <i data-lucide="github" style="color:#38BDF8;"></i>
-            <span>方式一：GitHub Actions 自动流水线 (推荐)</span>
-          </h4>
-          <p style="color:var(--text-secondary);font-size:0.92rem;">
+          <div class="pod-header-row">
+            <div class="pod-icon-circle"><i data-lucide="github"></i></div>
+            <h3 class="pod-title-lg">方式一：GitHub Actions 自动流水线 (推荐)</h3>
+          </div>
+          <p class="pod-text">
             本仓库已在 <code>.github/workflows/deploy-pages.yml</code> 中配置了官方推荐的 GitHub Pages 自动部署流程。
           </p>
           <ol style="margin-left:1.25rem;color:var(--text-secondary);font-size:0.92rem;line-height:1.8;">
@@ -1086,11 +1106,11 @@ npm install && npm run compile
         </div>
 
         <div class="glass-feature-pod reveal-on-scroll delay-2">
-          <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
-            <i data-lucide="globe" style="color:#10B981;"></i>
-            <span>方式二：直接绑定 /docs 目录 (免 Actions)</span>
-          </h4>
-          <p style="color:var(--text-secondary);font-size:0.92rem;">
+          <div class="pod-header-row">
+            <div class="pod-icon-circle"><i data-lucide="globe"></i></div>
+            <h3 class="pod-title-lg">方式二：直接绑定 /docs 目录 (免 Actions)</h3>
+          </div>
+          <p class="pod-text">
             由于网站全部静态资源均已规范保存在 <code>docs/</code> 目录中，您也可以无需等待 Actions 构建直接发布：
           </p>
           <ol style="margin-left:1.25rem;color:var(--text-secondary);font-size:0.92rem;line-height:1.8;">
