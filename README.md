@@ -1,16 +1,34 @@
-# TzdTools
+# TzdTools & TzdLang (TZD)
 
-TzdTools 是一个自定义编程语言 TzdLang 的开发工具链，包含语言解释器、VSCode 扩展支持和丰富的标准库。
+> **TzdLang (TZD)** 是一个自研的现代面向对象、高性能混合编译编程语言与开发工具链，包含轻量解释器、堆栈式字节码虚拟机、基于 LLVM ORC 的异步分层 JIT 编译系统、原生 LibTorch 深度学习引擎以及完整的 VSCode IDE 扩展体系。
+
+[![GitHub Pages Deployment](https://img.shields.io/badge/GitHub_Pages-Online_Website-38bdf8?style=flat&logo=github)](https://tzdwindows.github.io/TzdLanguage/)
+[![LLVM ORC JIT](https://img.shields.io/badge/JIT-LLVM_ORC-6366f1?style=flat)](https://tzdwindows.github.io/TzdLanguage/#architecture)
+[![PyTorch LibTorch](https://img.shields.io/badge/Deep_Learning-LibTorch-ee4c2c?style=flat)](https://tzdwindows.github.io/TzdLanguage/#syntax-torch)
+
+🌐 **官方展示网站与在线文档**：[https://tzdwindows.github.io/TzdLanguage/](https://tzdwindows.github.io/TzdLanguage/)  
+（包含交互式在线演练场 Playground、全景语法手册、语言标准编程规范、底层工作原理深度剖析及性能对比图表）
+
+## 🚀 GitHub Pages 官方网站一键部署
+
+本项目官方文档与展示站点完全开源并存放于 `docs/` 目录中，支持 GitHub 一键部署：
+
+- **自动化一键发布（推荐）**：已配置 `.github/workflows/deploy-pages.yml`。在 GitHub 仓库 `Settings -> Pages -> Build and deployment -> Source` 中选择 **GitHub Actions**，每次向 `master` 或 `main` 推送代码时将自动触发 CI/CD 构建并一键上线。
+- **分支直接发布（免 Actions）**：进入仓库 `Settings -> Pages -> Source` 选择 **Deploy from a branch**，指定 `master` 分支下的 `/docs` 文件夹，点击 **Save** 即可直接发布上线。
 
 ## 项目概述
 
 TzdLang 是一门面向对象的编程语言，具有现代语言特性，包括：
 
-- 类继承和多态
-- 异常处理机制
-- 线程支持
-- 动态类型系统
-- JIT 编译支持
+- 双层分级混合执行（Tier 0 Bytecode VM + Tier 1 异步 LLVM ORC JIT）
+- 原生 LibTorch 深度学习体系（张量算子、nn.Module、自动微分、Sequential）
+- 分代三色标记 SATB 垃圾回收器（Bump Pointer Arena 新生代 + 老年代并发标记）
+- 类继承、虚方法多态与构造函数级联
+- 异常处理机制与 `in` 类型模式匹配
+- 原生系统多线程并发驱动
+- 动态类型与可选静态强类型系统
+- 完整的 DAP 协议调试器与 VSCode 扩展生态
+
 
 ## 项目结构
 
