@@ -1572,30 +1572,53 @@ function initSmoothScroll() {
 }
 
 // ----------------------------------------------------------------------------
-// 6. Mobile Navigation
+// 6. Mobile Navigation (Apple iOS Frosted Glass Sheet Drawer)
 // ----------------------------------------------------------------------------
 function initMobileNav() {
     const toggle = document.querySelector('.mobile-toggle');
-    const nav = document.querySelector('.nav-links-row');
-    if (!toggle || !nav) return;
+    const navMenu = document.querySelector('.nav-desktop-menu');
+    const navLinks = document.querySelectorAll('.nav-links-row a');
+    if (!toggle || !navMenu) return;
 
-    toggle.addEventListener('click', () => {
-        const isShown = nav.style.display === 'flex';
-        nav.style.display = isShown ? 'none' : 'flex';
-        if (!isShown) {
-            nav.style.flexDirection = 'column';
-            nav.style.position = 'absolute';
-            nav.style.top = '100%';
-            nav.style.left = '1.5rem';
-            nav.style.right = '1.5rem';
-            nav.style.background = 'rgba(18, 20, 29, 0.95)';
-            nav.style.backdropFilter = 'blur(20px)';
-            nav.style.webkitBackdropFilter = 'blur(20px)';
-            nav.style.padding = '1.5rem';
-            nav.style.border = '1px solid rgba(255, 255, 255, 0.12)';
-            nav.style.borderRadius = '18px';
-            nav.style.marginTop = '0.5rem';
-            nav.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.6)';
+    function setMenuState(open) {
+        if (open) {
+            navMenu.classList.add('mobile-open');
+            toggle.setAttribute('aria-expanded', 'true');
+            toggle.innerHTML = '<i data-lucide="x" style="width:20px;height:20px;"></i>';
+        } else {
+            navMenu.classList.remove('mobile-open');
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.innerHTML = '<i data-lucide="menu" style="width:20px;height:20px;"></i>';
+        }
+        if (window.lucide) {
+            lucide.createIcons();
+        }
+    }
+
+    toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = navMenu.classList.contains('mobile-open');
+        setMenuState(!isOpen);
+    });
+
+    // Close when clicking any nav link
+    navLinks.forEach(link => {
+        link.addEventListener('click', () => {
+            setMenuState(false);
+        });
+    });
+
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+        if (navMenu.classList.contains('mobile-open') && !navMenu.contains(e.target) && !toggle.contains(e.target)) {
+            setMenuState(false);
+        }
+    });
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            setMenuState(false);
         }
     });
 }
@@ -1641,6 +1664,10 @@ function initSyntaxWorkbench() {
             if (updateHistory) {
                 const topicKey = matchedItem.getAttribute('data-topic');
                 history.replaceState(null, null, `#${topicKey}`);
+            }
+            // Auto scroll horizontal pill smoothly into center view on mobile
+            if (window.innerWidth <= 860) {
+                matchedItem.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
             }
         }
     }
