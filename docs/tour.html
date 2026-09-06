@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TzdLang 交互式语法学习与语言全景指南 — Docs & Interactive Tour</title>
+  <meta name="description" content="TzdLang 官方交互式学习指南：全面覆盖语法体系、多语言横向对比（C++/Rust/Python）、LibTorch 原生张量计算与多层 JIT 编译执行模型。">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Tour Stylesheet -->
+  <link rel="stylesheet" href="assets/tour.css">
+</head>
+<body>
+
+  <!-- Ambient Depth Lights (Cyan + Indigo) -->
+  <div class="ambient-glow-wrapper" aria-hidden="true">
+    <div class="ambient-light-teal"></div>
+    <div class="ambient-light-indigo"></div>
+  </div>
+
+  <!-- Sticky Top Navigation (60px) -->
+  <header class="tour-header">
+    <div class="header-left">
+      <a href="index.html" class="brand-wrapper" title="返回官网首页">
+        <div class="brand-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        </div>
+        <span class="brand-name">TzdLang</span>
+        <span class="version-badge">v1.0</span>
+      </a>
+
+      <nav class="breadcrumb-nav">
+        <span class="breadcrumb-sep">/</span>
+        <a href="index.html" style="color:inherit;">Docs</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-active">Interactive Tour</span>
+      </nav>
+    </div>
+
+    <!-- Center Search Bar with Cmd+K hint -->
+    <div class="header-center">
+      <button class="search-trigger-btn" id="search-trigger-btn">
+        <span class="search-left-part">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span>搜索语法章节与特性...</span>
+        </span>
+        <span class="kbd-shortcut">⌘K</span>
+      </button>
+    </div>
+
+    <div class="header-right">
+      <a href="index.html" class="btn-github" style="font-size:0.8rem; background:transparent;">
+        <span>官网主页</span>
+      </a>
+      <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" rel="noopener noreferrer" class="btn-github">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Three-Column Integrated Tour Workspace -->
+  <main class="tour-workspace">
+
+    <!-- Column 1: Left Catalog Navigator (260px) -->
+    <aside class="tour-catalog">
+      <!-- Group 1: 快速起步 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>01 · 快速起步</span>
+          <span style="opacity:0.5;">01</span>
+        </div>
+        <button class="catalog-nav-item active" data-chapter="01_quickstart">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+          <span>构建运行与 Hello World</span>
+        </button>
+      </div>
+
+      <!-- Group 2: 基础语法 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>02 · 基础语法</span>
+          <span style="opacity:0.5;">02</span>
+        </div>
+        <button class="catalog-nav-item" data-chapter="02_basics">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+          <span>类型推断与控制流规范</span>
+        </button>
+      </div>
+
+      <!-- Group 3: 核心面向对象 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>03 · 核心面向对象</span>
+          <span style="opacity:0.5;">03</span>
+        </div>
+        <button class="catalog-nav-item" data-chapter="03_oop">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          <span>类、构造级联与继承</span>
+        </button>
+      </div>
+
+      <!-- Group 4: 深度学习与张量 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>04 · 深度学习与张量</span>
+          <span style="opacity:0.5;">04</span>
+        </div>
+        <button class="catalog-nav-item" data-chapter="04_deep_learning">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          <span>LibTorch 原生内核运算</span>
+        </button>
+      </div>
+
+      <!-- Group 5: 极致并发 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>05 · 极致并发</span>
+          <span style="opacity:0.5;">05</span>
+        </div>
+        <button class="catalog-nav-item" data-chapter="05_concurrency">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line></svg>
+          <span>原生多线程与 No-GIL</span>
+        </button>
+      </div>
+
+      <!-- Group 6: 异构执行模型 -->
+      <div class="catalog-group">
+        <div class="catalog-group-title">
+          <span>06 · 异构执行模型</span>
+          <span style="opacity:0.5;">06</span>
+        </div>
+        <button class="catalog-nav-item" data-chapter="06_tiering_jit">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+          <span>Tier 0 VM 与 LLVM JIT</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Column 2: Middle Tutorial & Explanation (Independent Fluid Scrolling) -->
+    <section class="tour-content">
+      <div class="content-crossfade-wrapper" id="tour-content-wrapper">
+        <div class="tour-chapter-badge" id="tour-badge">CHAPTER 01 · GETTING STARTED</div>
+        <h1 class="tour-chapter-title" id="tour-title">快速起步：构建、运行与初探</h1>
+        <p class="tour-lead-text" id="tour-lead">
+          从环境构建到第一个 Hello World 程序。理解 TzdLang 的设计初衷：在兼顾动态脚本开发敏捷度的同时，提供媲美 C++ 的原生执行速度。
+        </p>
+
+        <!-- Dynamic Body injected by tour.js -->
+        <div id="tour-dynamic-body"></div>
+      </div>
+    </section>
+
+    <!-- Column 3: Right Interactive Playground (460px) -->
+    <aside class="tour-playground">
+      <!-- Titlebar -->
+      <div class="playground-titlebar">
+        <div class="traffic-lights">
+          <div class="traffic-light red"></div>
+          <div class="traffic-light yellow"></div>
+          <div class="traffic-light green"></div>
+        </div>
+
+        <div class="playground-file-pill">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+          <span id="playground-file-name">01_quickstart.tzd</span>
+        </div>
+
+        <div class="playground-actions">
+          <button class="btn-pg-reset" id="btn-reset-code" title="重置为默认代码">重置</button>
+          <button class="btn-pg-run" id="btn-run-code" title="执行当前代码 (Ctrl+Enter)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>运行</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Interactive Code Editor -->
+      <div class="playground-editor-zone">
+        <div class="pg-line-numbers" id="pg-line-numbers" aria-hidden="true"></div>
+        <textarea class="pg-code-textarea" id="pg-code-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+
+      <!-- Bottom Mini Terminal: Execution Output & JIT Status Viewport -->
+      <div class="playground-terminal">
+        <div class="terminal-header">
+          <div class="terminal-tag">
+            <span class="status-dot"></span>
+            <span>TzdVM Status: Ready</span>
+          </div>
+          <span style="font-family:var(--font-mono); font-size:0.7rem; color:#52525A;">x86_64 JIT Target</span>
+        </div>
+        <pre class="terminal-screen" id="terminal-screen"></pre>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- Quick Search Modal (Cmd + K) -->
+  <div class="search-modal-backdrop" id="search-modal">
+    <div class="search-modal-box">
+      <div class="search-input-wrapper">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" class="search-input" id="search-input" placeholder="键入关键词快速跳转语法章节..." autocomplete="off">
+        <span class="kbd-shortcut">ESC</span>
+      </div>
+      <div class="search-results-list" id="search-results-list"></div>
+    </div>
+  </div>
+
+  <!-- Tour Interactive Script -->
+  <script src="assets/tour.js"></script>
+</body>
+</html>
