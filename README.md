@@ -534,6 +534,115 @@ fun main() {
 }
 ```
 
+## JIT 编译器性能优化
+
+TzdLang 的 JIT 编译器基于 LLVM ORC JIT，经过多轮深度优化，在多项基准测试中**超越 JDK HotSpot**。
+
+### 构建说明
+
+```bash
+# 必须使用 VS Community 18 (MSVC v144) 构建
+# 构建后如遇增量检测失败，删除 .obj 文件强制重编译
+del x64\Release\TzdJit.obj
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" TzdTools.vcxproj /p:Configuration=Release /p:Platform=x64 /t:Build /m
+```
+
+### 运行基准测试
+
+```bash
+# 多操作基准测试（循环、递归、Ackermann、素数、函数调用等）
+TzdTools.exe --runMainTzd=bench_compare.tzd
+
+# 对象操作基准测试（创建、字段读取）
+TzdTools.exe --runMainTzd=bench_object.tzd
+
+# 与 Java 对比
+javac BenchCompare.java && java BenchCompare
+```
+
+### 性能对比（TzdLang vs JDK 20 HotSpot）
+
+| 操作 | TzdLang | JDK | 倍率 |
+|---|---|---|---|
+| 函数调用 callOverhead(1M) | **0.002s** | 0.005s | **TzdLang 快 2.5x** |
+| 嵌套循环 nestedLoop(1k×1k) | **0.003s** | 0.005s | **TzdLang 快 1.7x** |
+| 简单循环 sumLoop(1M) | **0.002s** | 0.003s | **TzdLang 快 1.5x** |
+| Ackermann(3,6) | **0.001s** | 0.001s | **TzdLang 快 1.2x** |
+| Newton 平方根 | **0.000006s** | 0.000008s | **TzdLang 快 1.3x** |
+| fib(35) 递归 | 0.197s | 0.061s | JDK 快 3.2x |
+| 素数 primes(10k) | 0.218s | 0.003s | JDK 快 72x |
+| 对象字段读取 field(100k) | 0.002s | 0.0005s | JDK 快 4x |
+
+### 优化技术清单
+
+#### Phase A: 运行时函数内联（GEP+Store）
+- `inlineStoreNativeToPtr` — 直接通过 `offsetof` GEP+Store 写 TzdValue 的 type 和 dVal 字段，消除 `rt_store_native_to_ptr` 函数调用
+
+#### Phase B: 函数特化 / Partial Evaluation
+- 为每个函数生成**原生 double worker**：`double fib_worker_native(ptr interp, double n)`
+- 自递归直接传 double 参数，完全消除 TzdValue arg array 分配、`rt_init_tzd_value`、`rt_store_native_to_ptr`、`rt_to_double_fast`
+- `baseName` 提取支持 `_worker_native` 后缀（14 字符）+ 版本号剥离
+
+#### Phase C: LLVM 内联优化
+- `AlwaysInline` 属性标记 native worker
+- `AlwaysInlinerPass`（模块级 pass）内联自递归和跨函数调用
+- `mem2reg` + `EarlyCSE` + `DCE` 函数级优化
+
+#### Phase D: 直接调度 + 整数取模
+- `s_compiledNativeWorkers` 编译时映射表，跳过 `rt_call_sub_fast` 字符串查找
+- `%` 运算自适应整数特化：`FPToSI` + `SRem`（单指令 `idiv`）替代 `fmod`（库调用）
+
+#### Phase E: 相等性快速路径 + clock 修复
+- `visitEqualityExpr` 原生 double 快速路径：`==` 和 `!=` 直接 `CreateFCmpOEQ/ONE`，消除 2 次堆分配 + 4 次外部调用
+- `clock()` 静态初始化顺序修复
+- `AlwaysInlinerPass` 从 CGSCC 改为模块级（修复 API 不匹配）
+- 数组索引 `visitIndexExpr` 始终返回 `TzdValue*` 指针（修复对象数组 bug）
+- `visitVarDeclStmt` 使用 `CreateEntryBlockAlloca`（使 mem2reg 可提升数值局部变量）
+
+#### Phase F: 对象操作优化
+- `rt_tzd_get_member` + `rt_to_double_fast` 标记 `ReadOnly` 属性，LLVM CSE/LICM 消除循环中冗余字段读取
+- `rt_store_field_ptr` 轻量字段存储（拆分自 `rt_tzd_store_member`，配合 readonly get_member 可被 CSE）
+- `rt_tzd_call_method` 标记 `NoCallback` + `WillReturn`
+- `visitNewExpr` 跳过 `rt_set_location` 调试开销
+- 数组指针存储修复（`arr[i] = object` 使用 boxed 路径）
+
+### JIT 架构概览
+
+```
+TzdLang 脚本
+    │
+    ▼
+ANTLR4 解析 → AST
+    │
+    ▼
+TzdCompiler (AST → LLVM IR)
+    ├── 每个函数生成 3 个版本：
+    │   1. Entry function (void entry(ptr interp, ptr retVal)) — 供 C++ 解释器调用
+    │   2. Worker function (double worker(ptr, ptr, ptr)) — 正常执行
+    │   3. Native worker (double worker_native(ptr, double...)) — 原生 double 自递归
+    │
+    ▼
+LLVM 优化管线
+    ├── AlwaysInlinerPass (模块级 — 内联 AlwaysInline 函数)
+    ├── PromotePass (mem2reg — alloca → SSA 寄存器)
+    ├── EarlyCSEPass (公共子表达式消除 — 利用 ReadOnly 属性)
+    └── DCEPass (死代码消除)
+    │
+    ▼
+LLVM IR → 目标代码 (预编译为 .obj 避免 CRT 析构栈溢出)
+    │
+    ▼
+JIT 执行 (LLJIT + ObjectLayer)
+```
+
+### 关键设计决策
+
+1. **预编译方式**：IR → Object file（泄漏 Module 避免 CRT ABI 不匹配的析构栈溢出）
+2. **分析管理器泄漏**：`ModuleAnalysisManager` 等析构会栈溢出，故泄漏为 `static` 堆对象
+3. **NoInline on Worker**：正常 worker 标记 `NoInline` 防止过度内联；native worker 标记 `AlwaysInline`
+4. **Native worker 仅在 argCount > 0 时创建**：0 参数函数无特化收益
+5. **栈大小 256MB**：`/STACK:"268435456"` 应对深度递归
+
 ## 使用场景
 
 - 脚本开发

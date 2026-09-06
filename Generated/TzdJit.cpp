@@ -1035,6 +1035,16 @@ extern "C" {
         tzd_store_member_by_name(inst, name, val);
     }
 
+    // F2: Lightweight field store via pre-resolved pointer.
+    // Avoids dispatch lookup — pair with rt_tzd_get_member (readonly, CSE-able).
+    void rt_store_field_ptr(void* fieldPtr, void* val) {
+        if (!fieldPtr || !val) return;
+        TzdValue* slot = (TzdValue*)fieldPtr;
+        TzdValue* src = (TzdValue*)val;
+        TzdGarbageCollector::getInstance().writeBarrier(nullptr, slot, *slot);
+        *slot = *src;
+    }
+
     // 兼容入口。
     void rt_store_member(void* inst, const char* name, void* val) {
         TzdSelector sel = name ? tzdInternSelector(name) : 0;
@@ -1406,16 +1416,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
 
-    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
-    {
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledWorkers[base] = workerFunc;
-        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
-    }
-
     // Phase B: Create native double worker for function specialization.
     // Only for functions with parameters — 0-param functions have no benefit.
     Function* nativeWorkerFunc = nullptr;
@@ -1431,6 +1431,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             m_module.get()
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+
+    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
+    {
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledWorkers[base] = workerFunc;
+        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
     }
     s_currentNativeWorkerFunc = nativeWorkerFunc;
 
@@ -1653,16 +1663,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
 
-    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
-    {
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledWorkers[base] = workerFunc;
-        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
-    }
-
     // Phase B: Create native double worker for function specialization.
     // Only for functions with parameters — 0-param functions have no benefit.
     Function* nativeWorkerFunc = nullptr;
@@ -1678,6 +1678,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             m_module.get()
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+
+    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
+    {
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledWorkers[base] = workerFunc;
+        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
     }
     s_currentNativeWorkerFunc = nativeWorkerFunc;
 
@@ -1912,6 +1922,14 @@ void TzdCompiler::setupExternalFunctions() {
     addFunc("rt_tzd_get_member", { m_ptrTy, m_int32Ty, m_ptrTy });
     addFunc("rt_tzd_store_member", { m_ptrTy, m_int32Ty, m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_tzd_call_method", { m_ptrTy, m_int32Ty, m_ptrTy, m_int32Ty, m_ptrTy });
+    // F1: readonly on get_member enables LLVM CSE/LICM to eliminate
+    // redundant field reads in loops (same obj+selector = same result)
+    m_module->getFunction("rt_tzd_get_member")->addFnAttr(llvm::Attribute::ReadOnly);
+    // F3: help LLVM optimize method calls
+    m_module->getFunction("rt_tzd_call_method")->addFnAttr(llvm::Attribute::NoCallback);
+    m_module->getFunction("rt_tzd_call_method")->addFnAttr(llvm::Attribute::WillReturn);
+    // F2: lightweight field store via cached pointer (split from store_member)
+    addFunc("rt_store_field_ptr", { m_ptrTy, m_ptrTy }, m_voidTy);
 
     addFunc("rt_cast", { m_ptrTy, m_ptrTy });
     addFunc("rt_type_check", { m_ptrTy, m_ptrTy }, m_boolTy);
@@ -1919,6 +1937,8 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_print_newline", {}, m_voidTy);
     addFunc("rt_to_double_fast", { m_ptrTy }, m_doubleTy);
+    // readonly: enables CSE/LICM to hoist unbox calls out of loops
+    m_module->getFunction("rt_to_double_fast")->addFnAttr(llvm::Attribute::ReadOnly);
     addFunc("rt_stabilize_value", { m_ptrTy }, m_ptrTy);
     addFunc("rt_copy_value", { m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_call_sub_f1", { m_ptrTy, m_ptrTy }, m_ptrTy);
@@ -2056,16 +2076,14 @@ void TzdJitEngine::addModule(ThreadSafeModule TSM) {
                 PB.registerLoopAnalyses(*LAM);
                 PB.crossRegisterProxies(*LAM, *FAM, *CGAM, *MAM);
             }
-            // Phase C: AlwaysInliner for native workers + function passes
-            llvm::CGSCCPassManager CGPM;
-            CGPM.addPass(llvm::AlwaysInlinerPass());
+            // Phase C: AlwaysInliner (module pass) + function passes
+            llvm::ModulePassManager MPM;
+            MPM.addPass(llvm::AlwaysInlinerPass());
 
             llvm::FunctionPassManager FPM;
             FPM.addPass(llvm::PromotePass());         // mem2reg
             FPM.addPass(llvm::EarlyCSEPass(true));    // common subexpression elimination
             FPM.addPass(llvm::DCEPass());             // dead code elimination
-            llvm::ModulePassManager MPM;
-            MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(std::move(CGPM)));
             MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
             MPM.run(*M, *MAM);
             MPM.run(*M, *MAM);
@@ -2167,6 +2185,7 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_store_member", (void*)&rt_store_member);
     bind("rt_tzd_store_member", (void*)&rt_tzd_store_member);
     bind("rt_tzd_call_method", (void*)&rt_tzd_call_method);
+    bind("rt_store_field_ptr", (void*)&rt_store_field_ptr);
     bind("rt_cast", (void*)&rt_cast);
     bind("rt_type_check", (void*)&rt_type_check);
     bind("rt_call_super", (void*)&rt_call_super);
@@ -2819,6 +2838,21 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
             return boxedRhs;
         }
 
+        // If rhs is a pointer (object/string), use boxed store path
+        if (rhs->getType()->isPointerTy()) {
+            Value* boxedIndex = boxToTzdValue(index_raw);
+            Value* boxedRhs = boxToTzdValue(rhs);
+            if (isCompound) {
+                Value* oldBoxed = m_builder.CreateCall(getRtFunc("rt_get_index"), { container, boxedIndex });
+                const char* opFn = opText == "+=" ? "rt_op_add" :
+                    opText == "-=" ? "rt_op_sub" :
+                    opText == "*=" ? "rt_op_mul" : "rt_op_div";
+                boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { oldBoxed, boxedRhs });
+            }
+            m_builder.CreateCall(getRtFunc("rt_store_index"), { container, boxedIndex, boxedRhs });
+            return boxedRhs;
+        }
+
         // native double 路径：计算新值
         Value* nativeRhs = castToNativeDouble(rhs);
         Value* newVal = nativeRhs;
@@ -2855,16 +2889,16 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
         Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
         TzdSelector sel = internSelectorConstant(memberName);
         Value* boxedRhs = boxToTzdValue(rhs);
+        // F2: Split store into get_field_ptr (readonly, CSE-able) + store_field_ptr
+        Value* fieldPtr = m_builder.CreateCall(getRtFunc("rt_tzd_get_member"),
+            { obj, m_builder.getInt32((int32_t)sel), nameStr });
         if (isCompound) {
-            Value* oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_member"),
-                { obj, m_builder.getInt32((int32_t)sel), nameStr });
             const char* opFn = opText == "+=" ? "rt_op_add" :
                 opText == "-=" ? "rt_op_sub" :
                 opText == "*=" ? "rt_op_mul" : "rt_op_div";
-            boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { oldVal, boxedRhs });
+            boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { fieldPtr, boxedRhs });
         }
-        m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
-            { obj, m_builder.getInt32((int32_t)sel), nameStr, boxedRhs });
+        m_builder.CreateCall(getRtFunc("rt_store_field_ptr"), { fieldPtr, boxedRhs });
         return boxedRhs;
     }
 
@@ -2963,10 +2997,7 @@ std::any TzdCompiler::visitPrintFunExpr(TzdLangParser::PrintFunExprContext* ctx)
 }
 
 std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
-    m_builder.CreateCall(getRtFunc("rt_set_location"), {
-        m_builder.getInt32(ctx->getStart()->getLine()),
-        m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
-        });
+    // F4: Skip rt_set_location for performance — only needed for error reporting
     std::string className = ctx->qualifiedName()->getText();
     Value* name = m_builder.CreateGlobalStringPtr(className);
 
@@ -3184,24 +3215,11 @@ std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext* ctx) {
     Value* container = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* index_raw = std::any_cast<Value*>(visit(ctx->expression(1)));
 
-    // 路径 A：常量整数索引 → rt_get_index_native_d(container, const_int) → double
-    if (auto* constFP = llvm::dyn_cast<llvm::ConstantFP>(index_raw)) {
-        int idx = (int)constFP->getValueAPF().convertToDouble();
-        return (Value*)m_builder.CreateCall(
-            getRtFunc("rt_get_index_native_d"),
-            { container, m_builder.getInt32(idx) }
-        );
-    }
-
-    // 路径 B：native double 变量索引 → rt_get_index_native_d_dyn(container, double) → double
-    if (index_raw->getType()->isDoubleTy()) {
-        return (Value*)m_builder.CreateCall(
-            getRtFunc("rt_get_index_native_d_dyn"),
-            { container, index_raw }
-        );
-    }
-
-    // 路径 C：原有 boxed 路径（字符串 key 等）
+    // Always use boxed path (rt_get_index) — returns TzdValue* pointer.
+    // This is correct for both numeric arrays and object arrays.
+    // The native double paths (rt_get_index_native_d) were incorrect for
+    // object arrays because they read dVal (0.0 for objects, not the pointer).
+    // Callers that need a double use inlineToDoubleFast/castToNativeDouble.
     Value* boxedIndex = boxToTzdValue(index_raw);
     return (Value*)m_builder.CreateCall(getRtFunc("rt_get_index"), { container, boxedIndex });
 }
@@ -3394,6 +3412,14 @@ std::any TzdCompiler::visitRelationalExpr(TzdLangParser::RelationalExprContext* 
 std::any TzdCompiler::visitEqualityExpr(TzdLangParser::EqualityExprContext* ctx) {
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
+
+    // Native double fast path: direct fcmp, zero heap alloc, zero external calls
+    if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy()) {
+        if (ctx->EEQ()) return std::any((Value*)m_builder.CreateFCmpOEQ(L, R, "eqtmp"));
+        else            return std::any((Value*)m_builder.CreateFCmpONE(L, R, "netmp"));
+    }
+
+    // Fallback: boxed path for string/object comparison
     Value* boxedL = boxToTzdValue(L);
     Value* boxedR = boxToTzdValue(R);
     const char* func = ctx->EEQ() ? "rt_op_eq" : "rt_op_ne";

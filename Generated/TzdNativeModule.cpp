@@ -615,7 +615,7 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
     reg("time", [](auto args) { return TzdValue((double)std::time(nullptr)); });
     reg("clock", [](auto args) {
         auto now = std::chrono::high_resolution_clock::now();
-        static const auto start_time = std::chrono::high_resolution_clock::now();
+        static const auto start_time = now;
         std::chrono::duration<double, std::milli> ms_duration = now - start_time;
         return TzdValue(ms_duration.count());
         });

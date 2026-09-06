@@ -6,6 +6,7 @@
 #include <iostream>
 #include <atomic>
 #include <cstring>
+#include <windows.h>
 
 #include "TzdCommandSystem.h"
 
@@ -191,6 +192,11 @@ void InitHook() {
 
 
 int main(int argc, char* argv[]) {
+    // Fix console encoding: output UTF-8 for correct Chinese display
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
     // InitHook();  // Temporarily disabled for testing
     TzdCommandSystem system;
     system.start(argc, argv);
