@@ -6,6 +6,7 @@
 #include "TzdInterpreter.h"
 #include "TzdJit.h"
 #include "TzdBytecodeJIT.h"
+#include "TzdOop.h"
 #include <iostream>
 
 // ============================================================================
@@ -135,15 +136,14 @@ void TzdTieringEngine::workerLoop() {
 }
 
 void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
-    // Background compilation: call the interpreter's thread-safe compile method.
-    // This creates an independent LLVMContext, compiles the function, and
-    // adds the module to the JIT engine (LLJIT serializes addModule internally).
-    // The result pointer is stored in TzdBytecodeJIT's thread-safe map.
+    // Background compilation for free functions AND class methods.
+    // For free functions: search interpreter scopes for funcBody/params.
+    // For class methods: search class definitions, prepend "this" to params.
 
-    // Search for the function in the interpreter's scopes to get funcBody/params
-    // (read-only access — parse tree is immutable during execution)
+    // Try free function first (search interpreter scopes)
     TzdLangParser::BlockContext* funcBody = nullptr;
     std::vector<std::string> params;
+    std::string compileName = task.funcName;
 
     if (task.interp) {
         for (auto& scope : task.interp->scopes) {
@@ -159,15 +159,33 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
         }
     }
 
-    if (!funcBody) return;
+    // If not found in scopes, try class method (ClassName_MethodName)
+    if (!funcBody) {
+        size_t sep = task.funcName.find('_');
+        if (sep != std::string::npos && sep > 0) {
+            std::string className = task.funcName.substr(0, sep);
+            std::string methodName = task.funcName.substr(sep + 1);
+            TzdClassDef* cls = TzdOopManager::getClass(className);
+            if (cls && cls->methods.count(methodName)) {
+                ClassMethod& m = cls->methods[methodName];
+                if (m.body) {
+                    funcBody = m.body;
+                    // Prepend "this" — methods access instance via rt_get_arg(0)
+                    params.push_back("this");
+                    for (auto& p : m.params) params.push_back(p);
+                }
+            }
+        }
+    }
+
+    if (!funcBody || !task.interp) return;
 
     // Compile in the background (thread-safe, independent LLVMContext)
     void* jitPtr = task.interp->compileFunctionInBackground(
-        task.funcName, funcBody, params);
+        compileName, funcBody, params);
 
     if (jitPtr) {
-        // Store in TzdBytecodeJIT's thread-safe map so the main thread
-        // picks it up on the next onFunctionCall
+        // Store in TzdBytecodeJIT's thread-safe map
         TzdBytecodeJIT::getInstance().storeJittedPtr(task.funcName, jitPtr);
     }
 }
