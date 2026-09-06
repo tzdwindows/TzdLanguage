@@ -29,30 +29,15 @@ class TzdClassDef;
  */
 class TzdJitEngine {
 public:
-    // ????/????
     TzdJitEngine();
     ~TzdJitEngine();
-
-    // ??????????????? rt_create_num ???
     void registerRuntimeSymbols();
-
-    // ???????? ThreadSafeModule ????? JIT??????????
     void addModule(llvm::orc::ThreadSafeModule TSM);
-
-    // ?????????????????? raw Module??????? ThreadSafeModule ?? move??
     void jitModule(std::unique_ptr<llvm::Module> M);
-
-    // ?? symbol?????? llvm::Expected???????????????????
     llvm::Expected<llvm::orc::ExecutorAddr>
         lookupSymbol(const std::string& name);
-
-    // ??? wrapper????????????????????????? nullptr??
     void* lookupSymbolAsPtr(const std::string& name);
-
-    // ??????????? LLVMContext ??????? ThreadSafeContext ?????
     llvm::LLVMContext& getContext();
-
-    // ?? Compiler ???????? ThreadSafeContext ????
     llvm::orc::ThreadSafeContext& getThreadSafeContext();
 
     // Register worker pointer for on-demand compiled functions (TCO support)
@@ -61,26 +46,16 @@ public:
     // DataLayout / Triple
     const llvm::DataLayout& getDataLayout() const;
     std::string getTargetTriple() const;
-
-    // ????????????? API ??????
-    // ?????????????????????? (?????? void(*)(void*,void*) ?????)
     void executeFunction(const std::string& name, void* interp = nullptr, void* retVal = nullptr);
 
 private:
-    // ????? LLJIT??ThreadSafeContext
     void initLLJIT();
 
 private:
-    // ???????? LLJIT ???
     std::unique_ptr<llvm::orc::LLJIT> m_lljit;
-
-    // ??????????? ThreadSafeContext???????????????????
     llvm::orc::ThreadSafeContext m_tsc;
 };
 
-/**
- * TzdCompiler: ??????? AST ?????? LLVM IR
- */
 class TzdCompiler : public TzdLangBaseVisitor {
 public:
     TzdCompiler(TzdJitEngine& jit, const std::string& moduleName);
@@ -108,18 +83,17 @@ public:
 
      llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Type* Ty, const std::string& Name, llvm::Value* ArraySize);
 
-    void compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx);
     void compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName);
+    void compileNamedFunction(TzdLangParser::BlockContext* block, const std::vector<std::string>& paramNames, const std::string& internalName);
+    void compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx);
     void compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx, const std::string& internalName);
     void compileConstructor(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::ConstructorDeclContext* ctorCtx, const std::string& internalName);
     void compileNamedFunction(TzdLangParser::FunctionDeclarationContext* ctx, const std::string& internalName);
 
-    // ??????????????? (rt_...) ?????
     void setupExternalFunctions();
     llvm::Function* getRtFunc(const std::string& name);
     llvm::orc::ThreadSafeModule extractThreadSafeModule();
     llvm::Value* boxToTzdValue(llvm::Value* val);
-    // --- ???? ANTLR Visitor ???? ---
 
     virtual std::any visitProgram(TzdLangParser::ProgramContext* ctx) override;
     virtual std::any visitFunctionDeclaration(TzdLangParser::FunctionDeclarationContext* ctx) override;
@@ -200,9 +174,8 @@ private:
     llvm::Type* m_int32Ty;
     llvm::StructType* m_tzdValueTy;
 
-    // ???????????????????? C++ ??????????????????
-    const int TYPE_FIELD_INDEX = 1; // annotations ?? 0, type ?? 1
-    const int DVAL_INDEX = 3;       // name ?? 2, dVal ?? 3
+    const int TYPE_FIELD_INDEX = 1;
+    const int DVAL_INDEX = 3;
 
     std::unordered_map<std::string, llvm::Value*> m_nativeDoubleLocals;
     std::unordered_set<std::string> m_declaredLocals;
@@ -219,13 +192,8 @@ private:
     bool emitMemberIncDec(llvm::Value*& result, TzdLangParser::ExpressionContext* lhsCtx, bool isInc, bool isPrefix);
 
 private:
-    // 【新增】当前正在编译的类定义，用于 JIT 原生字段访问
     TzdClassDef* m_currentClassDef = nullptr;
     std::unordered_map<std::string, int> m_currentClassFieldMap;
-
-    // 【tzd selector dispatch】编译期将成员名内联为常量 TzdSelector（i32），
-    // 消除成员读/写热路径的字符串查找。m_selectorIds 仅缓存本编译器实例内
-    // 已解析的映射，真正进程级唯一性由 tzdInternSelector 保证。
     TzdSelector internSelectorConstant(const std::string& name);
     std::unordered_map<std::string, TzdSelector> m_selectorIds;
 };

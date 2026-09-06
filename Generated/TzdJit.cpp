@@ -1817,6 +1817,164 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     m_currentRetPtr = nullptr;
 }
 
+// Overload for bytecode JIT bridge: takes param names as a vector<string>
+// instead of ParamListContext, so we can compile from TzdValue::funcBody + params.
+void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
+                                       const std::vector<std::string>& paramNames,
+                                       const std::string& internalName) {
+    int argCount = (int)paramNames.size();
+
+    // 1. Worker 内部函数返回类型为 m_doubleTy
+    std::vector<Type*> workerArgs = { m_ptrTy, m_ptrTy, m_ptrTy };
+    Function* workerFunc = Function::Create(
+        FunctionType::get(m_doubleTy, workerArgs, false),
+        Function::ExternalLinkage,
+        internalName + "_worker",
+        m_module.get()
+    );
+    workerFunc->addFnAttr(llvm::Attribute::NoInline);
+    s_currentWorkerFunc = workerFunc;
+
+    // Phase B: Create native double worker for function specialization.
+    Function* nativeWorkerFunc = nullptr;
+    if (argCount > 0) {
+        std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
+        for (int i = 0; i < argCount; ++i) {
+            nativeWorkerArgs.push_back(m_doubleTy);
+        }
+        nativeWorkerFunc = Function::Create(
+            FunctionType::get(m_doubleTy, nativeWorkerArgs, false),
+            Function::ExternalLinkage,
+            internalName + "_worker_native",
+            m_module.get()
+        );
+        nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+
+    // Register worker for direct call optimization
+    {
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledWorkers[base] = workerFunc;
+        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
+    }
+    s_currentNativeWorkerFunc = nativeWorkerFunc;
+
+    // 2. Entry returns void for external C++ interpreter calls
+    std::vector<Type*> entryArgs = { m_ptrTy, m_ptrTy };
+    Function* entryFunc = Function::Create(
+        FunctionType::get(m_voidTy, entryArgs, false),
+        Function::ExternalLinkage,
+        internalName,
+        m_module.get()
+    );
+
+    BasicBlock* entryBB = BasicBlock::Create(m_context, "entry", entryFunc);
+    m_builder.SetInsertPoint(entryBB);
+    Value* interp = entryFunc->getArg(0);
+    Value* retVal = entryFunc->getArg(1);
+    Value* argsArray = CreateEntryBlockAlloca(m_tzdValueTy, m_builder.getInt32(argCount > 0 ? argCount : 1), "entry_args");
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_init_tzd_value"), { argsArray, m_builder.getInt32(argCount) });
+        for (int i = 0; i < argCount; ++i) {
+            Value* argRaw = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i) });
+            Value* destPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
+            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { destPtr, argRaw });
+        }
+    }
+    m_builder.CreateCall(workerFunc, { interp, retVal, argsArray });
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+    }
+    m_builder.CreateRetVoid();
+
+    BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
+    m_builder.SetInsertPoint(workerEntryBB);
+
+    m_namedValues.clear();
+    m_nativeDoubleLocals.clear();
+    m_declaredLocals.clear();
+    s_currentFuncParamNames.clear();
+
+    this->m_currentRetPtr = workerFunc->getArg(1);
+    Value* workerArgsArray = workerFunc->getArg(2);
+
+    BasicBlock* bodyBB = BasicBlock::Create(m_context, "body", workerFunc);
+    s_tailRecurseBB = bodyBB;
+
+    for (int i = 0; i < argCount; ++i) {
+        const std::string& pName = paramNames[i];
+        s_currentFuncParamNames.push_back(pName);
+        m_declaredLocals.insert(pName);
+
+        Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, workerArgsArray, m_builder.getInt32(i));
+
+        AllocaInst* boxedAlloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, pName);
+        m_builder.CreateStore(argPtr, boxedAlloc);
+        m_namedValues[pName] = boxedAlloc;
+
+        Value* nativeVal = inlineToDoubleFast(argPtr);
+        AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+        m_builder.CreateStore(nativeVal, nativeAlloc);
+        m_nativeDoubleLocals[pName] = nativeAlloc;
+    }
+
+    m_builder.CreateBr(bodyBB);
+    m_builder.SetInsertPoint(bodyBB);
+
+    visit(block);
+
+    if (!m_builder.GetInsertBlock()->getTerminator()) {
+        Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
+        m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
+        m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+    }
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
+
+    // Phase B: Compile native worker body
+    if (argCount > 0 && nativeWorkerFunc) {
+        BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
+        m_builder.SetInsertPoint(nativeEntryBB);
+
+        m_namedValues.clear();
+        m_nativeDoubleLocals.clear();
+        m_declaredLocals.clear();
+        s_currentFuncParamNames.clear();
+
+        m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+
+        BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
+        s_tailRecurseBB = nativeBodyBB;
+
+        for (int i = 0; i < argCount; ++i) {
+            const std::string& pName = paramNames[i];
+            s_currentFuncParamNames.push_back(pName);
+            m_declaredLocals.insert(pName);
+
+            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+            m_builder.CreateStore(nativeWorkerFunc->getArg(i + 1), nativeAlloc);
+            m_nativeDoubleLocals[pName] = nativeAlloc;
+        }
+
+        m_builder.CreateBr(nativeBodyBB);
+        m_builder.SetInsertPoint(nativeBodyBB);
+
+        visit(block);
+
+        if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+        }
+    }
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    m_currentRetPtr = nullptr;
+}
+
 
 void TzdJitEngine::executeFunction(const std::string& name, void* interp, void* retVal) {
     auto symOrErr = lookupSymbol(name);
@@ -3940,19 +4098,3 @@ llvm::Value* TzdCompiler::boxDouble(llvm::Value* nativeVal) {
     if (nativeVal->getType()->isPointerTy()) return nativeVal;
     return m_builder.CreateCall(getRtFunc("rt_create_num"), { nativeVal });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

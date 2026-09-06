@@ -86,26 +86,26 @@ struct LastPlotState {
 
 struct TzdValue {
     enum Type {
-        NONE,           // null / void
-        SBYTE, BYTE,    // 8?? ??????/????? (char/byte)
-        SHORT, USHORT,  // 16??
-        INT, UINT,      // 32??
-        LONG, ULONG,    // 64?? (int64/uint64)
-        FLOAT, DOUBLE,  // ???? (float32/64)
-        BOOL,           // ????
-        STRING,         // ?????
-        POINTER,        // ????? (void*)
-        ARRAY,          // ???? / ????
-        MAP,            // ??? / ???????? (????)
-        FUNCTION,       // ??????????
-        NATIVE_FUNCTION,// C++ ??????
-        CLASS_DEF,      // ???? (?????)
-        INSTANCE,       // ???????
-        ENUM_VAL,       // ????
-        ERROR_VAL,      // ???????? (???? Go ?? error)
-        FUTURE,         // ????? / Promise (????)
-        ANY_REF,        // ??????????? (std::any)
-        TENSOR          // PyTorch tensor (auto-managed VRAM lifecycle)
+        NONE,            // Null / void / uninitialized
+        SBYTE, BYTE,     // 8-bit signed / unsigned integer (char / uint8)
+        SHORT, USHORT,   // 16-bit signed / unsigned integer (int16 / uint16)
+        INT, UINT,       // 32-bit signed / unsigned integer (int32 / uint32)
+        LONG, ULONG,     // 64-bit signed / unsigned integer (int64 / uint64)
+        FLOAT, DOUBLE,   // Floating-point number (float32 / float64)
+        BOOL,            // Boolean flag (true / false)
+        STRING,          // String literal or dynamic text
+        POINTER,         // Raw memory pointer (void*)
+        ARRAY,           // Array / sequential dynamic list
+        MAP,             // Hash map / dictionary (associative container)
+        FUNCTION,        // User-defined / bytecode function
+        NATIVE_FUNCTION, // Native C/C++ host callback function
+        CLASS_DEF,       // Class definition / prototype metadata
+        INSTANCE,        // Class object instance
+        ENUM_VAL,        // Enumeration variant / constant value
+        ERROR_VAL,       // Error object or status (similar to Go error)
+        FUTURE,          // Asynchronous Future / Promise handle
+        ANY_REF,         // Generic type-erased reference (std::any wrapper)
+        TENSOR           // PyTorch tensor (auto-managed VRAM lifecycle)
     };
     std::vector<std::string> annotations;
     Type type = NONE;
@@ -119,7 +119,7 @@ struct TzdValue {
     bool bVal = false;
 
     std::vector<TzdValue> arrVal;
-    std::unordered_map<std::string, TzdValue> mapVal; // ??? var m = { "key": 1 };
+    std::unordered_map<std::string, TzdValue> mapVal;
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
@@ -138,9 +138,6 @@ struct TzdValue {
     TzdValue(TzdClassDef* c) : type(CLASS_DEF), classDefVal(c) {}
     TzdValue(TzdInstance* i);
 
-    // 引用计数拷贝控制（定义见 TzdInterpreter.cpp）：
-    // 仅在 instanceVal 非空时 retain/release，与 type 无关——因为方法绑定值
-    // (type=FUNCTION/NATIVE_FUNCTION) 也会持有 instanceVal 作为 receiver。
     TzdValue(const TzdValue& o);
     TzdValue(TzdValue&& o) noexcept;
     TzdValue& operator=(const TzdValue& o);
@@ -183,17 +180,17 @@ struct TzdValue {
         return ev;
     }
     std::string jitInternalName;
-    std::vector<double> nativeArr;  // ?? arrVal ????
-    bool isNativeDoubleArr = false; // ????????? double ????
+    std::vector<double> nativeArr;  // Backing storage for unboxed double array (performance fast-path)
+    bool isNativeDoubleArr = false; // Flag indicating if current array is a specialized native double array
     void (*jittedPtr)(void*, void*) = nullptr;
 };
 
-// 释放池槽位中残留的实例引用（定义见 TzdInterpreter.cpp）。
-// 用 out-of-line 助手避免 next() 内联体在此要求 TzdInstance 完整类型——
-// TzdOop.cpp 经循环 include 编译时 TzdInstance 尚未定义。
+// Release the remaining instance references in the pool slot (refer to TzdInterpreter.cpp for details).
+// Use out-of-line helpers to avoid inlining of next() in this case where the complete type of TzdInstance is required -
+// TzdOop.cpp is compiled with circular includes and TzdInstance is not yet defined.
 void tzdPoolSlotReleaseInstance(TzdValue* v);
 
-// 栈溢出检测（定义见 TzdInterpreter.cpp），解释器与 JIT 调用桥共用
+// Stack overflow detection (defined in TzdInterpreter.cpp) is shared by the interpreter and the JIT call bridge.
 bool tzdStackNearOverflow();
 
 struct JitValuePool {
@@ -206,7 +203,7 @@ struct JitValuePool {
         size_t next_cursor = (cursor + 1) & (POOL_SIZE - 1);
         TzdValue* v = &storage[cursor];
         cursor = next_cursor;
-        // 复用槽位前先释放上一个实例引用——JIT 热路径泄漏拦截点
+        // Before reusing the slot, release the reference of the previous instance - the interception point for JIT hot path leaks
         tzdPoolSlotReleaseInstance(v);
         [[unlikely]] if (v->type >= TzdValue::STRING) {
             switch (v->type) {
@@ -451,9 +448,6 @@ public:
     static bool valuesEqual(const TzdValue& l, const TzdValue& r);
     static std::string getAsString(std::any value);
 
-    /**
-    * ????????????????????????????????
-    */
     void compileCurrentContext();
 
     void* trackJitValue(TzdValue* ptr) {

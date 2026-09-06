@@ -176,7 +176,10 @@ bool TzdInterpreter::compileToBytecodeFile(const std::string& code, const std::s
 }
 
 bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
-    // Disable JIT during bytecode execution — the bytecode VM IS the fast path.
+    // m_noJit prevents EAGER JIT compilation (all functions compiled upfront).
+    // The on-demand bytecode JIT bridge (TzdBytecodeJIT) still works:
+    // tryJitCompile bypasses m_noJit, and callFunction/callScriptFunction
+    // execute already-compiled functions regardless of m_noJit.
     bool savedNoJit = m_noJit;
     m_noJit = true;
 
@@ -209,7 +212,12 @@ bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
                     dynamic_cast<TzdLangParser::EnumDeclStmtContext*>(stmt) ||
                     dynamic_cast<TzdLangParser::AnnotationDeclStmtContext*>(stmt) ||
                     dynamic_cast<TzdLangParser::ImportStmtContext*>(stmt) ||
-                    dynamic_cast<TzdLangParser::NativeFunDeclStmtContext*>(stmt)) {
+                    dynamic_cast<TzdLangParser::NativeFunDeclStmtContext*>(stmt) ||
+                    dynamic_cast<TzdLangParser::FunDeclStmtContext*>(stmt)) {
+                    // Visiting function declarations stores them in scopes with
+                    // funcBody + params, enabling the on-demand JIT bridge to
+                    // find and compile hot functions during bytecode execution.
+                    // m_noJit=true prevents eager JIT compilation here.
                     visit(stmt);
                 }
             }
@@ -1308,7 +1316,9 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     }
 
     // --- 分支 C: JIT 机器码执行 (如果已生成机器码且未被禁用，最高优先级直接执行) ---
-    if (!m_noJit && func.jittedPtr && !TzdDebugger::g_DebugActive) {
+    // Note: m_noJit blocks EAGER compilation, but if jittedPtr is already set
+    // (by tryJitCompile/bytecode JIT bridge), we should use it regardless.
+    if (func.jittedPtr && !TzdDebugger::g_DebugActive) {
         return callScriptFunction(func.name, func.params, func.paramTypes,
             func.funcBody, func.jittedPtr, func.instanceVal, args,
             func.sourceFile, func.line);
@@ -3536,8 +3546,73 @@ std::any TzdInterpreter::visitNullExpr(TzdLangParser::NullExprContext* ctx) {
     return TzdValue();
 }
 
-// 2. 实现 tryJitCompile
+// 2. 实现 tryJitCompile: on-demand JIT compilation for hot bytecode functions.
+// Creates a fresh TzdCompiler, compiles the function's AST body to LLVM IR,
+// adds the module to the JIT engine, and sets funcVal.jittedPtr.
 void TzdInterpreter::tryJitCompile(TzdValue& funcVal) {
+    if (!m_jitEngine || !funcVal.funcBody || funcVal.type != TzdValue::FUNCTION) return;
+    if (funcVal.jittedPtr) return; // Already compiled
+
+    // Generate a unique internal name matching visitFunctionDeclaration's
+    // convention (funcName_vN) so version-stripping yields the user-visible
+    // name, enabling rt_get_worker_ptr and s_compiledWorkers to find it.
+    std::string internalName = funcVal.name + "_v" + std::to_string(m_funcVersion++);
+
+    // Save and restore global state so compilation doesn't corrupt the
+    // interpreter's current JIT module (if any pending functions exist).
+    auto savedCompiler = std::move(m_compiler);
+    auto savedPending = std::move(m_pendingJitFunctions);
+    auto savedJitMap = std::move(m_jitNameToUserMap);
+
+    // Create a fresh compiler for this single function
+    m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "BCJit_" + internalName);
+    m_compiler->setupExternalFunctions();
+
+    // Set g_CurrentInterpreter so nested function registrations work
+    auto* savedGlobalInterp = g_CurrentInterpreter;
+    g_CurrentInterpreter = this;
+
+    bool compileOk = false;
+    try {
+        m_compiler->compileNamedFunction(funcVal.funcBody, funcVal.params, internalName);
+        compileOk = true;
+    } catch (...) {
+        compileOk = false;
+    }
+
+    g_CurrentInterpreter = savedGlobalInterp;
+
+    if (!compileOk) {
+        // Restore saved state
+        m_compiler = std::move(savedCompiler);
+        m_pendingJitFunctions = std::move(savedPending);
+        m_jitNameToUserMap = std::move(savedJitMap);
+        return;
+    }
+
+    // Extract module and add to JIT engine (triggers LLVM compilation)
+    auto TSM = m_compiler->extractThreadSafeModule();
+    if (TSM) {
+        m_jitEngine->addModule(std::move(TSM));
+    }
+
+    // Look up the compiled symbol and link it to funcVal
+    auto symOrErr = m_jitEngine->lookupSymbol(internalName);
+    if (symOrErr) {
+        void* addr = reinterpret_cast<void*>(symOrErr->getValue());
+        funcVal.jittedPtr = reinterpret_cast<void(*)(void*, void*)>(addr);
+        funcVal.jitInternalName = internalName;
+
+        // Register worker pointer for TCO cross-function calls
+        m_jitEngine->registerWorkerForSymbol(internalName);
+    } else {
+        llvm::consumeError(symOrErr.takeError());
+    }
+
+    // Restore saved JIT state (the fresh compiler is discarded)
+    m_compiler = std::move(savedCompiler);
+    m_pendingJitFunctions = std::move(savedPending);
+    m_jitNameToUserMap = std::move(savedJitMap);
 }
 
 static double GetAsDouble(TzdValue* v) {

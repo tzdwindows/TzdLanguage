@@ -4,6 +4,7 @@
 // ============================================================================
 
 #include "TzdBytecode.h"
+#include "TzdBytecodeJIT.h"
 #include <iostream>
 #include <fstream>
 #include <cmath>
@@ -1831,8 +1832,26 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             case OpCode::CALL_FUNC: {
                 const std::string& name = module.constants[instr.arg1].sVal;
                 int argc = instr.arg2;
-                auto it = module.funcIndex.find(name);
                 TzdValue r;
+
+                // On-demand JIT bridge: compile hot bytecode functions to native.
+                // onFunctionCall increments call count and may trigger tryJitCompile.
+                if (m_interp) {
+                    void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, name, m_interp);
+                    if (jitPtr) {
+                        // JIT-compiled: route through callFunction for proper
+                        // arg frame setup, scope management, and exception handling.
+                        std::vector<TzdValue> callArgs(argc);
+                        for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
+                        TzdValue fv = m_interp->getVariable(name, nullptr);
+                        r = m_interp->callFunction(fv, callArgs);
+                        m_stack.push_back(std::move(r));
+                        ++ip;
+                        break;
+                    }
+                }
+
+                auto it = module.funcIndex.find(name);
                 if (it != module.funcIndex.end()) {
                     if ((int)m_stack.size() - (int)stackBase >= argc) {
                         size_t argsStart = m_stack.size() - argc;
