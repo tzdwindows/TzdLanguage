@@ -731,6 +731,10 @@ function loadChapter(chapterId) {
   document.querySelectorAll(".catalog-nav-item").forEach((item) => {
     if (item.getAttribute("data-chapter") === chapterId) {
       item.classList.add("active");
+      // Horizontal swipeable track auto-centering on mobile/tablet
+      if (window.innerWidth <= 1024) {
+        item.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      }
     } else {
       item.classList.remove("active");
     }
@@ -745,7 +749,16 @@ function loadChapter(chapterId) {
       document.getElementById("tour-badge").textContent = chapter.badge;
       document.getElementById("tour-title").textContent = chapter.title;
       document.getElementById("tour-lead").textContent = chapter.lead;
-      document.getElementById("tour-dynamic-body").innerHTML = chapter.htmlContent;
+      
+      // Inject body + mobile interactive run trigger
+      document.getElementById("tour-dynamic-body").innerHTML = 
+        chapter.htmlContent + 
+        `<div style="text-align:center; margin:2rem 0 1rem;">
+           <button class="btn-jump-to-playground" onclick="switchToPlaygroundTab()">
+             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+             <span>在实验台中执行此范例 ⚡</span>
+           </button>
+         </div>`;
 
       contentWrapper.classList.remove("fade-out");
     }, 100);
@@ -843,9 +856,10 @@ function initPlaygroundControls() {
 function initSearchModal() {
   const modal = document.getElementById("search-modal");
   const triggerBtn = document.getElementById("search-trigger-btn");
+  const mobileTrigger = document.getElementById("mobile-search-btn");
   const searchInput = document.getElementById("search-input");
   const resultsContainer = document.getElementById("search-results-list");
-  if (!modal || !triggerBtn || !searchInput || !resultsContainer) return;
+  if (!modal || !searchInput || !resultsContainer) return;
 
   const openModal = () => {
     modal.classList.add("open");
@@ -858,7 +872,8 @@ function initSearchModal() {
     modal.classList.remove("open");
   };
 
-  triggerBtn.addEventListener("click", openModal);
+  if (triggerBtn) triggerBtn.addEventListener("click", openModal);
+  if (mobileTrigger) mobileTrigger.addEventListener("click", openModal);
 
   modal.addEventListener("click", (e) => {
     if (e.target === modal) closeModal();
@@ -919,7 +934,42 @@ function initSearchModal() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Lifecycle Initialization
+// 5. Mobile Mode Segmented Switcher (Guide vs Playground)
+// ---------------------------------------------------------------------------
+function initMobileTabs() {
+  const tabBtns = document.querySelectorAll(".mobile-tab-btn");
+  const workspace = document.getElementById("tour-workspace");
+  if (!tabBtns.length || !workspace) return;
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetTab = btn.getAttribute("data-tab");
+      tabBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      if (targetTab === "playground") {
+        workspace.classList.add("mobile-mode-playground");
+      } else {
+        workspace.classList.remove("mobile-mode-playground");
+      }
+    });
+  });
+}
+
+// Global helper to switch to playground from anywhere (e.g. guide buttons)
+window.switchToPlaygroundTab = function() {
+  const playgroundTabBtn = document.querySelector('.mobile-tab-btn[data-tab="playground"]');
+  if (playgroundTabBtn && window.innerWidth <= 1024) {
+    playgroundTabBtn.click();
+  }
+  const runBtn = document.getElementById("btn-run-code");
+  if (runBtn) {
+    runBtn.click();
+  }
+};
+
+// ---------------------------------------------------------------------------
+// 6. Lifecycle Initialization
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
   // Bind Catalog Navigation Items
@@ -930,9 +980,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Init Playground & Search
+  // Init Playground, Search, & Mobile Tabs
   initPlaygroundControls();
   initSearchModal();
+  initMobileTabs();
 
   // Load first chapter
   loadChapter("01_quickstart");
@@ -942,3 +993,4 @@ document.addEventListener("DOMContentLoaded", () => {
     window.lucide.createIcons();
   }
 });
+

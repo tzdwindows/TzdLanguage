@@ -835,23 +835,126 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   Responsive Adaptations
+   Mobile View Switcher & Action Styles
    -------------------------------------------------------------------------- */
-@media (max-width: 1200px) {
-  .tour-workspace {
-    flex-direction: column;
-    overflow-y: auto;
-    height: auto;
+.mobile-search-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: all 0.15s ease;
+}
+
+.mobile-search-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-glass);
+}
+
+.mobile-view-tabs {
+  display: none; /* Only active on screens <= 1024px */
+  background: rgba(10, 12, 18, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.45rem 1rem;
+  gap: 0.5rem;
+  z-index: 90;
+}
+
+.mobile-tab-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.mobile-tab-btn.active {
+  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-tab-btn.active svg {
+  color: #38BDF8;
+}
+
+.tab-indicator-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #34D399;
+  box-shadow: 0 0 6px #34D399;
+}
+
+.btn-jump-to-playground {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding: 0.65rem 1.15rem;
+  border-radius: 9999px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38BDF8;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-jump-to-playground:hover {
+  background: rgba(56, 189, 248, 0.22);
+  transform: translateY(-1px);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Adaptations (Tablet & Mobile)
+   -------------------------------------------------------------------------- */
+@media (max-width: 1024px) {
+  .mobile-view-tabs {
+    display: flex;
   }
 
+  .tour-workspace {
+    flex-direction: column;
+    height: calc(100dvh - var(--nav-height) - 49px);
+    overflow: hidden;
+  }
+
+  /* Catalog: Horizontal iOS Pill Track */
   .tour-catalog {
     width: 100%;
+    flex-shrink: 0;
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
     flex-direction: row;
     overflow-x: auto;
     white-space: nowrap;
-    padding: 0.5rem 1rem;
+    padding: 0.45rem 0.85rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    gap: 0.45rem;
+    background: rgba(11, 13, 19, 0.92);
+  }
+
+  .tour-catalog::-webkit-scrollbar {
+    display: none;
   }
 
   .catalog-group-title {
@@ -860,31 +963,59 @@ button {
 
   .catalog-group {
     flex-direction: row;
-    gap: 0.35rem;
+    gap: 0.4rem;
   }
 
   .catalog-nav-item {
     flex: 0 0 auto;
     width: auto;
+    height: 32px;
+    padding: 0 0.85rem;
     border-radius: 9999px;
+    font-size: 0.8rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .catalog-nav-item.active::before {
     display: none;
   }
 
+  .catalog-nav-item.active {
+    background: rgba(56, 189, 248, 0.15);
+    border-color: rgba(56, 189, 248, 0.4);
+    color: #FFFFFF;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Two-Tab View Switching Engine */
   .tour-content {
-    padding: 2rem 1.5rem;
-    overflow-y: visible;
+    flex: 1;
+    width: 100%;
+    padding: 1.5rem 1.25rem 4rem;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: block;
   }
 
   .tour-playground {
+    flex: 1;
     width: 100%;
     border-left: none;
-    border-top: 1px solid var(--border-subtle);
-    height: 480px;
+    display: none; /* Controlled by active tab */
+    height: 100%;
   }
 
+  /* When Playground tab is active on mobile */
+  .tour-workspace.mobile-mode-playground .tour-content {
+    display: none;
+  }
+
+  .tour-workspace.mobile-mode-playground .tour-playground {
+    display: flex;
+  }
+
+  /* Comparison Cards on Mobile */
   .comparison-grid {
     grid-template-columns: 1fr;
     divide-x: none;
@@ -893,9 +1024,17 @@ button {
   .comparison-col {
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
+    padding: 1rem;
   }
+
   .comparison-col:last-child {
     border-bottom: none;
+  }
+
+  .comparison-snippet {
+    font-size: 11px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -903,7 +1042,81 @@ button {
   .header-center {
     display: none;
   }
+
+  .mobile-search-btn {
+    display: flex;
+  }
+
   .breadcrumb-nav {
     display: none;
   }
+
+  .tour-header {
+    padding: 0 1rem;
+  }
+
+  .btn-back-home span {
+    font-size: 0.76rem;
+  }
+
+  .github-text {
+    display: none;
+  }
+
+  .btn-github {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .tour-chapter-title {
+    font-size: 1.6rem;
+    line-height: 1.25;
+  }
+
+  .tour-lead-text {
+    font-size: 0.95rem;
+    line-height: 1.65;
+  }
+
+  .doc-section-heading {
+    font-size: 1.15rem;
+  }
+
+  .doc-body-text {
+    font-size: 0.88rem;
+  }
+
+  /* Playground adjustments on smaller mobile screens */
+  .playground-titlebar {
+    padding: 0 0.75rem;
+  }
+
+  .playground-file-pill {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pg-code-textarea {
+    font-size: 12.5px;
+    padding: 0.85rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .pg-line-numbers {
+    padding: 0.85rem 0.45rem;
+    min-width: 32px;
+    font-size: 11.5px;
+  }
+
+  .playground-terminal {
+    height: 180px;
+  }
+
+  /* Search modal */
+  .search-modal-box {
+    margin: 0 1rem;
+    max-width: calc(100% - 2rem);
+  }
 }
+
