@@ -133,7 +133,8 @@
                 <span class="traffic-dot dot-min"></span>
                 <span class="traffic-dot dot-zoom"></span>
               </div>
-              <div class="glass-tabs-group">
+              <div class="glass-tabs-group" id="hero-tabs-group">
+                <div class="tab-indicator-pill" id="tab-indicator-pill"></div>
                 <button class="glass-tab-btn hero-tab active" data-tab="basic">基础语法</button>
                 <button class="glass-tab-btn hero-tab" data-tab="oop">面向对象</button>
                 <button class="glass-tab-btn hero-tab" data-tab="pytorch">PyTorch集成</button>
@@ -165,14 +166,14 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
          Core Advantages Section
          ==================================================================== -->
     <section id="features" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Why TzdLang</span>
         <h2 class="section-main-heading">核心特性与语言优势</h2>
         <p class="section-subtext">融合动态脚本的高效开发流与工业级编译器的极限算力，构筑下一代通用语言基座</p>
       </div>
 
       <div class="glass-grid-3col">
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-1">
           <div class="pod-icon-circle"><i data-lucide="gauge"></i></div>
           <h3 class="pod-title">双层分级混合执行架构</h3>
           <p class="pod-text">
@@ -180,7 +181,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-2">
           <div class="pod-icon-circle"><i data-lucide="cpu"></i></div>
           <h3 class="pod-title">超越 HotSpot 的极致性能</h3>
           <p class="pod-text">
@@ -188,7 +189,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-3">
           <div class="pod-icon-circle"><i data-lucide="network"></i></div>
           <h3 class="pod-title">原生 LibTorch 深度学习支持</h3>
           <p class="pod-text">
@@ -196,7 +197,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-4">
           <div class="pod-icon-circle"><i data-lucide="box"></i></div>
           <h3 class="pod-title">现代面向对象与函数式融合</h3>
           <p class="pod-text">
@@ -204,7 +205,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-5">
           <div class="pod-icon-circle"><i data-lucide="shield-check"></i></div>
           <h3 class="pod-title">分代三色标记 SATB 垃圾回收</h3>
           <p class="pod-text">
@@ -212,7 +213,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-6">
           <div class="pod-icon-circle"><i data-lucide="terminal"></i></div>
           <h3 class="pod-title">专业 VSCode 扩展与 DAP 调试</h3>
           <p class="pod-text">
@@ -226,13 +227,13 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
          Benchmarks Section
          ==================================================================== -->
     <section id="benchmarks" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Performance Benchmark</span>
         <h2 class="section-main-heading">实测基准性能对比</h2>
         <p class="section-subtext">基于基准测试套件实测（TzdLang vs Oracle JDK 20 HotSpot vs Python 3.11）</p>
       </div>
 
-      <div class="benchmarks-glass-wrapper">
+      <div class="benchmarks-glass-wrapper reveal-on-scroll">
         <div>
           <h3 style="font-size:1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="table" style="color:#38BDF8;"></i>
@@ -354,22 +355,57 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
          Interactive Playground Section
          ==================================================================== -->
     <section id="playground" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Interactive Playground</span>
         <h2 class="section-main-heading">在线交互式代码演练场</h2>
         <p class="section-subtext">在浏览器中探索 TzdLang 的语法与执行流程，模拟运行、观察 JIT 动态提升与底层字节码！</p>
       </div>
 
-      <div class="playground-glass-case">
+      <div class="playground-glass-case reveal-on-scroll">
         <div class="playground-top-bar">
-          <div style="display:flex;align-items:center;gap:0.75rem;">
-            <span style="font-size:0.88rem;color:var(--text-secondary);">选择代码示例：</span>
-            <select id="pg-preset-select" class="preset-dropdown-apple">
-              <option value="fib">⚡ 斐波那契自递归 (JIT 原生 Double 特化)</option>
-              <option value="oop">🏛️ 面向对象继承与虚方法多态</option>
-              <option value="torch">🧠 LibTorch 神经网络前向推理</option>
-              <option value="loop">🔄 100万次循环与整除指令特化</option>
-            </select>
+          <div class="custom-dropdown-wrap">
+            <span style="font-size:0.88rem;color:var(--text-secondary);margin-right:0.35rem;">选择代码示例：</span>
+            <div class="apple-dropdown-container" id="pg-custom-dropdown">
+              <button class="apple-dropdown-trigger" id="pg-dropdown-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                <span id="pg-trigger-icon">⚡</span>
+                <span id="pg-trigger-label">斐波那契自递归 (JIT 原生 Double 特化)</span>
+                <i data-lucide="chevron-down" class="dropdown-chevron-icon"></i>
+              </button>
+              <div class="apple-dropdown-menu" id="pg-dropdown-menu" role="listbox">
+                <div class="apple-dropdown-option selected" data-value="fib" role="option" aria-selected="true">
+                  <div class="opt-icon-badge">⚡</div>
+                  <div class="opt-content">
+                    <span class="opt-name">斐波那契自递归</span>
+                    <span class="opt-desc">JIT 原生 Double 特化，消除装箱开销</span>
+                  </div>
+                  <i data-lucide="check" class="opt-check"></i>
+                </div>
+                <div class="apple-dropdown-option" data-value="oop" role="option" aria-selected="false">
+                  <div class="opt-icon-badge">🏛️</div>
+                  <div class="opt-content">
+                    <span class="opt-name">面向对象继承与多态</span>
+                    <span class="opt-desc">类定义、super 构造链与虚方法分发</span>
+                  </div>
+                  <i data-lucide="check" class="opt-check"></i>
+                </div>
+                <div class="apple-dropdown-option" data-value="torch" role="option" aria-selected="false">
+                  <div class="opt-icon-badge">🧠</div>
+                  <div class="opt-content">
+                    <span class="opt-name">LibTorch 神经网络推理</span>
+                    <span class="opt-desc">Sequential 级联模型与原生张量算子</span>
+                  </div>
+                  <i data-lucide="check" class="opt-check"></i>
+                </div>
+                <div class="apple-dropdown-option" data-value="loop" role="option" aria-selected="false">
+                  <div class="opt-icon-badge">🔄</div>
+                  <div class="opt-content">
+                    <span class="opt-name">100万次循环与整除特化</span>
+                    <span class="opt-desc">单硬件 idiv 指令优化，超越 HotSpot 1.5x</span>
+                  </div>
+                  <i data-lucide="check" class="opt-check"></i>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div style="display:flex;align-items:center;gap:0.75rem;">
@@ -406,14 +442,14 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
          Comprehensive Syntax Guide Section
          ==================================================================== -->
     <section id="syntax" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Syntax Reference</span>
         <h2 class="section-main-heading">全景语法速查与实用指南</h2>
         <p class="section-subtext">基于形式文法 <code>Grammar/TzdLang.g4</code> 的完整语法特性解析</p>
       </div>
 
       <div style="display:grid;grid-template-columns:260px 1fr;gap:2rem;align-items:start;">
-        <aside class="doc-sidebar-sticky">
+        <aside class="doc-sidebar-sticky reveal-on-scroll">
           <a href="#syntax-vars" class="active"><i data-lucide="hash" style="width:14px;"></i> 变量与类型系统</a>
           <a href="#syntax-control"><i data-lucide="git-branch" style="width:14px;"></i> 控制流程与循环</a>
           <a href="#syntax-functions"><i data-lucide="function-square" style="width:14px;"></i> 函数、闭包与 FFI</a>
@@ -426,7 +462,7 @@ print("Result: " + calculate(10, 5)); // 输出: Result: 30</code></pre>
 
         <div style="display:flex;flex-direction:column;gap:2rem;">
           <!-- 1. 变量与类型 -->
-          <article id="syntax-vars" class="syntax-pod-card">
+          <article id="syntax-vars" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="code-2" style="color:#38BDF8;"></i> 1. 变量声明与类型系统</h3>
             <p>
               TzdLang 提供动态类型声明（<code>var</code>、<code>let</code>、<code>const</code>），同时原生支持可选静态强类型（<code>int</code>、<code>float</code>、<code>string</code>、<code>bool</code>、<code>void</code>、<code>ptr</code>、数组 <code>type[]</code> 以及自定义类类型）。
@@ -455,7 +491,7 @@ print("数组长度: " + len(numbers));</code></pre>
           </article>
 
           <!-- 2. 控制流程 -->
-          <article id="syntax-control" class="syntax-pod-card">
+          <article id="syntax-control" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="git-branch" style="color:#818CF8;"></i> 2. 控制流程与循环语法规范</h3>
             <p>
               TzdLang 支持标准的条件分支与循环结构。请务必注意 <code>for</code> 循环的初始化表达式规则。
@@ -509,7 +545,7 @@ switch (status) {
           </article>
 
           <!-- 3. 函数与闭包 -->
-          <article id="syntax-functions" class="syntax-pod-card">
+          <article id="syntax-functions" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="function-square" style="color:#A855F7;"></i> 3. 函数、一等公民闭包与 FFI</h3>
             <p>
               函数使用 <code>fun</code> 关键字定义，支持类型化参数、返回值（<code>return</code> 或 <code>ret</code>）。匿名函数可作为一等公民在变量间自由传递。同时支持直接链接 Windows 原生 DLL 动态库（FFI）。
@@ -535,7 +571,7 @@ native fun MessageBoxA(hwnd: ptr, text: string, title: string, uType: int)
           </article>
 
           <!-- 4. 面向对象 -->
-          <article id="syntax-oop" class="syntax-pod-card">
+          <article id="syntax-oop" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="box" style="color:#10B981;"></i> 4. 面向对象编程 (OOP) 核心</h3>
             <p>
               支持类声明、单继承（<code>extends</code> 或 <code>:</code> 语法）、构造函数级联 <code>super()</code>、成员访问控制修饰符（<code>public</code>、<code>private</code>、<code>protected</code>）、静态方法（<code>static fun</code>）与抽象方法（<code>abstract fun</code>）。
@@ -581,7 +617,7 @@ print("标准单位: " + Vehicle.getStandardUnit());</code></pre>
           </article>
 
           <!-- 5. 注解与枚举 -->
-          <article id="syntax-annotations" class="syntax-pod-card">
+          <article id="syntax-annotations" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="at-sign" style="color:#F59E0B;"></i> 5. 注解元编程与枚举体系</h3>
             <p>
               语言原生内建对注解元编程（Annotation）与有限值枚举（Enum）的原生文法支持。
@@ -605,7 +641,7 @@ class UserController {
           </article>
 
           <!-- 6. 异常处理 -->
-          <article id="syntax-exceptions" class="syntax-pod-card">
+          <article id="syntax-exceptions" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="alert-triangle" style="color:#F43F5E;"></i> 6. 结构化异常处理与模式匹配</h3>
             <p>
               提供 <code>try-catch</code> 块和 <code>throw</code> 语句。通过强大的 <code>in</code> 关键字可在捕获异常时实现结构化类型匹配判断。
@@ -633,7 +669,7 @@ try {
           </article>
 
           <!-- 7. 深度学习 -->
-          <article id="syntax-torch" class="syntax-pod-card">
+          <article id="syntax-torch" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="activity" style="color:#38BDF8;"></i> 7. 原生 LibTorch 深度学习标准库</h3>
             <p>
               TzdLang 将深度学习作为语言一等公民，提供与 Python PyTorch 体验一致、底层完全由 C++ SIMD/GPU 硬件加速的张量计算与神经网络架构。
@@ -679,7 +715,7 @@ net.save("my_checkpoint.bin");</code></pre>
           </article>
 
           <!-- 8. 多线程 -->
-          <article id="syntax-threads" class="syntax-pod-card">
+          <article id="syntax-threads" class="syntax-pod-card reveal-on-scroll">
             <h3><i data-lucide="cpu" style="color:#10B981;"></i> 8. 原生多线程并发库 (Thread)</h3>
             <p>
               支持直接由系统内核调度的轻量级多线程，利用 C++ <code>std::thread</code> 底层实现真正的多核心并行处理。
@@ -713,14 +749,14 @@ print("所有线程已安全汇合。");</code></pre>
          Coding Standards Section
          ==================================================================== -->
     <section id="standards" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Code Style & Best Practices</span>
         <h2 class="section-main-heading">语言标准编程规范手册</h2>
         <p class="section-subtext">为保障 TzdLang 工程代码的可读性、稳定性与 JIT 执行效率而制定的官方编程规范</p>
       </div>
 
       <div class="glass-grid-3col">
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-1">
           <div class="pod-icon-circle"><i data-lucide="type"></i></div>
           <h3 class="pod-title">规范 1：标识符与命名准则</h3>
           <p class="pod-text">
@@ -731,7 +767,7 @@ print("所有线程已安全汇合。");</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-2">
           <div class="pod-icon-circle"><i data-lucide="align-left"></i></div>
           <h3 class="pod-title">规范 2：代码排版与格式风格</h3>
           <p class="pod-text">
@@ -741,7 +777,7 @@ print("所有线程已安全汇合。");</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-3">
           <div class="pod-icon-circle"><i data-lucide="alert-circle" style="color:#F59E0B;"></i></div>
           <h3 class="pod-title">规范 3：For 循环严格语法防坑</h3>
           <p class="pod-text">
@@ -751,7 +787,7 @@ print("所有线程已安全汇合。");</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-4">
           <div class="pod-icon-circle"><i data-lucide="layers"></i></div>
           <h3 class="pod-title">规范 4：面向对象设计准则</h3>
           <p class="pod-text">
@@ -761,7 +797,7 @@ print("所有线程已安全汇合。");</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-5">
           <div class="pod-icon-circle"><i data-lucide="shield-alert"></i></div>
           <h3 class="pod-title">规范 5：防御式异常处理最佳实践</h3>
           <p class="pod-text">
@@ -770,7 +806,7 @@ print("所有线程已安全汇合。");</code></pre>
           </p>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-6">
           <div class="pod-icon-circle"><i data-lucide="fast-forward" style="color:#10B981;"></i></div>
           <h3 class="pod-title">规范 6：JIT 友好型高性能编码指南</h3>
           <p class="pod-text">
@@ -786,7 +822,7 @@ print("所有线程已安全汇合。");</code></pre>
          Working Principles & Architecture Section
          ==================================================================== -->
     <section id="architecture" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Internal Working Principles</span>
         <h2 class="section-main-heading">编译器与运行时底层工作原理</h2>
         <p class="section-subtext">解密 TzdLang 是如何将高级动态代码编译优化为超越 HotSpot 性能的原生机器码</p>
@@ -794,7 +830,7 @@ print("所有线程已安全汇合。");</code></pre>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-bottom:2.5rem;">
         <!-- Architecture Pipeline Steps -->
-        <div class="arch-pipeline-pod">
+        <div class="arch-pipeline-pod reveal-on-scroll delay-1">
           <h3 style="font-size:1.3rem;margin-bottom:0.5rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="workflow" style="color:#38BDF8;"></i>
             <span>全链路执行流水线 (Execution Pipeline)</span>
@@ -855,7 +891,7 @@ print("所有线程已安全汇合。");</code></pre>
         </div>
 
         <!-- Deep Optimization Details -->
-        <div class="arch-pipeline-pod">
+        <div class="arch-pipeline-pod reveal-on-scroll delay-2">
           <h3 style="font-size:1.3rem;margin-bottom:0.5rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="sparkles" style="color:#10B981;"></i>
             <span>JIT 关键黑科技与优化技术</span>
@@ -898,14 +934,14 @@ print("所有线程已安全汇合。");</code></pre>
          Tooling & VSCode Guide
          ==================================================================== -->
     <section id="tooling" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">Developer Ecosystem</span>
         <h2 class="section-main-heading">工具链与 VSCode 开发指南</h2>
         <p class="section-subtext">从本地 C++ 工具链编译构建到 VSCode 集成开发调试全景</p>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-1">
           <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="wrench" style="color:#38BDF8;"></i>
             <span>1. 解释器与 JIT 运行时构建</span>
@@ -923,7 +959,7 @@ TzdTools.exe --runMainTzd=script.tzd
 TzdTools.exe --runMainTzd=bench_compare.tzd</code></pre>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-2">
           <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="code" style="color:#818CF8;"></i>
             <span>2. VSCode 扩展安装与断点调试</span>
@@ -956,14 +992,14 @@ npm install && npm run compile
          GitHub 1-Click Deployment Section
          ==================================================================== -->
     <section id="deploy" class="content-section">
-      <div class="section-eyebrow-center">
+      <div class="section-eyebrow-center reveal-on-scroll">
         <span class="section-kicker">One-Click GitHub Deployment</span>
         <h2 class="section-main-heading">GitHub Pages 一键部署指南</h2>
         <p class="section-subtext">仓库已内置自动化发布流水线与静态源文件，您可以通过以下任意一种方式在 GitHub 上一键部署此网站！</p>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-1">
           <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="github" style="color:#38BDF8;"></i>
             <span>方式一：GitHub Actions 自动流水线 (推荐)</span>
@@ -979,7 +1015,7 @@ npm install && npm run compile
           </ol>
         </div>
 
-        <div class="glass-feature-pod">
+        <div class="glass-feature-pod reveal-on-scroll delay-2">
           <h4 style="font-size:1.15rem;display:flex;align-items:center;gap:0.5rem;">
             <i data-lucide="globe" style="color:#10B981;"></i>
             <span>方式二：直接绑定 /docs 目录 (免 Actions)</span>

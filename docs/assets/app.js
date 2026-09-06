@@ -1,17 +1,19 @@
 // ============================================================================
 // TzdLang Official Website Interactive Controller
+// Liquid Glassmorphism, Fluid Motion & Custom Components
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
     initHeroCodeTabs();
     initCopyButtons();
     initPlayground();
+    initScrollReveal();
     initSmoothScroll();
     initMobileNav();
 });
 
 // ----------------------------------------------------------------------------
-// 1. Hero Code Preview Tabs
+// 1. Hero Code Preview Tabs with Sliding Capsule Indicator & Fluid Slide Motion
 // ----------------------------------------------------------------------------
 const heroCodeSnippets = {
     basic: `// 变量、强弱类型与函数
@@ -119,23 +121,50 @@ try {
 };
 
 function initHeroCodeTabs() {
+    const tabsGroup = document.getElementById('hero-tabs-group');
+    const indicator = document.getElementById('tab-indicator-pill');
     const tabs = document.querySelectorAll('.hero-tab');
     const codeElem = document.getElementById('hero-code-block');
-    if (!tabs.length || !codeElem) return;
+    if (!tabsGroup || !tabs.length || !codeElem) return;
+
+    function moveIndicator(targetTab) {
+        if (!targetTab || !indicator) return;
+        indicator.style.transform = `translateX(${targetTab.offsetLeft}px)`;
+        indicator.style.width = `${targetTab.offsetWidth}px`;
+    }
+
+    // Initialize indicator on active tab
+    const activeTab = tabsGroup.querySelector('.hero-tab.active') || tabs[0];
+    setTimeout(() => moveIndicator(activeTab), 50);
+
+    window.addEventListener('resize', () => {
+        const currentActive = tabsGroup.querySelector('.hero-tab.active');
+        moveIndicator(currentActive);
+    });
 
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
+            if (tab.classList.contains('active')) return;
+
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
+            moveIndicator(tab);
+
             const key = tab.dataset.tab;
             if (heroCodeSnippets[key]) {
-                codeElem.classList.remove('code-fade-in');
-                void codeElem.offsetWidth; // 触发重绘重启动画
-                codeElem.textContent = heroCodeSnippets[key];
-                codeElem.classList.add('code-fade-in');
-                if (window.Prism) {
-                    Prism.highlightElement(codeElem);
-                }
+                // Fluid slide-out transition
+                codeElem.classList.remove('code-slide-in');
+                codeElem.classList.add('code-slide-out');
+
+                setTimeout(() => {
+                    codeElem.textContent = heroCodeSnippets[key];
+                    if (window.Prism) {
+                        Prism.highlightElement(codeElem);
+                    }
+                    // Fluid slide-in transition
+                    codeElem.classList.remove('code-slide-out');
+                    codeElem.classList.add('code-slide-in');
+                }, 140);
             }
         });
     });
@@ -148,14 +177,14 @@ function initCopyButtons() {
     document.querySelectorAll('.copy-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const targetId = btn.dataset.target;
-            const targetElem = targetId ? document.getElementById(targetId) : btn.closest('.code-showcase')?.querySelector('code');
+            const targetElem = targetId ? document.getElementById(targetId) : btn.closest('.code-front-window')?.querySelector('code');
             if (!targetElem) return;
 
             const text = targetElem.innerText || targetElem.textContent;
             navigator.clipboard.writeText(text).then(() => {
                 const originalText = btn.textContent;
                 btn.textContent = "已复制 ✓";
-                btn.style.color = "#34d399";
+                btn.style.color = "#34D399";
                 setTimeout(() => {
                     btn.textContent = originalText;
                     btn.style.color = "";
@@ -168,10 +197,12 @@ function initCopyButtons() {
 }
 
 // ----------------------------------------------------------------------------
-// 3. Interactive Code Playground
+// 3. Interactive Code Playground & Custom Apple Dropdown Component
 // ----------------------------------------------------------------------------
 const playgroundPresets = {
     fib: {
+        title: "斐波那契自递归 (JIT 原生 Double 特化)",
+        icon: "⚡",
         code: `// 斐波那契自递归 (触发 JIT 原生 double 特化)
 fun fib(n) {
     if (n <= 1) return n;
@@ -221,6 +252,8 @@ print("耗时: " + duration + " 秒 (LLVM ORC JIT 无装箱原生特化)");`,
     },
 
     oop: {
+        title: "面向对象继承与虚方法多态",
+        icon: "🏛️",
         code: `// 面向对象继承、虚方法分发与多态
 class Shape {
     var string name;
@@ -278,6 +311,8 @@ Rectangle 面积: 24.0
     },
 
     torch: {
+        title: "LibTorch 神经网络前向推理",
+        icon: "🧠",
         code: `// LibTorch 原生张量与神经网络前向推理
 import "torch/All.tzd";
 
@@ -322,6 +357,8 @@ tensor([[0.7324, 0.2676],
     },
 
     loop: {
+        title: "100万次循环与整除指令特化",
+        icon: "🔄",
         code: `// 1,000,000 次热点数学与整除循环 (验证 idiv 硬件指令)
 var sum = 0;
 var start = clock();
@@ -364,7 +401,6 @@ print("100万次循环耗时: " + elapsed + " 秒 (超越 JDK 20 HotSpot 1.5x)")
 };
 
 function initPlayground() {
-    const selector = document.getElementById('pg-preset-select');
     const editor = document.getElementById('pg-editor');
     const terminal = document.getElementById('pg-output');
     const runBtn = document.getElementById('pg-run-btn');
@@ -372,12 +408,19 @@ function initPlayground() {
     const viewOutputTab = document.getElementById('pg-view-output');
     const viewBytecodeTab = document.getElementById('pg-view-bytecode');
 
-    if (!selector || !editor || !terminal || !runBtn) return;
+    // Custom Dropdown Elements
+    const dropdownContainer = document.getElementById('pg-custom-dropdown');
+    const dropdownTrigger = document.getElementById('pg-dropdown-trigger');
+    const triggerLabel = document.getElementById('pg-trigger-label');
+    const triggerIcon = document.getElementById('pg-trigger-icon');
+    const dropdownMenu = document.getElementById('pg-dropdown-menu');
+    const dropdownOptions = document.querySelectorAll('.apple-dropdown-option');
+
+    if (!editor || !terminal || !runBtn) return;
 
     let currentPreset = 'fib';
     let currentView = 'output'; // 'output' or 'bytecode'
 
-    // Load preset
     function loadPreset(key) {
         currentPreset = key;
         const data = playgroundPresets[key];
@@ -391,11 +434,63 @@ function initPlayground() {
         }
     }
 
-    selector.addEventListener('change', (e) => {
-        loadPreset(e.target.value);
-    });
+    // Custom Dropdown Interactions
+    if (dropdownContainer && dropdownTrigger && dropdownMenu) {
+        dropdownTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = dropdownContainer.classList.contains('open');
+            if (isOpen) {
+                dropdownContainer.classList.remove('open');
+                dropdownTrigger.setAttribute('aria-expanded', 'false');
+            } else {
+                dropdownContainer.classList.add('open');
+                dropdownTrigger.setAttribute('aria-expanded', 'true');
+            }
+        });
 
-    // Run button
+        dropdownOptions.forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdownOptions.forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+
+                const val = opt.dataset.value;
+                const data = playgroundPresets[val];
+                if (data) {
+                    if (triggerLabel) triggerLabel.textContent = data.title;
+                    if (triggerIcon) triggerIcon.textContent = data.icon;
+                    loadPreset(val);
+                }
+
+                dropdownContainer.classList.remove('open');
+                dropdownTrigger.setAttribute('aria-expanded', 'false');
+            });
+        });
+
+        // Close on click outside
+        document.addEventListener('click', (e) => {
+            if (!dropdownContainer.contains(e.target)) {
+                dropdownContainer.classList.remove('open');
+                dropdownTrigger.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        // Close on ESC
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && dropdownContainer.classList.contains('open')) {
+                dropdownContainer.classList.remove('open');
+                dropdownTrigger.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
+
+    // Fallback for native select if still present
+    const nativeSelect = document.getElementById('pg-preset-select');
+    if (nativeSelect) {
+        nativeSelect.addEventListener('change', (e) => loadPreset(e.target.value));
+    }
+
+    // Run button with simulated streaming output
     runBtn.addEventListener('click', () => {
         terminal.innerHTML = `<span class="out-info">[正在编译与执行中...]</span>\n`;
         setTimeout(() => {
@@ -412,17 +507,17 @@ function initPlayground() {
 
                         terminal.innerHTML += `<div class="${colorClass}">${escapeHtml(line)}</div>`;
                         terminal.scrollTop = terminal.scrollHeight;
-                    }, idx * 70);
+                    }, idx * 65);
                 });
             } else {
                 terminal.innerHTML = `<pre class="out-info">${escapeHtml(data ? data.bytecode : "; No bytecode available")}</pre>`;
             }
-        }, 150);
+        }, 120);
     });
 
     // Clear button
     clearBtn.addEventListener('click', () => {
-        terminal.innerHTML = `<span class="out-sys">终端已清空。</span>`;
+        terminal.innerHTML = `<span class="out-sys">控制台已清空。</span>`;
     });
 
     // Output vs Bytecode view toggles
@@ -455,7 +550,34 @@ function escapeHtml(text) {
 }
 
 // ----------------------------------------------------------------------------
-// 4. Smooth Scrolling & Sidebar Spy
+// 4. Scroll Reveal with Staggered Cascades (IntersectionObserver)
+// ----------------------------------------------------------------------------
+function initScrollReveal() {
+    const revealElements = document.querySelectorAll('.reveal-on-scroll');
+    if (!revealElements.length) return;
+
+    if (!('IntersectionObserver' in window)) {
+        revealElements.forEach(el => el.classList.add('is-revealed'));
+        return;
+    }
+
+    const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('is-revealed');
+                obs.unobserve(entry.target);
+            }
+        });
+    }, {
+        threshold: 0.1,
+        rootMargin: '0px 0px -40px 0px'
+    });
+
+    revealElements.forEach(el => observer.observe(el));
+}
+
+// ----------------------------------------------------------------------------
+// 5. Smooth Scrolling & Sticky Sidebar Spy
 // ----------------------------------------------------------------------------
 function initSmoothScroll() {
     const links = document.querySelectorAll('a[href^="#"]');
@@ -475,8 +597,8 @@ function initSmoothScroll() {
     });
 
     // Spy on sidebar
-    const sidebarLinks = document.querySelectorAll('.doc-sidebar a');
-    const sections = document.querySelectorAll('.syntax-block[id]');
+    const sidebarLinks = document.querySelectorAll('.doc-sidebar-sticky a');
+    const sections = document.querySelectorAll('.syntax-pod-card[id]');
 
     if (sidebarLinks.length && sections.length) {
         window.addEventListener('scroll', () => {
@@ -499,11 +621,11 @@ function initSmoothScroll() {
 }
 
 // ----------------------------------------------------------------------------
-// 5. Mobile Navigation
+// 6. Mobile Navigation
 // ----------------------------------------------------------------------------
 function initMobileNav() {
     const toggle = document.querySelector('.mobile-toggle');
-    const nav = document.querySelector('.nav-links');
+    const nav = document.querySelector('.nav-links-row');
     if (!toggle || !nav) return;
 
     toggle.addEventListener('click', () => {
@@ -513,11 +635,16 @@ function initMobileNav() {
             nav.style.flexDirection = 'column';
             nav.style.position = 'absolute';
             nav.style.top = '100%';
-            nav.style.left = '0';
-            nav.style.right = '0';
-            nav.style.background = 'rgba(9, 13, 22, 0.98)';
+            nav.style.left = '1.5rem';
+            nav.style.right = '1.5rem';
+            nav.style.background = 'rgba(18, 20, 29, 0.95)';
+            nav.style.backdropFilter = 'blur(20px)';
+            nav.style.webkitBackdropFilter = 'blur(20px)';
             nav.style.padding = '1.5rem';
-            nav.style.borderBottom = '1px solid var(--border-subtle)';
+            nav.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+            nav.style.borderRadius = '18px';
+            nav.style.marginTop = '0.5rem';
+            nav.style.boxShadow = '0 20px 40px rgba(0, 0, 0, 0.6)';
         }
     });
 }
