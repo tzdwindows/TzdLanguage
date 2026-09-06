@@ -6,7 +6,14 @@
 #include <iostream>
 #include <atomic>
 #include <cstring>
-#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+
+// Avoid including <windows.h> — it defines min/max macros that break ANTLR4 headers.
+// Declare only the specific functions we need.
+extern "C" __declspec(dllimport) int __stdcall SetConsoleOutputCP(unsigned int);
+extern "C" __declspec(dllimport) int __stdcall SetConsoleCP(unsigned int);
+#pragma comment(lib, "kernel32.lib")
 
 #include "TzdCommandSystem.h"
 
@@ -192,11 +199,9 @@ void InitHook() {
 
 
 int main(int argc, char* argv[]) {
-    // Fix console encoding: output UTF-8 for correct Chinese display
-#ifdef _WIN32
+    // Fix console encoding for UTF-8 Chinese display
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
-#endif
     // InitHook();  // Temporarily disabled for testing
     TzdCommandSystem system;
     system.start(argc, argv);

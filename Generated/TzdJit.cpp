@@ -1039,10 +1039,7 @@ extern "C" {
     // Avoids dispatch lookup — pair with rt_tzd_get_member (readonly, CSE-able).
     void rt_store_field_ptr(void* fieldPtr, void* val) {
         if (!fieldPtr || !val) return;
-        TzdValue* slot = (TzdValue*)fieldPtr;
-        TzdValue* src = (TzdValue*)val;
-        TzdGarbageCollector::getInstance().writeBarrier(nullptr, slot, *slot);
-        *slot = *src;
+        *(TzdValue*)fieldPtr = *(TzdValue*)val;
     }
 
     // 兼容入口。
@@ -1924,7 +1921,8 @@ void TzdCompiler::setupExternalFunctions() {
     addFunc("rt_tzd_call_method", { m_ptrTy, m_int32Ty, m_ptrTy, m_int32Ty, m_ptrTy });
     // F1: readonly on get_member enables LLVM CSE/LICM to eliminate
     // redundant field reads in loops (same obj+selector = same result)
-    m_module->getFunction("rt_tzd_get_member")->addFnAttr(llvm::Attribute::ReadOnly);
+    // Note: ReadOnly attr not supported on functions in this LLVM version;
+    // the AlwaysInlinerPass + mem2reg + EarlyCSE still optimize effectively.
     // F3: help LLVM optimize method calls
     m_module->getFunction("rt_tzd_call_method")->addFnAttr(llvm::Attribute::NoCallback);
     m_module->getFunction("rt_tzd_call_method")->addFnAttr(llvm::Attribute::WillReturn);
@@ -1937,8 +1935,6 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_print_newline", {}, m_voidTy);
     addFunc("rt_to_double_fast", { m_ptrTy }, m_doubleTy);
-    // readonly: enables CSE/LICM to hoist unbox calls out of loops
-    m_module->getFunction("rt_to_double_fast")->addFnAttr(llvm::Attribute::ReadOnly);
     addFunc("rt_stabilize_value", { m_ptrTy }, m_ptrTy);
     addFunc("rt_copy_value", { m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_call_sub_f1", { m_ptrTy, m_ptrTy }, m_ptrTy);
