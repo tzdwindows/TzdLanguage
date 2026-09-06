@@ -230,13 +230,14 @@ bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
     TzdBytecodeVM vm(this);
     vm.execute(mod);
 
-    // Stop background threads after execution
-    TzdTieringEngine::getInstance().stop();
-
-    // Call main() if it exists
+    // Call main() if it exists (while tiering engine is still running)
     if (mod.funcIndex.count("main")) {
         vm.callFunction(mod, "main", {});
     }
+
+    // Stop background threads after all execution is done
+    TzdTieringEngine::getInstance().stop();
+
     m_noJit = savedNoJit;
     return true;
 }

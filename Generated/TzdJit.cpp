@@ -1750,10 +1750,13 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             // Native double version — unbox at function entry for fast numeric access.
             // visitIdExpr checks m_nativeDoubleLocals first, returning the double.
             // Inline unbox: direct GEP+Load on dVal field (no function call)
-            Value* nativeVal = inlineToDoubleFast(argPtr);
-            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
-            m_builder.CreateStore(nativeVal, nativeAlloc);
-            m_nativeDoubleLocals[pName] = nativeAlloc;
+            // Skip "this" — it's an instance pointer, not a numeric value!
+            if (pName != "this") {
+                Value* nativeVal = inlineToDoubleFast(argPtr);
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeVal, nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
         }
     }
 
@@ -1836,8 +1839,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     s_currentWorkerFunc = workerFunc;
 
     // Phase B: Create native double worker for function specialization.
+    // Skip if any param is "this" (pointer, not double) — native worker
+    // only makes sense for all-numeric self-recursion.
     Function* nativeWorkerFunc = nullptr;
-    if (argCount > 0) {
+    bool hasThisParam = false;
+    for (auto& p : paramNames) { if (p == "this") { hasThisParam = true; break; } }
+    if (argCount > 0 && !hasThisParam) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -1915,10 +1922,13 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         m_builder.CreateStore(argPtr, boxedAlloc);
         m_namedValues[pName] = boxedAlloc;
 
-        Value* nativeVal = inlineToDoubleFast(argPtr);
-        AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
-        m_builder.CreateStore(nativeVal, nativeAlloc);
-        m_nativeDoubleLocals[pName] = nativeAlloc;
+        // Skip "this" — it's an instance pointer, not a numeric value!
+        if (pName != "this") {
+            Value* nativeVal = inlineToDoubleFast(argPtr);
+            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+            m_builder.CreateStore(nativeVal, nativeAlloc);
+            m_nativeDoubleLocals[pName] = nativeAlloc;
+        }
     }
 
     m_builder.CreateBr(bodyBB);
@@ -1954,6 +1964,9 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
             const std::string& pName = paramNames[i];
             s_currentFuncParamNames.push_back(pName);
             m_declaredLocals.insert(pName);
+
+            // Skip "this" — it's a pointer, not a native double
+            if (pName == "this") continue;
 
             AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
             m_builder.CreateStore(nativeWorkerFunc->getArg(i + 1), nativeAlloc);

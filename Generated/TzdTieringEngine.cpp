@@ -159,20 +159,33 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
         }
     }
 
-    // If not found in scopes, try class method (ClassName_MethodName)
+    // If not found in scopes, try class method or constructor (ClassName_Name)
     if (!funcBody) {
         size_t sep = task.funcName.find('_');
         if (sep != std::string::npos && sep > 0) {
             std::string className = task.funcName.substr(0, sep);
             std::string methodName = task.funcName.substr(sep + 1);
             TzdClassDef* cls = TzdOopManager::getClass(className);
-            if (cls && cls->methods.count(methodName)) {
-                ClassMethod& m = cls->methods[methodName];
-                if (m.body) {
-                    funcBody = m.body;
-                    // Prepend "this" — methods access instance via rt_get_arg(0)
-                    params.push_back("this");
-                    for (auto& p : m.params) params.push_back(p);
+            if (cls) {
+                // Search methods first
+                if (cls->methods.count(methodName)) {
+                    ClassMethod& m = cls->methods[methodName];
+                    if (m.body) {
+                        funcBody = m.body;
+                        params.push_back("this");
+                        for (auto& p : m.params) params.push_back(p);
+                    }
+                }
+                // Search constructors (constructor name == class simple name)
+                if (!funcBody && methodName == cls->simpleName) {
+                    for (auto& ctor : cls->constructors) {
+                        if (ctor.body) {
+                            funcBody = ctor.body;
+                            params.push_back("this");
+                            for (auto& p : ctor.params) params.push_back(p);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -185,7 +198,6 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
         compileName, funcBody, params);
 
     if (jitPtr) {
-        // Store in TzdBytecodeJIT's thread-safe map
         TzdBytecodeJIT::getInstance().storeJittedPtr(task.funcName, jitPtr);
     }
 }

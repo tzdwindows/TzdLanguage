@@ -1948,59 +1948,53 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdSelector msel = tzdInternSelector(mname);
                 if (receiver.type == TzdValue::INSTANCE && receiver.instanceVal) {
                     TzdClassDef* cls = receiver.instanceVal->definition;
-                    const TzdMemberSlot* slot = cls ? cls->tzdDispatch.find(msel) : nullptr;
-                    ClassMethod* m = (slot && slot->method) ? slot->method : (cls ? cls->findMethod(mname) : nullptr);
-                    if (m) {
-                        // JIT bridge for class methods: check/store compiled pointer
-                        if (cls && m->body && m_interp) {
-                            std::string fullMName = cls->fullName + "_" + mname;
-                            if (!m->jittedPtr) {
-                                void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, fullMName, m_interp);
-                                if (jitPtr) {
-                                    m->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
+                    // 查找方法
+                    ClassMethod* m = cls ? cls->findMethod(mname) : nullptr;
+
+                    if (m && m->body) {
+                        auto it = module.funcIndex.find(m->name);
+                        if (it != module.funcIndex.end()) {
+                            size_t funcIdx = it->second;
+                            std::vector<TzdValue> actualArgs;
+                            actualArgs.reserve(argc + 1);
+                            actualArgs.push_back(receiver); // Push "this"
+                            actualArgs.insert(actualArgs.end(), callArgs.begin(), callArgs.end());
+
+                            TzdValue r = runBytecodeFunc(module, funcIdx, actualArgs.data(), actualArgs.size());
+                            m_stack.push_back(std::move(r));
+                            ++ip;
+                            break;
+                        }
+                    } else if (receiver.type == TzdValue::CLASS_DEF &&
+                               receiver.classDefVal) {
+                        const TzdMemberSlot* slot = receiver.classDefVal->tzdDispatch.find(msel);
+                        ClassMethod* m = (slot && slot->method) ? slot->method : receiver.classDefVal->findMethod(mname);
+                        if (m) {
+                            // JIT bridge for static methods
+                            if (receiver.classDefVal && m->body && m_interp) {
+                                std::string fullMName = receiver.classDefVal->fullName + "_" + mname;
+                                if (!m->jittedPtr) {
+                                    void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, fullMName, m_interp);
+                                    if (jitPtr) {
+                                        m->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
+                                    }
                                 }
                             }
-                        }
-                        if (m->templateVal) {
-                            bound = *(m->templateVal);
-                        } else {
-                            bound = TzdValue(m->name, m->params, m->body);
-                            bound.paramTypes = m->paramTypes;
-                        }
-                        bound.jittedPtr = m->jittedPtr;
-                        bound.setInstance(receiver.instanceVal);
-                    } else {
-                        bound = receiver.instanceVal->getMember(msel, mname);
-                    }
-                } else if (receiver.type == TzdValue::CLASS_DEF &&
-                           receiver.classDefVal) {
-                    const TzdMemberSlot* slot = receiver.classDefVal->tzdDispatch.find(msel);
-                    ClassMethod* m = (slot && slot->method) ? slot->method : receiver.classDefVal->findMethod(mname);
-                    if (m) {
-                        // JIT bridge for static methods
-                        if (receiver.classDefVal && m->body && m_interp) {
-                            std::string fullMName = receiver.classDefVal->fullName + "_" + mname;
-                            if (!m->jittedPtr) {
-                                void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, fullMName, m_interp);
-                                if (jitPtr) {
-                                    m->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
-                                }
+                            if (m->templateVal) {
+                                bound = *(m->templateVal);
+                            } else {
+                                bound = TzdValue(m->name, m->params, m->body);
+                                bound.paramTypes = m->paramTypes;
                             }
+                            bound.jittedPtr = m->jittedPtr;
                         }
-                        if (m->templateVal) {
-                            bound = *(m->templateVal);
-                        } else {
-                            bound = TzdValue(m->name, m->params, m->body);
-                            bound.paramTypes = m->paramTypes;
-                        }
-                        bound.jittedPtr = m->jittedPtr;
-                    }
-                } else if (receiver.type == TzdValue::MAP) {
-                    auto it = receiver.mapVal.find(mname);
-                    if (it != receiver.mapVal.end()) bound = it->second;
+                               } else if (receiver.type == TzdValue::MAP) {
+                                   auto it = receiver.mapVal.find(mname);
+                                   if (it != receiver.mapVal.end()) bound = it->second;
+                               }
+                    m_stack.push_back(callValue(module, bound, callArgs));
+                    ++ip; break;
                 }
-                m_stack.push_back(callValue(module, bound, callArgs));
-                ++ip; break;
             }
 
             case OpCode::RET: {
@@ -2052,31 +2046,40 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             // ---- OOP / container ----
             case OpCode::LOAD_MEMBER: {
                 const std::string& name = module.constants[instr.arg1].sVal;
-                // Cache selector to avoid repeated interning
-                TzdSelector sel;
-                if (instr.cache >= 0) {
-                    sel = (TzdSelector)instr.cache;
-                } else {
-                    sel = tzdInternSelector(name);
-                    instr.cache = (int32_t)sel;
-                }
                 TzdValue obj; pop(obj);
+
                 if (obj.type == TzdValue::INSTANCE && obj.instanceVal) {
-                    // Fast path: direct field pointer access, bypass getMember()
-                    TzdValue* fp = obj.instanceVal->getMemberPtr(sel);
-                    if (fp) {
-                        // Type-specialized push (avoid 200-byte copy for numerics)
-                        switch (fp->type) {
-                        case TzdValue::DOUBLE: case TzdValue::FLOAT:
-                            m_stack.emplace_back(fp->dVal); break;
-                        case TzdValue::INT: case TzdValue::LONG:
-                            m_stack.emplace_back(fp->lVal); break;
-                        case TzdValue::BOOL:
-                            m_stack.emplace_back(fp->bVal); break;
-                        default:
-                            m_stack.push_back(*fp); break;
+                    TzdClassDef* cls = obj.instanceVal->definition;
+
+                    // 1. 【极速路径：内联缓存命中】
+                    // 比较类定义指针是否相同，相同则直接用缓存的数组索引，完全跳过哈希运算！
+                    if (instr.cacheClass == (void*)cls && instr.cacheIndex >= 0) {
+                        const TzdValue& val = obj.instanceVal->fieldValues[instr.cacheIndex];
+                        switch (val.type) {
+                            case TzdValue::DOUBLE: case TzdValue::FLOAT: m_stack.emplace_back(val.dVal); break;
+                            case TzdValue::INT: case TzdValue::LONG: m_stack.emplace_back(val.lVal); break;
+                            case TzdValue::BOOL: m_stack.emplace_back(val.bVal); break;
+                            default: m_stack.push_back(val); break;
+                        }
+                        ++ip;
+                        break;
+                    }
+
+                    // 2. 【慢速路径：Cache Miss】
+                    int fieldIdx = cls->getFieldIndex(name);
+                    if (fieldIdx >= 0) {
+                        instr.cacheClass = (void*)cls;
+                        instr.cacheIndex = fieldIdx;
+
+                        const TzdValue& val = obj.instanceVal->fieldValues[fieldIdx];
+                        switch (val.type) {
+                            case TzdValue::DOUBLE: case TzdValue::FLOAT: m_stack.emplace_back(val.dVal); break;
+                            case TzdValue::INT: case TzdValue::LONG: m_stack.emplace_back(val.lVal); break;
+                            case TzdValue::BOOL: m_stack.emplace_back(val.bVal); break;
+                            default: m_stack.push_back(val); break;
                         }
                     } else {
+                        TzdSelector sel = tzdInternSelector(name);
                         m_stack.push_back(obj.instanceVal->getMember(sel, name));
                     }
                 } else {
@@ -2084,20 +2087,29 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 }
                 ++ip; break;
             }
+
             case OpCode::STORE_MEMBER: {
                 const std::string& name = module.constants[instr.arg1].sVal;
-                TzdSelector sel;
-                if (instr.cache >= 0) {
-                    sel = (TzdSelector)instr.cache;
-                } else {
-                    sel = tzdInternSelector(name);
-                    instr.cache = (int32_t)sel;
-                }
                 TzdValue val; pop(val);
                 TzdValue obj; pop(obj);
+
                 if (obj.type == TzdValue::INSTANCE && obj.instanceVal) {
-                    // Fast path: direct field store, bypass setMember()
-                    obj.instanceVal->setMember(sel, val);
+                    TzdClassDef* cls = obj.instanceVal->definition;
+                    if (instr.cacheClass == (void*)cls && instr.cacheIndex >= 0) {
+                        obj.instanceVal->fieldValues[instr.cacheIndex] = val;
+                        m_stack.push_back(std::move(val));
+                        ++ip;
+                        break;
+                    }
+                    int fieldIdx = cls->getFieldIndex(name);
+                    if (fieldIdx >= 0) {
+                        instr.cacheClass = (void*)cls;
+                        instr.cacheIndex = fieldIdx;
+                        obj.instanceVal->fieldValues[fieldIdx] = val;
+                    } else {
+                        TzdSelector sel = tzdInternSelector(name);
+                        obj.instanceVal->setMember(sel, name, val);
+                    }
                 } else {
                     setMember(obj, name, val);
                 }
@@ -2164,78 +2176,42 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 if (!cls)
                     throw std::runtime_error("Cannot find class definition: " +
                                              className);
+                // TzdInstance constructor already copies pre-computed
+                // defaultFieldValues — no need to re-evaluate field initializers
+                // via the AST interpreter (which was the #1 bottleneck).
                 TzdInstance* inst = new TzdInstance(cls);
                 TzdValue instVal(inst);
 
-                // Check if any class in the hierarchy has field initializers
-                // that need AST evaluation. If not, skip the expensive walk.
-                bool hasFieldInits = false;
-                {
-                    TzdClassDef* cur = cls;
-                    while (cur && !hasFieldInits) {
-                        for (auto const& f : cur->fields) {
-                            if (!f.second.isStatic && f.second.initExpr) {
-                                hasFieldInits = true;
-                                break;
-                            }
-                        }
-                        if (cur->parentName.empty()) break;
-                        cur = TzdOopManager::getClass(cur->parentName);
-                    }
-                }
-
-                // Find constructor
+                // Find and run constructor if present
                 ClassConstructor* ctor = cls->findConstructor(argc);
                 if (!ctor && argc == 0 && !cls->constructors.empty())
                     ctor = cls->findConstructor(0);
 
-                if (hasFieldInits || ctor) {
+                if (ctor) {
+                    // Submit constructor for async JIT compilation if hot
+                    if (ctor->body && m_interp && !ctor->jittedPtr) {
+                        std::string ctorJitName = cls->fullName + "_" + cls->simpleName;
+                        void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(
+                            module, ctorJitName, m_interp);
+                        if (jitPtr) {
+                            ctor->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
+                        }
+                    }
                     std::unordered_map<std::string, TzdValue> ctorScope;
                     ctorScope["this"] = instVal;
                     m_interp->scopes.push_back(std::move(ctorScope));
                     try {
-                        if (hasFieldInits) {
-                            // Run field initializers via the interpreter (AST eval)
-                            TzdClassDef* cur = cls;
-                            std::vector<TzdClassDef*> hierarchy;
-                            while (cur) {
-                                hierarchy.insert(hierarchy.begin(), cur);
-                                if (cur->parentName.empty()) break;
-                                cur = TzdOopManager::getClass(cur->parentName);
-                            }
-                            for (auto* ccls : hierarchy) {
-                                for (auto const& fnameField : ccls->fields) {
-                                    const std::string& fname = fnameField.first;
-                                    const ClassField& field = fnameField.second;
-                                    if (!field.isStatic && field.initExpr) {
-                                        std::any iv = m_interp->visit(field.initExpr);
-                                        TzdValue initVal;
-                                        if (iv.has_value() &&
-                                            iv.type() == typeid(TzdValue))
-                                            initVal = std::any_cast<TzdValue>(iv);
-                                        for (auto const& pr : cls->fieldIndices) {
-                                            if (pr.first == fname) {
-                                                inst->fieldValues[pr.second] = initVal;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (ctor) {
-                            TzdValue ctorFunc(cls->simpleName, ctor->params,
-                                               ctor->body);
-                            ctorFunc.jittedPtr = ctor->jittedPtr;
-                            ctorFunc.setInstance(inst);
-                            m_interp->callFunction(ctorFunc, ctorArgs);
-                        }
+                        TzdValue ctorFunc(cls->simpleName, ctor->params,
+                                           ctor->body);
+                        ctorFunc.jittedPtr = ctor->jittedPtr;
+                        ctorFunc.setInstance(inst);
+                        m_interp->callFunction(ctorFunc, ctorArgs);
                     } catch (...) {
                         m_interp->scopes.pop_back();
                         throw;
                     }
                     m_interp->scopes.pop_back();
-                } // end if (hasFieldInits || ctor)
+                }
                 m_stack.push_back(std::move(instVal));
                 ++ip; break;
             }
