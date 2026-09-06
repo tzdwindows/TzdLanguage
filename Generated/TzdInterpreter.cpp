@@ -224,8 +224,14 @@ bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
         }
     }
 
+    // Start background JIT tiering engine (async compilation like JDK HotSpot)
+    TzdTieringEngine::getInstance().start(2);
+
     TzdBytecodeVM vm(this);
     vm.execute(mod);
+
+    // Stop background threads after execution
+    TzdTieringEngine::getInstance().stop();
 
     // Call main() if it exists
     if (mod.funcIndex.count("main")) {
@@ -3613,6 +3619,47 @@ void TzdInterpreter::tryJitCompile(TzdValue& funcVal) {
     m_compiler = std::move(savedCompiler);
     m_pendingJitFunctions = std::move(savedPending);
     m_jitNameToUserMap = std::move(savedJitMap);
+}
+
+// Background compilation: thread-safe, independent LLVMContext.
+// Does NOT touch interpreter scopes or funcVal — caller links the result.
+void* TzdInterpreter::compileFunctionInBackground(const std::string& funcName,
+                                                   TzdLangParser::BlockContext* funcBody,
+                                                   const std::vector<std::string>& params) {
+    if (!m_jitEngine || !funcBody) return nullptr;
+
+    // Generate unique internal name (funcName_vN convention for worker lookup)
+    std::string internalName = funcName + "_v" + std::to_string(m_funcVersion++);
+
+    // Create a fresh compiler with its own LLVMContext — fully thread-safe
+    TzdCompiler compiler(*m_jitEngine, "AsyncJIT_" + internalName);
+    compiler.setupExternalFunctions();
+
+    // Compile the function body to LLVM IR
+    try {
+        compiler.compileNamedFunction(funcBody, params, internalName);
+    } catch (...) {
+        return nullptr;
+    }
+
+    // Extract and add module to JIT engine (LLJIT serializes addModule internally)
+    auto TSM = compiler.extractThreadSafeModule();
+    if (!TSM) return nullptr;
+    m_jitEngine->addModule(std::move(TSM));
+
+    // Look up the compiled symbol
+    auto symOrErr = m_jitEngine->lookupSymbol(internalName);
+    if (!symOrErr) {
+        llvm::consumeError(symOrErr.takeError());
+        return nullptr;
+    }
+
+    void* addr = reinterpret_cast<void*>(symOrErr->getValue());
+
+    // Register worker pointer for recursive call optimization
+    m_jitEngine->registerWorkerForSymbol(internalName);
+
+    return addr;
 }
 
 static double GetAsDouble(TzdValue* v) {

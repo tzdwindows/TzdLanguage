@@ -28,6 +28,12 @@ public:
     // Get the JIT-compiled function pointer
     void* getJittedPtr(const std::string& funcName) const;
 
+    // Store a JIT-compiled pointer (called by background compilation thread)
+    void storeJittedPtr(const std::string& funcName, void* ptr) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_jittedPtrs[funcName] = ptr;
+    }
+
     // Clear all JIT caches (for testing)
     void clear();
 

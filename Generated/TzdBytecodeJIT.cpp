@@ -10,6 +10,7 @@
 
 #include "TzdBytecodeJIT.h"
 #include "TzdJit.h"
+#include "TzdTieringEngine.h"
 #include <iostream>
 
 TzdBytecodeJIT& TzdBytecodeJIT::getInstance() {
@@ -23,18 +24,27 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
     m_totalCalls.fetch_add(1, std::memory_order_relaxed);
 
     // Single-lock fast path: check compiled, attempted, and increment count
-    // in one mutex acquisition instead of three separate ones.
     int count;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        // Check if already JIT-compiled
+        // Check if already JIT-compiled (by background thread)
         auto it = m_jittedPtrs.find(funcName);
         if (it != m_jittedPtrs.end() && it->second) {
+            // Link: set funcVal.jittedPtr so callFunction uses the JIT path
+            if (interp) {
+                for (auto& scope : interp->scopes) {
+                    auto vIt = scope.find(funcName);
+                    if (vIt != scope.end() && vIt->second.type == TzdValue::FUNCTION) {
+                        vIt->second.jittedPtr = reinterpret_cast<void(*)(void*,void*)>(it->second);
+                        break;
+                    }
+                }
+            }
             return it->second;
         }
 
-        // Check if compilation was already attempted (don't retry)
+        // Check if compilation was already submitted (don't re-submit)
         if (m_compilationAttempted.count(funcName)) {
             return nullptr;
         }
@@ -48,35 +58,29 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
         return nullptr;
     }
 
-    // Trigger JIT compilation
+    // Mark as submitted and submit to background tiering engine (non-blocking)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        // Double-check under lock
-        auto it = m_jittedPtrs.find(funcName);
-        if (it != m_jittedPtrs.end() && it->second) {
-            return it->second;
-        }
-
-        // Mark as attempted
+        if (m_compilationAttempted.count(funcName)) return nullptr;
         m_compilationAttempted.insert(funcName);
+    }
 
-        // Try to find the function in the interpreter's global scope
-        // and trigger JIT compilation
+    // Submit async compilation — main thread continues with bytecode
+    auto& tiering = TzdTieringEngine::getInstance();
+    if (tiering.isRunning()) {
+        tiering.submitCompilation(interp, funcName, "", "");
+        m_jitCompilations.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        // Fallback: synchronous compilation if tiering engine not started
         if (interp) {
-            // Search for the function in the interpreter's scopes
             for (auto& scope : interp->scopes) {
-                auto valIt = scope.find(funcName);
-                if (valIt != scope.end()) {
-                    TzdValue& funcVal = valIt->second;
+                auto vIt = scope.find(funcName);
+                if (vIt != scope.end()) {
+                    TzdValue& funcVal = vIt->second;
                     if (funcVal.type == TzdValue::FUNCTION && funcVal.funcBody) {
-                        // Trigger on-demand JIT compilation
                         interp->tryJitCompile(funcVal);
-
                         if (funcVal.jittedPtr) {
-                            // JIT compilation succeeded!
                             m_jittedPtrs[funcName] = (void*)funcVal.jittedPtr;
-                            m_jitCompilations.fetch_add(1, std::memory_order_relaxed);
                             return (void*)funcVal.jittedPtr;
                         }
                     }
@@ -84,8 +88,6 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
                 }
             }
         }
-
-        // JIT compilation failed or function not found
         m_jitFailures.fetch_add(1, std::memory_order_relaxed);
     }
 

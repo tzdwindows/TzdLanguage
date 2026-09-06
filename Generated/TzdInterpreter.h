@@ -339,6 +339,12 @@ public:
     }
     
     void tryJitCompile(TzdValue& funcVal);
+    // Background compilation: compile from copied data without touching
+    // interpreter scopes. Returns JIT pointer or nullptr on failure.
+    // Safe to call from a worker thread — uses independent LLVMContext.
+    void* compileFunctionInBackground(const std::string& funcName,
+                                       TzdLangParser::BlockContext* funcBody,
+                                       const std::vector<std::string>& params);
 
     void initNativeFunctions();
     void registerNativeFunction(const std::string& name, TzdValue::NativeFuncType func) {

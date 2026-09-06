@@ -5,6 +5,7 @@
 #include "TzdTieringEngine.h"
 #include "TzdInterpreter.h"
 #include "TzdJit.h"
+#include "TzdBytecodeJIT.h"
 #include <iostream>
 
 // ============================================================================
@@ -134,25 +135,39 @@ void TzdTieringEngine::workerLoop() {
 }
 
 void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
-    // Background compilation: create an independent LLVMContext,
-    // parse the function source, compile to IR, pre-compile to object file.
-    //
-    // The actual JIT module addition (addObjectFile) is NOT thread-safe
-    // with the main thread's JIT operations.  To avoid races, we store
-    // the compiled function source and let the main thread handle the
-    // final addObjectFile call when it checks getCompiledPtr().
-    //
-    // For now, this is a stub — the tiering infrastructure is in place
-    // but the actual background compilation requires careful integration
-    // with the TzdCompiler and LLJIT thread-safety model.
+    // Background compilation: call the interpreter's thread-safe compile method.
+    // This creates an independent LLVMContext, compiles the function, and
+    // adds the module to the JIT engine (LLJIT serializes addModule internally).
+    // The result pointer is stored in TzdBytecodeJIT's thread-safe map.
 
-    // TODO: Implement background compilation with:
-    // 1. Create independent LLVMContext
-    // 2. Parse funcSourceCode with ANTLR
-    // 3. Compile with TzdCompiler (needs TzdJitEngine reference)
-    // 4. Pre-compile to object buffer (using JIT's getCompiler())
-    // 5. Store object buffer for main thread to add via addObjectFile
+    // Search for the function in the interpreter's scopes to get funcBody/params
+    // (read-only access — parse tree is immutable during execution)
+    TzdLangParser::BlockContext* funcBody = nullptr;
+    std::vector<std::string> params;
 
-    // For now, just record that compilation was attempted
-    (void)task;
+    if (task.interp) {
+        for (auto& scope : task.interp->scopes) {
+            auto it = scope.find(task.funcName);
+            if (it != scope.end()) {
+                TzdValue& fv = it->second;
+                if (fv.type == TzdValue::FUNCTION && fv.funcBody) {
+                    funcBody = fv.funcBody;
+                    params = fv.params;
+                }
+                break;
+            }
+        }
+    }
+
+    if (!funcBody) return;
+
+    // Compile in the background (thread-safe, independent LLVMContext)
+    void* jitPtr = task.interp->compileFunctionInBackground(
+        task.funcName, funcBody, params);
+
+    if (jitPtr) {
+        // Store in TzdBytecodeJIT's thread-safe map so the main thread
+        // picks it up on the next onFunctionCall
+        TzdBytecodeJIT::getInstance().storeJittedPtr(task.funcName, jitPtr);
+    }
 }
