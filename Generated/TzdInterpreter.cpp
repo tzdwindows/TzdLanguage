@@ -364,7 +364,7 @@ static void ntt_init(int pi, int ln) {
 }
 
 template<uint64_t P, uint64_t G>
-static void ntt_xform(uint64_t* a, size_t n, bool inv, int pi) {
+static void ntt_xform(uint64_t* a, size_t n, bool inv, int pi, bool scale = true) {
     if (n<=1) return;
     int ln=0; size_t m=n; while(m>1){m>>=1;ln++;}
     ntt_init<P,G>(pi, ln);
@@ -378,30 +378,38 @@ static void ntt_xform(uint64_t* a, size_t n, bool inv, int pi) {
                 a[i+j]=nadd<P>(u,v); a[i+j+h]=nsub<P>(u,v);
             }
     }
-    if (inv) { uint64_t ni=npow<P>(n,P-2); for(size_t i=0;i<n;i++)a[i]=nmul<P>(a[i],ni); }
+    if (inv && scale) { uint64_t ni=npow<P>(n,P-2); for(size_t i=0;i<n;i++)a[i]=nmul<P>(a[i],ni); }
 }
 
 // ---- 4-step (cache-blocked) NTT for large transforms ----
-// When N exceeds L2/L3 cache, the standard NTT suffers from cache misses on
-// every butterfly. The 4-step Cooley-Tukey decomposition breaks N = N1*N2
-// into sub-transforms that fit in L1 cache (8KB each for N1=N2=1024).
+// The 4-step Cooley-Tukey decomposition breaks N = N1*N2 into sub-transforms
+// that fit in L1 cache (8KB each for N1=N2=1024), parallelized across all cores with OpenMP.
 //
-// Steps: (1) row NTT of size N2, (2) twiddle multiply w^(i*j),
-//        (3) blocked transpose, (4) row NTT of size N1, (5) transpose back.
+// Forward passes:
+// (1) blocked transpose N1 x N2 -> N2 x N1
+// (2) row NTT of length N1 on all N2 rows
+// (3) transpose N2 x N1 -> N1 x N2 with twiddle multiply w^(r*c)
+// (4) row NTT of length N2 on all N1 rows
+//
+// Inverse passes (exact adjoint/inverse sequence):
+// (1) inverse row NTT of length N2 on all N1 rows
+// (2) transpose N1 x N2 -> N2 x N1 with inverse twiddle w^(-r*c)
+// (3) inverse row NTT of length N1 on all N2 rows
+// (4) transpose N2 x N1 -> N1 x N2 with single final scale by n^(-1)
 
-// Blocked transpose: src is N1 x N2 (row-major), dst is N2 x N1 (row-major)
+// Blocked transpose: src is R x C (row-major), dst is C x R (row-major)
 // Block size 64x64 = 32KB (fits in L2 256KB), reduces block count vs 32x32
-static void blocked_transpose(uint64_t* dst, const uint64_t* src, size_t N1, size_t N2) {
+static void blocked_transpose(uint64_t* dst, const uint64_t* src, size_t R, size_t C) {
     const size_t B = 64;  // 64x64 block = 32KB, fits in L2
-    #pragma omp parallel for schedule(static) if(N1 > 256)
-    for (int bi = 0; bi < (int)N1; bi += (int)B) {
-        size_t bi_end = bi + B; if (bi_end > N1) bi_end = N1;
-        for (size_t bj = 0; bj < N2; bj += B) {
-            size_t bj_end = bj + B; if (bj_end > N2) bj_end = N2;
+    #pragma omp parallel for schedule(static) if(R > 128)
+    for (int bi = 0; bi < (int)R; bi += (int)B) {
+        size_t bi_end = bi + B; if (bi_end > R) bi_end = R;
+        for (size_t bj = 0; bj < C; bj += B) {
+            size_t bj_end = bj + B; if (bj_end > C) bj_end = C;
             for (size_t i = bi; i < bi_end; i++) {
-                const uint64_t* src_row = src + i * N2;
+                const uint64_t* src_row = src + i * C;
                 for (size_t j = bj; j < bj_end; j++) {
-                    dst[j * N1 + i] = src_row[j];
+                    dst[j * R + i] = src_row[j];
                 }
             }
         }
@@ -411,54 +419,88 @@ static void blocked_transpose(uint64_t* dst, const uint64_t* src, size_t N1, siz
 template<uint64_t P, uint64_t G>
 static void ntt_xform_4step(uint64_t* a, size_t n, bool inv, int pi) {
     if (n <= 1) return;
-    // Split n = N1 * N2, both powers of 2, roughly equal
     int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
-    int k1 = (k + 1) / 2;
+    int k1 = k / 2;
+    int k2 = k - k1;
     size_t N1 = (size_t)1 << k1;
-    size_t N2 = n / N1;
+    size_t N2 = (size_t)1 << k2;
 
-    // N-th root of unity
-    uint64_t w = npow<P>(G, (P - 1) / n);
-    if (inv) w = npow<P>(w, P - 2);
+    static thread_local std::vector<uint64_t> scratch;
+    if (scratch.size() < n) scratch.resize(n);
+    uint64_t* sc = scratch.data();
 
-    // Step 1: N2-point NTT on each row (N1 rows, each 8KB for N2=1024)
-    for (size_t i = 0; i < N1; i++) {
-        ntt_xform<P, G>(a + i * N2, N2, inv, pi);
-    }
+    if (!inv) {
+        // Pass 1: Transpose N1 x N2 -> N2 x N1
+        blocked_transpose(sc, a, N1, N2);
 
-    // Step 2: Twiddle multiplication: a[i*N2+j] *= w^(i*j)
-    // w^(i*j) = (w^i)^j. Precompute w^i for each row.
-    std::vector<uint64_t> wi(N1);
-    wi[0] = 1;
-    for (size_t i = 1; i < N1; i++) wi[i] = nmul<P>(wi[i - 1], w);
-    for (size_t i = 0; i < N1; i++) {
-        uint64_t wij = 1;  // w^(i*0)
-        const uint64_t wi_i = wi[i];
-        uint64_t* row = a + i * N2;
-        for (size_t j = 0; j < N2; j++) {
-            row[j] = nmul<P>(row[j], wij);
-            wij = nmul<P>(wij, wi_i);  // w^(i*(j+1))
+        // Pass 2: Row NTT of length N1 on all N2 rows
+        #pragma omp parallel for schedule(static) if(N2 > 4)
+        for (int r = 0; r < (int)N2; r++) {
+            ntt_xform<P, G>(sc + r * N1, N1, false, pi, false);
         }
-    }
 
-    // Step 3: Transpose N1 x N2 -> N2 x N1 (blocked for cache)
-    // Use thread_local buffer to avoid repeated 8MB allocations
-    static thread_local std::vector<uint64_t> tmp_buf;
-    if (tmp_buf.size() < n) tmp_buf.resize(n);
-    blocked_transpose(tmp_buf.data(), a, N1, N2);
+        // Pass 3: Transpose N2 x N1 -> N1 x N2 with twiddle w^(r*c)
+        uint64_t w = npow<P>(G, (P - 1) / n);
+        std::vector<uint64_t> wr(N2);
+        wr[0] = 1;
+        for (size_t r = 1; r < N2; r++) wr[r] = nmul<P>(wr[r - 1], w);
 
-    // Step 4: N1-point NTT on each row of transposed matrix (N2 rows)
-    for (size_t j = 0; j < N2; j++) {
-        ntt_xform<P, G>(tmp_buf.data() + j * N1, N1, inv, pi);
-    }
+        #pragma omp parallel for schedule(static) if(N2 > 4)
+        for (int r = 0; r < (int)N2; r++) {
+            uint64_t cur_tw = 1;
+            uint64_t step_tw = wr[r];
+            for (size_t c = 0; c < N1; c++) {
+                uint64_t val = sc[r * N1 + c];
+                a[c * N2 + r] = nmul<P>(val, cur_tw);
+                cur_tw = nmul<P>(cur_tw, step_tw);
+            }
+        }
 
-    // Step 5: Transpose back N2 x N1 -> N1 x N2
-    blocked_transpose(a, tmp_buf.data(), N2, N1);
+        // Pass 4: Row NTT of length N2 on all N1 rows
+        #pragma omp parallel for schedule(static) if(N1 > 4)
+        for (int r = 0; r < (int)N1; r++) {
+            ntt_xform<P, G>(a + r * N2, N2, false, pi, false);
+        }
+    } else {
+        // Pass 1: Inverse Row NTT of length N2 on all N1 rows
+        #pragma omp parallel for schedule(static) if(N1 > 4)
+        for (int r = 0; r < (int)N1; r++) {
+            ntt_xform<P, G>(a + r * N2, N2, true, pi, false);
+        }
 
-    // Inverse normalization (multiply by n^(-1) mod P)
-    if (inv) {
-        uint64_t ni = npow<P>(n, P - 2);
-        for (size_t i = 0; i < n; i++) a[i] = nmul<P>(a[i], ni);
+        // Pass 2: Transpose N1 x N2 -> N2 x N1 with inverse twiddle w^(-r*c)
+        uint64_t w = npow<P>(G, (P - 1) / n);
+        uint64_t winv = npow<P>(w, P - 2);
+        std::vector<uint64_t> winv_r(N1);
+        winv_r[0] = 1;
+        for (size_t r = 1; r < N1; r++) winv_r[r] = nmul<P>(winv_r[r - 1], winv);
+
+        #pragma omp parallel for schedule(static) if(N1 > 4)
+        for (int r = 0; r < (int)N1; r++) {
+            uint64_t cur_tw = 1;
+            uint64_t step_tw = winv_r[r];
+            for (size_t c = 0; c < N2; c++) {
+                uint64_t val = a[r * N2 + c];
+                sc[c * N1 + r] = nmul<P>(val, cur_tw);
+                cur_tw = nmul<P>(cur_tw, step_tw);
+            }
+        }
+
+        // Pass 3: Inverse Row NTT of length N1 on all N2 rows
+        #pragma omp parallel for schedule(static) if(N2 > 4)
+        for (int r = 0; r < (int)N2; r++) {
+            ntt_xform<P, G>(sc + r * N1, N1, true, pi, false);
+        }
+
+        // Pass 4: Transpose N2 x N1 -> N1 x N2 with scale by n^(-1)
+        uint64_t inv_n = npow<P>(n, P - 2);
+        #pragma omp parallel for schedule(static) if(N2 > 4)
+        for (int r = 0; r < (int)N2; r++) {
+            for (size_t c = 0; c < N1; c++) {
+                uint64_t val = sc[r * N1 + c];
+                a[c * N2 + r] = nmul<P>(val, inv_n);
+            }
+        }
     }
 }
 
@@ -466,7 +508,7 @@ static void ntt_xform_4step(uint64_t* a, size_t n, bool inv, int pi) {
 template<uint64_t P, uint64_t G>
 static void ntt_xform_auto(uint64_t* a, size_t n, bool inv, int pi) {
     if (n <= 1) return;
-    if (n >= (1u << 18)) {  // 262K+ elements, 2MB+ — exceeds L2, use 4-step
+    if (n >= (1u << 14)) {  // 16K+ elements — use cache-blocked 4-step
         ntt_xform_4step<P, G>(a, n, inv, pi);
     } else {
         ntt_xform<P, G>(a, n, inv, pi);
@@ -505,7 +547,8 @@ static std::vector<uint64_t> limbs_mul_ntt(const std::vector<uint64_t>& a, const
         if (pi == 0) { ntt_xform_auto<NTT_P1, 3>(ta.data(), n, false, 0); ntt_xform_auto<NTT_P1, 3>(tb.data(), n, false, 0); }
         else if (pi == 1) { ntt_xform_auto<NTT_P2, 3>(ta.data(), n, false, 1); ntt_xform_auto<NTT_P2, 3>(tb.data(), n, false, 1); }
         else { ntt_xform_auto<NTT_P3, 11>(ta.data(), n, false, 2); ntt_xform_auto<NTT_P3, 11>(tb.data(), n, false, 2); }
-        for (size_t i = 0; i < n; i++) ta[i] = nmul_p(p, ta[i], tb[i], barrettM);
+        #pragma omp parallel for schedule(static) if(n > 1000)
+        for (int i = 0; i < (int)n; i++) ta[i] = nmul_p(p, ta[i], tb[i], barrettM);
         if (pi == 0) ntt_xform_auto<NTT_P1, 3>(ta.data(), n, true, 0);
         else if (pi == 1) ntt_xform_auto<NTT_P2, 3>(ta.data(), n, true, 1);
         else ntt_xform_auto<NTT_P3, 11>(ta.data(), n, true, 2);
@@ -524,14 +567,16 @@ static std::vector<uint64_t> limbs_mul_ntt(const std::vector<uint64_t>& a, const
     // 3-loop approach: better ILP than merged loop (carry chain is isolated)
     std::vector<uint64_t> result(n, 0);
     // Step 1: x12 = r0 + P1 * ((r1 - r0) * inv12 mod P2)
-    for (size_t i = 0; i < n; i++) {
+    #pragma omp parallel for schedule(static) if(n > 1000)
+    for (int i = 0; i < (int)n; i++) {
         uint64_t rv1 = r0[i], rv2 = r1[i] % NTT_P2;
         uint64_t t1v = nmul<NTT_P2>(nsub<NTT_P2>(rv2, rv1 % NTT_P2), inv12);
         result[i] = rv1 + NTT_P1 * t1v;
     }
     // Step 2: compute partial remainder and quotient for each element
     std::vector<uint64_t> partial_rem(n), partial_q(n);
-    for (size_t i = 0; i < n; i++) {
+    #pragma omp parallel for schedule(static) if(n > 1000)
+    for (int i = 0; i < (int)n; i++) {
         uint64_t x12 = result[i];
         uint64_t r3 = r2[i] % NTT_P3;
         uint64_t t2 = nmul<NTT_P3>(nsub<NTT_P3>(r3, x12 % NTT_P3), inv123);
