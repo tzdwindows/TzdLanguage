@@ -1133,35 +1133,49 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
     bool useGPU = bigint_gpu_suitable(maxDigits);
 
     auto bt0 = std::chrono::steady_clock::now();
-    auto la = limbs_from_str(a), lb = limbs_from_str(b);
-    auto bt1 = std::chrono::steady_clock::now();
-
-    std::vector<uint64_t> lr;
     if (useGPU) {
         try {
-            lr = bigint_mul_gpu_ntt_limbs(la, lb);
+            r = bigint_mul_gpu_ntt_str(a, b);
+            auto bt3 = std::chrono::steady_clock::now();
+            if (bigTime) {
+                fprintf(stderr, "[BigTime GPU] digits=%zu  total=%.2fms  sz=%zu  pre=%.30s  suf=%.30s\n",
+                        maxDigits,
+                        std::chrono::duration<double, std::milli>(bt3 - bt0).count(),
+                        r.size(),
+                        r.c_str(),
+                        r.size() > 30 ? r.c_str() + r.size() - 30 : r.c_str());
+            }
+            bool neg = an != bn;
+            return (neg && r != "0") ? "-" + r : r;
         } catch (const std::exception& e) {
             fprintf(stderr, "[GPU Error] %s\n", e.what());
-            lr = limbs_mul(la, lb);
+            // Fall through to CPU
         } catch (...) {
             fprintf(stderr, "[GPU Error] unknown exception\n");
-            lr = limbs_mul(la, lb);
+            // Fall through to CPU
         }
-    } else {
-        lr = limbs_mul(la, lb);
     }
+
+    auto bt1 = std::chrono::steady_clock::now();
+    auto la = limbs_from_str(a), lb = limbs_from_str(b);
     auto bt2 = std::chrono::steady_clock::now();
 
-    r = limbs_to_str(lr);
+    auto lr = limbs_mul(la, lb);
     auto bt3 = std::chrono::steady_clock::now();
 
+    r = limbs_to_str(lr);
+    auto bt4 = std::chrono::steady_clock::now();
+
     if (bigTime) {
-        fprintf(stderr, "[BigTime] digits=%zu  str2limb=%.2fms  ntt=%.2fms  limb2str=%.2fms  total=%.2fms\n",
+        fprintf(stderr, "[BigTime CPU] digits=%zu  str2limb=%.2fms  ntt=%.2fms  limb2str=%.2fms  total=%.2fms  sz=%zu  pre=%.30s  suf=%.30s\n",
                 maxDigits,
-                std::chrono::duration<double, std::milli>(bt1 - bt0).count(),
                 std::chrono::duration<double, std::milli>(bt2 - bt1).count(),
                 std::chrono::duration<double, std::milli>(bt3 - bt2).count(),
-                std::chrono::duration<double, std::milli>(bt3 - bt0).count());
+                std::chrono::duration<double, std::milli>(bt4 - bt3).count(),
+                std::chrono::duration<double, std::milli>(bt4 - bt1).count(),
+                r.size(),
+                r.c_str(),
+                r.size() > 30 ? r.c_str() + r.size() - 30 : r.c_str());
     }
 
     bool neg = an != bn;
