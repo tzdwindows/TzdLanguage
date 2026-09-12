@@ -621,6 +621,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             interpreter->m_forceInterpreter = true;
             interpreter->m_useBytecodeVM = false;
         }
+        // 4d. ANTLR4 解析耗时输出
+        else if (arg == "--antlrTime") {
+            interpreter->m_antlrTiming = true;
+        }
         // 5. 调试端口/主机
         else if (arg.rfind("--debug-port=", 0) == 0) {
             size_t eqPos = arg.find('=');

@@ -414,14 +414,28 @@ extern "C" {
         if (!a || !b) return make_double(0);
         TzdValue* v1 = (TzdValue*)a;
         TzdValue* v2 = (TzdValue*)b;
-        if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE) {
-            return make_double(v1->dVal + v2->dVal);
-        }
+        // String concatenation (highest priority for +)
         if (v1->type == TzdValue::STRING || v2->type == TzdValue::STRING) {
             TzdValue* res = g_JitPool.next();
             res->type = TzdValue::STRING;
             res->sVal = TzdInterpreter::getAsString(*v1) + TzdInterpreter::getAsString(*v2);
             return res;
+        }
+        // BIGINT/RATIONAL arithmetic (exact)
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT ||
+            v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+            if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+                std::string r = rational_add(to_rational_str(*v1), to_rational_str(*v2));
+                if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+                TzdValue* res = g_JitPool.next();
+                res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+                res->sVal = r; return res;
+            }
+            std::string r = bigint_add(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
+        if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE) {
+            return make_double(v1->dVal + v2->dVal);
         }
         return make_double(TzdInterpreter::getAsDoubleInternal(*v1) + TzdInterpreter::getAsDoubleInternal(*v2));
     }
@@ -429,6 +443,18 @@ extern "C" {
     void* rt_op_sub(void* a, void* b) {
         TzdValue* v1 = (TzdValue*)a;
         TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT ||
+            v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+            if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+                std::string r = rational_sub(to_rational_str(*v1), to_rational_str(*v2));
+                if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+                TzdValue* res = g_JitPool.next();
+                res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+                res->sVal = r; return res;
+            }
+            std::string r = bigint_sub(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
         if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE) {
             return make_double(v1->dVal - v2->dVal);
         }
@@ -438,39 +464,122 @@ extern "C" {
 
     // 乘法
     void* rt_op_mul(void* a, void* b) {
-        // **优化 5: 避免对指针的多次解引用 (同上)**
         TzdValue* v1 = (TzdValue*)a;
         TzdValue* v2 = (TzdValue*)b;
-
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT ||
+            v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+            if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+                std::string r = rational_mul(to_rational_str(*v1), to_rational_str(*v2));
+                if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+                TzdValue* res = g_JitPool.next();
+                res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+                res->sVal = r; return res;
+            }
+            std::string r = bigint_mul(to_bigint_str(*v1), to_bigint_str(*v2));
+            if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
         if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE) {
             return make_double(v1->dVal * v2->dVal);
         }
-
         return make_double(TzdInterpreter::getAsDoubleInternal(*v1) * TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
     // 除法
     void* rt_op_div(void* a, void* b) {
-        double dv = TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b);
-        if (dv == 0) {
-            return make_double(0.0);
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT ||
+            v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+            if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+                std::string r = rational_div(to_rational_str(*v1), to_rational_str(*v2));
+                if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+                TzdValue* res = g_JitPool.next();
+                res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+                res->sVal = r; return res;
+            }
+            std::string r = bigint_div(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
         }
-        return make_double(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a) / dv);
+        double dv = TzdInterpreter::getAsDoubleInternal(*v2);
+        if (dv == 0) return make_double(0.0);
+        return make_double(TzdInterpreter::getAsDoubleInternal(*v1) / dv);
     }
 
     // 取模
     void* rt_op_mod(void* a, void* b) {
-        return make_double(fmod(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a), TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b)));
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT) {
+            std::string r = bigint_mod(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
+        return make_double(fmod(TzdInterpreter::getAsDoubleInternal(*v1), TzdInterpreter::getAsDoubleInternal(*v2)));
     }
 
     // 幂运算
     void* rt_op_pow(void* a, void* b) {
-        return make_double(pow(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a), TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b)));
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        // Integer power → exact BIGINT (like Python)
+        bool leftIsInt = v1->type >= TzdValue::SBYTE && v1->type <= TzdValue::ULONG;
+        bool rightIsInt = v2->type >= TzdValue::SBYTE && v2->type <= TzdValue::ULONG;
+        if ((leftIsInt || v1->type == TzdValue::BIGINT) && rightIsInt) {
+            std::string base = to_bigint_str(*v1), exp = to_bigint_str(*v2);
+            std::string r = bigint_pow(base, exp);
+            if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
+        // JIT converts all integer literals to DOUBLE, so check for whole-number doubles
+        // that are within safe integer range (< 2^53). This gives exact BIGINT results
+        // for expressions like 10^100 even when JIT-compiled.
+        if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE) {
+            double d1 = v1->dVal, d2 = v2->dVal;
+            if (d1 == std::floor(d1) && d2 == std::floor(d2) &&
+                std::abs(d1) < 1e15 && std::abs(d2) < 1e15) {
+                // Both are whole numbers — use exact BIGINT power
+                std::string base = std::to_string((long long)d1);
+                std::string exp = std::to_string((long long)d2);
+                if (bigint_is_neg(exp)) {
+                    // Negative exponent → rational (1 / base^|exp|)
+                    std::string den = bigint_pow(base, bigint_abs(exp));
+                    if (den == "inf") return make_double(std::numeric_limits<double>::infinity());
+                    std::string r = rational_make("1", den);
+                    TzdValue* res = g_JitPool.next();
+                    res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+                    res->sVal = r; return res;
+                }
+                std::string r = bigint_pow(base, exp);
+                if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+                TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+            }
+        }
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL) {
+            std::string r = rational_pow(to_rational_str(*v1), to_bigint_str(*v2));
+            if (r == "inf") return make_double(std::numeric_limits<double>::infinity());
+            TzdValue* res = g_JitPool.next();
+            res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+            res->sVal = r; return res;
+        }
+        return make_double(pow(TzdInterpreter::getAsDoubleInternal(*v1), TzdInterpreter::getAsDoubleInternal(*v2)));
     }
 
     // 取反 (负号)
     void* rt_op_neg(void* a) {
-        return make_double(-TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a));
+        TzdValue* v = (TzdValue*)a;
+        if (v->type == TzdValue::BIGINT) {
+            std::string r = bigint_sub("0", v->sVal);
+            TzdValue* res = g_JitPool.next(); res->type = TzdValue::BIGINT; res->sVal = r; return res;
+        }
+        if (v->type == TzdValue::RATIONAL) {
+            std::string num, den;
+            rational_parse(v->sVal, num, den);
+            std::string r = rational_make(bigint_sub("0", num), den);
+            TzdValue* res = g_JitPool.next();
+            res->type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+            res->sVal = r; return res;
+        }
+        return make_double(-TzdInterpreter::getAsDoubleInternal(*v));
     }
 
     bool rt_to_bool(void* a) {
@@ -484,28 +593,52 @@ extern "C" {
 
     void* rt_op_gt(void* a, void* b) {
         if (!a || !b) return make_bool(false);
-        return make_bool(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a) > TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b));
+        TzdValue* v1 = (TzdValue*)a; TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
+            return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) > 0);
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+            return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) > 0);
+        return make_bool(TzdInterpreter::getAsDoubleInternal(*v1) > TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
     void* rt_op_lt(void* a, void* b) {
         if (!a || !b) return make_bool(false);
-        return make_bool(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a) < TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b));
+        TzdValue* v1 = (TzdValue*)a; TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
+            return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) < 0);
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+            return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) < 0);
+        return make_bool(TzdInterpreter::getAsDoubleInternal(*v1) < TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
     void* rt_op_ge(void* a, void* b) {
         if (!a || !b) return make_bool(false);
-        return make_bool(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a) >= TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b));
+        TzdValue* v1 = (TzdValue*)a; TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
+            return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) >= 0);
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+            return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) >= 0);
+        return make_bool(TzdInterpreter::getAsDoubleInternal(*v1) >= TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
     void* rt_op_le(void* a, void* b) {
         if (!a || !b) return make_bool(false);
-        return make_bool(TzdInterpreter::getAsDoubleInternal(*(TzdValue*)a) <= TzdInterpreter::getAsDoubleInternal(*(TzdValue*)b));
+        TzdValue* v1 = (TzdValue*)a; TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
+            return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) <= 0);
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+            return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) <= 0);
+        return make_bool(TzdInterpreter::getAsDoubleInternal(*v1) <= TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
     void* rt_op_eq(void* a, void* b) {
         if (!a || !b) return make_bool(false);
         TzdValue* v1 = (TzdValue*)a;
         TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
+            return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) == 0);
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+            return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) == 0);
         if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE)
             return make_bool(v1->dVal == v2->dVal);
         if (v1->type == TzdValue::STRING && v2->type == TzdValue::STRING)
@@ -1112,6 +1245,37 @@ extern "C" {
         v->type = TzdValue::NATIVE_FUNCTION;
         v->name = name;
         v->ptrVal = addr;
+        return v;
+    }
+
+    void* rt_create_bigint(const char* digits) {
+        // Create a BIGINT TzdValue from a decimal digit string
+        TzdValue* v = g_JitPool.next();
+        if (!digits || !*digits) {
+            v->type = TzdValue::BIGINT;
+            v->sVal = "0";
+            return v;
+        }
+        // Fast path: find start of significant digits (skip sign + leading zeros)
+        const char* p = digits;
+        bool neg = (*p == '-');
+        if (neg || *p == '+') p++;
+        const char* digitsStart = p;
+        while (*p == '0') p++;
+        if (!*p) {
+            // All zeros
+            v->type = TzdValue::BIGINT;
+            v->sVal = "0";
+            return v;
+        }
+        // Build the string in one pass — no redundant copies
+        size_t significantLen = strlen(p);
+        std::string s;
+        s.reserve(significantLen + (neg ? 1 : 0));
+        if (neg) s.push_back('-');
+        s.append(p, significantLen);
+        v->type = TzdValue::BIGINT;
+        v->sVal = std::move(s);
         return v;
     }
 
@@ -2048,6 +2212,7 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_create_num", { m_doubleTy });
     addFunc("rt_create_str", { m_ptrTy });
+    addFunc("rt_create_bigint", { m_ptrTy }, m_ptrTy);
     addFunc("rt_create_bool", { m_boolTy });
     addFunc("rt_create_null", {});
     addFunc("rt_create_inst", { m_ptrTy });
@@ -2316,6 +2481,7 @@ void TzdJitEngine::registerRuntimeSymbols() {
 
     bind("rt_create_num", (void*)&rt_create_num);
     bind("rt_create_str", (void*)&rt_create_str);
+    bind("rt_create_bigint", (void*)&rt_create_bigint);
     bind("rt_create_bool", (void*)&rt_create_bool);
     bind("rt_create_null", (void*)&rt_create_null);
     bind("rt_op_add", (void*)&rt_op_add);
@@ -2912,8 +3078,40 @@ std::any TzdCompiler::visitIdExpr(TzdLangParser::IdExprContext* ctx) {
 }
 
 std::any TzdCompiler::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
-    double val = std::stod(ctx->getText());
-    return std::any((Value*)ConstantFP::get(m_doubleTy, val));
+    std::string raw = ctx->getText();
+    // Fast path: if the number has too many digits for int64 (>19), skip stoll
+    // entirely — stoll reads the WHOLE string before throwing, which is O(n)
+    // for multi-megabyte literals.
+    size_t digitStart = (raw.size() > 0 && (raw[0] == '-' || raw[0] == '+')) ? 1 : 0;
+    bool isHex = (raw.size() > 2 + digitStart && raw[digitStart] == '0' &&
+                  (raw[digitStart+1] == 'x' || raw[digitStart+1] == 'X'));
+    if (!isHex && raw.size() - digitStart > 19) {
+        // Directly create BIGINT — no stoll, no validation loop
+        Value* str = m_builder.CreateGlobalStringPtr(raw);
+        Value* bigintVal = m_builder.CreateCall(getRtFunc("rt_create_bigint"), { str });
+        return std::any((Value*)bigintVal);
+    }
+    // Try integer first — preserves precision for small ints
+    try {
+        long long val = std::stoll(raw);
+        return std::any((Value*)ConstantFP::get(m_doubleTy, (double)val));
+    } catch (...) {
+        // Overflow: check if it's a valid big integer
+        bool valid = true;
+        size_t start = (raw[0] == '-') ? 1 : 0;
+        for (size_t i = start; i < raw.size(); ++i) {
+            if (raw[i] < '0' || raw[i] > '9') { valid = false; break; }
+        }
+        if (valid && raw.size() > start + 1) {
+            // BIGINT literal — create a runtime BIGINT TzdValue via rt_create_bigint
+            Value* str = m_builder.CreateGlobalStringPtr(raw);
+            Value* bigintVal = m_builder.CreateCall(getRtFunc("rt_create_bigint"), { str });
+            return std::any((Value*)bigintVal);
+        }
+        // Non-numeric, try double
+        double val = std::stod(raw);
+        return std::any((Value*)ConstantFP::get(m_doubleTy, val));
+    }
 }
 
 std::any TzdCompiler::visitFloatExpr(TzdLangParser::FloatExprContext* ctx) {
@@ -2930,29 +3128,21 @@ std::any TzdCompiler::visitStringExpr(TzdLangParser::StringExprContext* ctx) {
 std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) {
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
-    if (!ctx->PLUS()) {
-        Value* lNative = L->getType()->isDoubleTy() ? L : inlineToDoubleFast(L);
-        Value* rNative = R->getType()->isDoubleTy() ? R : inlineToDoubleFast(R);
-        Value* res = m_builder.CreateFSub(lNative, rNative, "subtmp");
-        return std::any((Value*)res);
+
+    // If either operand is a pointer (BIGINT/RATIONAL/string/etc.),
+    // use runtime functions which handle all TzdValue types.
+    if (!L->getType()->isDoubleTy() || !R->getType()->isDoubleTy()) {
+        Value* boxedL = boxToTzdValue(L);
+        Value* boxedR = boxToTzdValue(R);
+        const char* fnName = ctx->PLUS() ? "rt_op_add" : "rt_op_sub";
+        return std::any((Value*)m_builder.CreateCall(getRtFunc(fnName), { boxedL, boxedR }));
     }
-    if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy()) {
-        Value* res = m_builder.CreateFAdd(L, R, "addtmp");
-        return std::any((Value*)res);
+
+    // Both doubles: fast path
+    if (ctx->PLUS()) {
+        return std::any((Value*)m_builder.CreateFAdd(L, R, "addtmp"));
     }
-    if (L->getType()->isDoubleTy() && R->getType()->isPointerTy()) {
-        Value* rNative = inlineToDoubleFast(R);
-        Value* res = m_builder.CreateFAdd(L, rNative, "addtmp");
-        return std::any((Value*)res);
-    }
-    if (R->getType()->isDoubleTy() && L->getType()->isPointerTy()) {
-        Value* lNative = inlineToDoubleFast(L);
-        Value* res = m_builder.CreateFAdd(lNative, R, "addtmp");
-        return std::any((Value*)res);
-    }
-    Value* boxedL = boxToTzdValue(L);
-    Value* boxedR = boxToTzdValue(R);
-    Value* res = m_builder.CreateCall(getRtFunc("rt_op_add"), { boxedL, boxedR });
+    Value* res = m_builder.CreateFSub(L, R, "subtmp");
     return std::any((Value*)res);
 }
 std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* ctx) {
@@ -3394,17 +3584,24 @@ std::any TzdCompiler::visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprC
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
 
-    Value* lNative = L->getType()->isDoubleTy() ? L : inlineToDoubleFast(L);
-    Value* rNative = R->getType()->isDoubleTy() ? R : inlineToDoubleFast(R);
+    // If either operand is a pointer (BIGINT/RATIONAL/string/etc.), use
+    // runtime functions which handle all TzdValue types correctly.
+    if (!L->getType()->isDoubleTy() || !R->getType()->isDoubleTy()) {
+        Value* boxedL = boxToTzdValue(L);
+        Value* boxedR = boxToTzdValue(R);
+        const char* fnName = ctx->MUL() ? "rt_op_mul" : (ctx->DIV() ? "rt_op_div" : "rt_op_mod");
+        return std::any((Value*)m_builder.CreateCall(getRtFunc(fnName), { boxedL, boxedR }));
+    }
 
+    // Both doubles: fast path (no boxing needed)
     Value* res = nullptr;
-    if (ctx->MUL()) res = m_builder.CreateFMul(lNative, rNative, "multmp");
-    else if (ctx->DIV()) res = m_builder.CreateFDiv(lNative, rNative, "divtmp");
+    if (ctx->MUL()) res = m_builder.CreateFMul(L, R, "multmp");
+    else if (ctx->DIV()) res = m_builder.CreateFDiv(L, R, "divtmp");
     else {
         // Adaptive integer specialization for %: fmod is a slow library call,
         // but srem is a single idiv instruction. Convert to i64 for integer modulo.
-        Value* lInt = m_builder.CreateFPToSI(lNative, Type::getInt64Ty(m_context), "l2int");
-        Value* rInt = m_builder.CreateFPToSI(rNative, Type::getInt64Ty(m_context), "r2int");
+        Value* lInt = m_builder.CreateFPToSI(L, Type::getInt64Ty(m_context), "l2int");
+        Value* rInt = m_builder.CreateFPToSI(R, Type::getInt64Ty(m_context), "r2int");
         Value* remInt = m_builder.CreateSRem(lInt, rInt, "modint");
         res = m_builder.CreateSIToFP(remInt, m_doubleTy, "int2dbl");
     }
@@ -3413,7 +3610,10 @@ std::any TzdCompiler::visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprC
 std::any TzdCompiler::visitPowerExpr(TzdLangParser::PowerExprContext* ctx) {
     Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
-    return (Value*)m_builder.CreateCall(getRtFunc("rt_op_pow"), { L, R });
+    // Box operands to TzdValue* — rt_op_pow handles BIGINT/RATIONAL/double
+    Value* boxedL = boxToTzdValue(L);
+    Value* boxedR = boxToTzdValue(R);
+    return (Value*)m_builder.CreateCall(getRtFunc("rt_op_pow"), { boxedL, boxedR });
 }
 std::any TzdCompiler::visitUnaryExpr(TzdLangParser::UnaryExprContext* ctx) {
     Value* V = std::any_cast<Value*>(visit(ctx->expression()));

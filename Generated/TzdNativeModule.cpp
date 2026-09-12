@@ -811,8 +811,16 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
             { "log", "val", "?? e ???????????" }, { "log10", "val", "?? 10 ??????????" }, { "exp", "val", "??????? e^x" },
             { "pow", "base, exp", "?????????? base^exp" },
             { "ceil", "val", "???????" }, { "floor", "val", "???????" }, { "round", "val", "???????????" },
-            { "factorial", "n", "?????? (n!)" },
-            { "toFraction", "val, [tolerance=1e-5]", "???????????????????????????????????????" },
+            { "factorial", "n", "阶乘 (n!)" },
+            { "bigintFactorial", "n", "大数阶乘（任意精度 n!）" },
+            { "powmod", "base, exp, mod", "模幂运算 base^exp mod m" },
+            { "isBigint", "x", "检查 x 是否为 BIGINT 类型" },
+            { "bigintGcd", "a, b", "大整数最大公约数" },
+            { "setBigIntMaxDigits", "n", "设置 BIGINT 最大位数（防止内存耗尽）" },
+            { "getBigIntMaxDigits", "", "获取 BIGINT 最大位数限制" },
+            { "bigint", "x", "将数值转换为 BIGINT 类型" },
+            { "rational", "num, den", "创建分数 num/den" },
+            { "toFraction", "val, [tolerance=1e-5]", "将浮点数转为精确分数" },
             { "derivative", "func, x", "?????????????????????????????? x ???????????" },
             { "solveEq", "func, [low=-100], [high=100], [asFraction=false]", "??????????????????????????????? func(x) = 0 ???" },
             { "solveSym", "eqStr, [var='x']", "???? Fintamath ??????????????????????????????" },
@@ -1944,6 +1952,146 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
     reg("E", [](auto args) -> TzdValue { return TzdValue(2.71828182845904523536); });
     reg("INF", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::infinity()); });
     reg("NAN", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::quiet_NaN()); });
+
+    // --- BIGINT (arbitrary precision integer) functions ---
+    // bigint(x): convert any numeric value to BIGINT
+    reg("bigint", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue();
+        const TzdValue& v = args[0];
+        if (v.type == TzdValue::BIGINT) return v;
+        std::string s;
+        if (v.type == TzdValue::STRING) s = v.sVal;
+        else if (v.type == TzdValue::ULONG) s = std::to_string(v.ulVal);
+        else if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT) {
+            double d = v.dVal;
+            s = std::to_string((long long)d);
+        } else s = std::to_string(v.lVal);
+        TzdValue r; r.type = TzdValue::BIGINT; r.sVal = s;
+        return r;
+    });
+
+    // bigintFactorial(n): factorial using arbitrary precision
+    reg("bigintFactorial", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue(1LL);
+        long long n = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
+        if (n < 0) return TzdValue(0LL);
+        if (n <= 1) { TzdValue r; r.type = TzdValue::BIGINT; r.sVal = "1"; return r; }
+        // Safety: factorial(n) has roughly n*log10(n) digits.
+        // Reject if n is so large the result would exceed the digit limit.
+        // factorial(1000000) ≈ 5.5M digits, factorial(10000000) ≈ 65M digits.
+        if (n > 1000000) {
+            TzdValue r; r.type = TzdValue::BIGINT; r.sVal = "inf"; return r;
+        }
+        std::string result = "1";
+        for (long long i = 2; i <= n; ++i) {
+            result = bigint_mul(result, std::to_string(i));
+            if (result == "inf" || bigint_too_large(result.size())) {
+                TzdValue r; r.type = TzdValue::BIGINT; r.sVal = "inf"; return r;
+            }
+        }
+        TzdValue r; r.type = TzdValue::BIGINT; r.sVal = result;
+        return r;
+    });
+
+    // setBigIntMaxDigits(n): configure the maximum digit count for BIGINT results
+    reg("setBigIntMaxDigits", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue(0LL);
+        long long n = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
+        setBigIntMaxDigits((size_t)n);
+        return TzdValue((long long)getBigIntMaxDigits());
+    });
+
+    // getBigIntMaxDigits(): get the current BIGINT digit limit
+    reg("getBigIntMaxDigits", [](auto args) -> TzdValue {
+        return TzdValue((long long)getBigIntMaxDigits());
+    });
+
+    // powmod(base, exp, mod): modular exponentiation
+    reg("powmod", [](auto args) -> TzdValue {
+        if (args.size() < 3) return TzdValue(0LL);
+        std::string base = to_bigint_str(args[0]);
+        std::string exp = to_bigint_str(args[1]);
+        std::string mod = to_bigint_str(args[2]);
+        std::string r = bigint_powmod(base, exp, mod);
+        TzdValue v; v.type = TzdValue::BIGINT; v.sVal = r;
+        return v;
+    });
+
+    // isBigint(x): check if value is BIGINT type
+    reg("isBigint", [](auto args) -> TzdValue {
+        return TzdValue(!args.empty() && args[0].type == TzdValue::BIGINT);
+    });
+
+    // bigintGcd(a, b): greatest common divisor using big integers
+    reg("bigintGcd", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue(0LL);
+        std::string a = bigint_abs(to_bigint_str(args[0]));
+        std::string b = bigint_abs(to_bigint_str(args[1]));
+        while (b != "0") {
+            std::string r = bigint_divmod_abs(a, b, true);
+            a = b; b = r;
+        }
+        TzdValue v; v.type = TzdValue::BIGINT; v.sVal = a.empty() ? "0" : a;
+        return v;
+    });
+
+    // --- RATIONAL (exact fraction) functions ---
+    // rational(num, den): create an exact fraction
+    reg("rational", [](auto args) -> TzdValue {
+        if (args.size() < 2) {
+            // Single arg: convert number to rational
+            if (args.empty()) return TzdValue();
+            std::string s = to_rational_str(args[0]);
+            TzdValue v; v.type = (s.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = s;
+            return v;
+        }
+        return make_rational(to_bigint_str(args[0]), to_bigint_str(args[1]));
+    });
+
+    // toFraction(x): convert a double to an exact fraction
+    reg("toFraction", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue();
+        const TzdValue& v = args[0];
+        if (v.type == TzdValue::RATIONAL) return v;
+        if (v.type == TzdValue::BIGINT) return v;
+        // Convert double to fraction using continued fraction approximation
+        double d = TzdInterpreter::getAsDoubleInternal(v);
+        bool neg = d < 0;
+        d = std::abs(d);
+        // Continued fraction algorithm for exact representation
+        long long num = 1, den = 1;
+        double intPart = std::floor(d);
+        double frac = d - intPart;
+        if (frac < 1e-15) {
+            num = (long long)intPart; den = 1;
+        } else {
+            // Simple approach: multiply by power of 10 until integer
+            long long n = (long long)(d * 1000000LL + 0.5);
+            long long d2 = 1000000LL;
+            // Reduce by GCD
+            auto gcd = [](long long a, long long b) { while (b) { a %= b; std::swap(a, b); } return a; };
+            long long g = gcd(n, d2);
+            num = n / g; den = d2 / g;
+        }
+        if (neg) num = -num;
+        return make_rational(std::to_string(num), std::to_string(den));
+    });
+
+    // rationalAdd(a, b): exact fraction addition
+    reg("rationalAdd", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue();
+        std::string r = rational_add(to_rational_str(args[0]), to_rational_str(args[1]));
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v;
+    });
+
+    // rationalMul(a, b): exact fraction multiplication
+    reg("rationalMul", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue();
+        std::string r = rational_mul(to_rational_str(args[0]), to_rational_str(args[1]));
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v;
+    });
 }
 
 // ============================================================================

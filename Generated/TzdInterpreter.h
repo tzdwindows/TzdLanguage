@@ -105,7 +105,9 @@ struct TzdValue {
         ERROR_VAL,       // Error object or status (similar to Go error)
         FUTURE,          // Asynchronous Future / Promise handle
         ANY_REF,         // Generic type-erased reference (std::any wrapper)
-        TENSOR           // PyTorch tensor (auto-managed VRAM lifecycle)
+        TENSOR,          // PyTorch tensor (auto-managed VRAM lifecycle)
+        BIGINT,          // Arbitrary-precision integer (stored as decimal string in sVal)
+        RATIONAL         // Exact fraction "num/den" stored in sVal (uses BIGINT arithmetic)
     };
     std::vector<std::string> annotations;
     Type type = NONE;
@@ -192,6 +194,54 @@ void tzdPoolSlotReleaseInstance(TzdValue* v);
 
 // Stack overflow detection (defined in TzdInterpreter.cpp) is shared by the interpreter and the JIT call bridge.
 bool tzdStackNearOverflow();
+
+// --- BIGINT safety limits ---
+// Maximum digits allowed in a BIGINT result. 10M digits ≈ 10MB per number.
+// Operations that would produce results exceeding this return "inf" (or 0 for factorial).
+// Configurable at runtime via setBigIntMaxDigits(n).
+static const size_t BIGINT_DEFAULT_MAX_DIGITS = 10000000;
+size_t getBigIntMaxDigits();
+void setBigIntMaxDigits(size_t n);
+bool bigint_too_large(size_t digitCount);
+
+// --- Big integer (arbitrary precision) functions ---
+// Defined in TzdInterpreter.cpp, usable from TzdNativeModule.cpp and bytecode VM.
+std::string bigint_add(const std::string& a, const std::string& b);
+std::string bigint_sub(const std::string& a, const std::string& b);
+std::string bigint_mul(const std::string& a, const std::string& b);
+std::string bigint_div(const std::string& a, const std::string& b);
+std::string bigint_mod(const std::string& a, const std::string& b);
+std::string bigint_pow(const std::string& base, const std::string& exp);
+std::string bigint_powmod(const std::string& base, const std::string& exp, const std::string& mod);
+std::string bigint_normalize(const std::string& s);
+std::string bigint_abs(const std::string& s);
+bool bigint_is_neg(const std::string& s);
+int bigint_compare(const std::string& a, const std::string& b);
+std::string bigint_divmod_abs(const std::string& a, const std::string& b, bool wantMod);
+std::string to_bigint_str(const TzdValue& v);
+TzdValue make_bigint(const std::string& digits);
+bool is_bigint(const TzdValue& v);
+bool needs_bigint(const TzdValue& a, const TzdValue& b);
+
+// FFT-based multiplication using ATen/libtorch (O(n log n) vs Karatsuba O(n^1.585))
+// Implemented in TzdPyTorch.cpp. Used automatically by bigint_mul for large numbers.
+std::string bigint_mul_fft(const std::string& a, const std::string& b);
+bool bigint_fft_available();
+bool bigint_gpu_suitable(size_t digitCount);
+
+// --- Rational (exact fraction) functions ---
+// Stored as "num/den" in sVal. Uses BIGINT arithmetic for numerator/denominator.
+std::string rational_make(const std::string& num, const std::string& den);
+std::string rational_add(const std::string& a, const std::string& b);
+std::string rational_sub(const std::string& a, const std::string& b);
+std::string rational_mul(const std::string& a, const std::string& b);
+std::string rational_div(const std::string& a, const std::string& b);
+std::string rational_pow(const std::string& base, const std::string& exp);
+int rational_compare(const std::string& a, const std::string& b);
+std::string to_rational_str(const TzdValue& v);
+TzdValue make_rational(const std::string& num, const std::string& den);
+bool needs_rational(const TzdValue& a, const TzdValue& b);
+void rational_parse(const std::string& s, std::string& num, std::string& den);
 
 struct JitValuePool {
     static const size_t POOL_SIZE = 4096;
@@ -500,6 +550,7 @@ public:
     std::vector<std::string> m_debugFileStack;
     bool m_silentMode = false;
     bool m_noJit = false; // When true, disable all JIT compilation (interpreter-only mode)
+    bool m_antlrTiming = false; // --antlrTime: print ANTLR4 parse timings per script
 
     // Bytecode VM integration: when set, script functions are executed
     // via the bytecode VM instead of tree-walking interpretation.

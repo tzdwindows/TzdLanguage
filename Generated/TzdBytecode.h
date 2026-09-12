@@ -85,7 +85,7 @@ struct Instruction {
 
 // Constant pool entry
 struct ConstEntry {
-    enum Type { DOUBLE, STRING, INT, BOOL } type;
+    enum Type { DOUBLE, STRING, INT, BOOL, BIGINT } type;
     double dVal;
     std::string sVal;
     int64_t iVal;
@@ -212,6 +212,7 @@ private:
     int addConstant(const std::string& v);
     int addConstant(int64_t v);
     int addConstant(bool v);
+    int addConstant(const ConstEntry& e);
 
     void emit(OpCode op, int32_t arg1 = 0, int32_t arg2 = 0);
     size_t here() const;                    // index of next instruction to be emitted

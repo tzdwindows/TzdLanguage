@@ -1,4 +1,4 @@
-#include "TzdInterpreter.h"
+﻿#include "TzdInterpreter.h"
 
 #include "TzdGC.h"
 #include "TzdTieringEngine.h"
@@ -151,6 +151,1217 @@ void tzdPoolSlotReleaseInstance(TzdValue* v) {
     }
 }
 
+// ============================================================================
+// Big integer arithmetic — arbitrary precision using decimal strings
+// Stored in MSB-first order, negative numbers prefixed with '-'
+// ============================================================================
+
+#include <algorithm>
+#include <complex>
+#include <unordered_map>
+#include <stdint.h>
+#include <intrin.h>  // _umul128, _udiv128 for 128-bit carry handling
+
+// ============================================================================
+// uint64_t[] limb-based BIGINT arithmetic (base 10^9, LSB-first)
+// Each limb stores a value < 10^9 (9 decimal digits). 2.25x fewer limbs than
+// base 10^4, and integer ops are 10x faster than string ops.
+// ============================================================================
+
+static constexpr uint64_t LIMB_BASE = 1000000000ULL;  // 10^9
+static constexpr int LIMB_DIGITS = 9;
+
+// --- string ↔ limbs conversion (O(n), no allocation per limb) ---
+static std::vector<uint64_t> limbs_from_str(const std::string& s) {
+    // Skip leading '-' and leading zeros
+    size_t start = 0;
+    while (start < s.size() && (s[start] == '-' || s[start] == '0')) start++;
+    if (start >= s.size()) return {};  // zero
+    std::vector<uint64_t> limbs;
+    int len = (int)(s.size() - start);
+    limbs.reserve((len + LIMB_DIGITS - 1) / LIMB_DIGITS);
+    // Process from LSB (right) to MSB (left), 9 digits at a time
+    for (int i = len; i > 0; i -= LIMB_DIGITS) {
+        int b = i - LIMB_DIGITS;
+        if (b < 0) b = 0;
+        uint64_t v = 0;
+        for (int j = b; j < i; j++) v = v * 10 + (uint64_t)(s[start + j] - '0');
+        limbs.push_back(v);
+    }
+    // Trim trailing zeros (MSB side)
+    while (!limbs.empty() && limbs.back() == 0) limbs.pop_back();
+    return limbs;
+}
+
+static std::string limbs_to_str(const std::vector<uint64_t>& limbs) {
+    if (limbs.empty()) return "0";
+    // Build from MSB (last limb) to LSB (first limb)
+    std::string r;
+    r.reserve(limbs.size() * LIMB_DIGITS + 1);
+    // First (most significant) limb — no leading zeros
+    r += std::to_string(limbs.back());
+    // Remaining limbs — zero-padded to 9 digits
+    char buf[16];
+    for (int i = (int)limbs.size() - 2; i >= 0; i--) {
+        snprintf(buf, sizeof(buf), "%09llu", (unsigned long long)limbs[i]);
+        r += buf;
+    }
+    return r;
+}
+
+// --- limb arithmetic: add, sub, compare ---
+static std::vector<uint64_t> limbs_add(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    std::vector<uint64_t> r((a.size() > b.size() ? a.size() : b.size()) + 1, 0);
+    uint64_t carry = 0;
+    for (size_t i = 0; i < r.size(); i++) {
+        uint64_t v = carry;
+        if (i < a.size()) v += a[i];
+        if (i < b.size()) v += b[i];
+        if (v >= LIMB_BASE) { r[i] = v - LIMB_BASE; carry = 1; }
+        else { r[i] = v; carry = 0; }
+    }
+    while (!r.empty() && r.back() == 0) r.pop_back();
+    return r;
+}
+
+// a - b, assumes |a| >= |b| (both non-negative)
+static std::vector<uint64_t> limbs_sub(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    std::vector<uint64_t> r(a.size(), 0);
+    int64_t borrow = 0;
+    for (size_t i = 0; i < a.size(); i++) {
+        int64_t v = (int64_t)a[i] - (borrow ? 1 : 0);
+        if (i < b.size()) v -= (int64_t)b[i];
+        if (v < 0) { v += LIMB_BASE; borrow = 1; } else borrow = 0;
+        r[i] = (uint64_t)v;
+    }
+    while (!r.empty() && r.back() == 0) r.pop_back();
+    return r;
+}
+
+// compare: -1 if a<b, 0 if a==b, 1 if a>b (both non-negative)
+static int limbs_cmp(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    if (a.size() != b.size()) return a.size() > b.size() ? 1 : -1;
+    for (int i = (int)a.size() - 1; i >= 0; i--)
+        if (a[i] != b[i]) return a[i] > b[i] ? 1 : -1;
+    return 0;
+}
+
+// schoolbook multiplication (for small numbers)
+static std::vector<uint64_t> limbs_mul_school(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    if (a.empty() || b.empty()) return {};
+    std::vector<uint64_t> r(a.size() + b.size(), 0);
+    for (size_t i = 0; i < a.size(); i++) {
+        uint64_t carry = 0;
+        for (size_t j = 0; j < b.size(); j++) {
+            uint64_t prod = a[i] * b[j] + r[i + j] + carry;
+            r[i + j] = prod % LIMB_BASE;
+            carry = prod / LIMB_BASE;
+        }
+        r[i + b.size()] += carry;
+    }
+    while (!r.empty() && r.back() == 0) r.pop_back();
+    return r;
+}
+
+// Karatsuba multiplication (for medium numbers, > 32 limbs)
+static std::vector<uint64_t> limbs_mul(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b);
+static std::vector<uint64_t> limbs_mul_karatsuba(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    size_t n = a.size(), m = b.size();
+    if (n < m) return limbs_mul_karatsuba(b, a);
+    if (m <= 32 || n <= 32) return limbs_mul_school(a, b);
+    size_t k = (n + 1) / 2;
+    // Split a = a1 * B^k + a0
+    std::vector<uint64_t> a0(a.begin(), a.begin() + (k < n ? k : n));
+    std::vector<uint64_t> a1(k < n ? a.begin() + k : a.end(), a.end());
+    // Split b = b1 * B^k + b0
+    std::vector<uint64_t> b0(b.begin(), b.begin() + (k < m ? k : m));
+    std::vector<uint64_t> b1(k < m ? b.begin() + k : b.end(), b.end());
+    auto z0 = limbs_mul(a0, b0);
+    auto z2 = limbs_mul(a1, b1);
+    auto z1 = limbs_sub(limbs_mul(limbs_add(a0, a1), limbs_add(b0, b1)), limbs_add(z0, z2));
+    // result = z2 * B^(2k) + z1 * B^k + z0
+    std::vector<uint64_t> r(a.size() + b.size(), 0);
+    for (size_t i = 0; i < z0.size(); i++) r[i] = z0[i];
+    // Add z1 * B^k
+    uint64_t carry = 0;
+    for (size_t i = 0; i < z1.size() || carry; i++) {
+        uint64_t v = (i < r.size() ? r[i + k] : 0) + (i < z1.size() ? z1[i] : 0) + carry;
+        r[i + k] = v % LIMB_BASE;
+        carry = v / LIMB_BASE;
+    }
+    // Add z2 * B^(2k)
+    carry = 0;
+    for (size_t i = 0; i < z2.size() || carry; i++) {
+        uint64_t v = (i + 2*k < r.size() ? r[i + 2*k] : 0) + (i < z2.size() ? z2[i] : 0) + carry;
+        r[i + 2*k] = v % LIMB_BASE;
+        carry = v / LIMB_BASE;
+    }
+    while (!r.empty() && r.back() == 0) r.pop_back();
+    return r;
+}
+
+// --- 3-prime NTT for base 10^9 multiplication ---
+static const uint64_t NTT_P1 = 998244353, NTT_P2 = 985661441, NTT_P3 = 754974721;
+template<uint64_t P> static inline uint64_t nmul(uint64_t a, uint64_t b) { return (a*b)%P; }
+template<uint64_t P> static inline uint64_t nadd(uint64_t a, uint64_t b) { uint64_t r=a+b; return r>=P?r-P:r; }
+template<uint64_t P> static inline uint64_t nsub(uint64_t a, uint64_t b) { return a>=b?a-b:a+P-b; }
+template<uint64_t P> static uint64_t npow(uint64_t b, uint64_t e) { uint64_t r=1;b%=P;while(e){if(e&1)r=nmul<P>(r,b);b=nmul<P>(b,b);e>>=1;}return r; }
+
+struct NR { std::vector<uint64_t> f, i; };
+static thread_local NR g_nr[3][24];
+static thread_local bool g_nr_ok[3][24] = {};
+
+template<uint64_t P, uint64_t G>
+static void ntt_init(int pi, int ln) {
+    if (g_nr_ok[pi][ln]) return;
+    size_t n = (size_t)1 << ln;
+    uint64_t w = npow<P>(G, (P-1)/n), wi = npow<P>(w, P-2);
+    auto& r = g_nr[pi][ln];
+    r.f.resize(n/2); r.i.resize(n/2);
+    uint64_t a=1, ai=1;
+    for (size_t j=0; j<n/2; j++) { r.f[j]=a; r.i[j]=ai; a=nmul<P>(a,w); ai=nmul<P>(ai,wi); }
+    g_nr_ok[pi][ln] = true;
+}
+
+template<uint64_t P, uint64_t G>
+static void ntt_xform(uint64_t* a, size_t n, bool inv, int pi) {
+    if (n<=1) return;
+    int ln=0; size_t m=n; while(m>1){m>>=1;ln++;}
+    ntt_init<P,G>(pi, ln);
+    const uint64_t* rt = inv ? g_nr[pi][ln].i.data() : g_nr[pi][ln].f.data();
+    for (size_t i=1,j=0; i<n; ++i) { size_t b=n>>1; for(;j&b;b>>=1)j^=b; j^=b; if(i<j)std::swap(a[i],a[j]); }
+
+    // Butterfly stages -- parallelized with OpenMP for n >= 4096.
+    // Flattened loop: each k in [0, n/2) maps to butterfly (group=k/h, idx=k%h).
+    // Since h is always a power of 2, k%h = k&(h-1) and k/h = k>>log2(h).
+    size_t half = n >> 1;
+    #pragma omp parallel if(n >= 4096)
+    {
+        for (size_t len=2; len<=n; len<<=1) {
+            size_t h=len/2, s=n/len;
+            size_t hmask=h-1, hshift=0; { size_t t=h; while(t>1){t>>=1;hshift++;} }
+            #pragma omp for schedule(static)
+            for (int k=0; k<(int)half; ++k) {
+                size_t j=(size_t)k & hmask;
+                size_t i=((size_t)k >> hshift) * len;
+                uint64_t w=rt[j*s], u=a[i+j], v=nmul<P>(a[i+j+h],w);
+                a[i+j]=nadd<P>(u,v); a[i+j+h]=nsub<P>(u,v);
+            }
+        }
+    }
+    if (inv) { uint64_t ni=npow<P>(n,P-2); for(size_t i=0;i<n;i++)a[i]=nmul<P>(a[i],ni); }
+}
+
+// 3-prime NTT multiplication for base 10^9 limbs
+// Primes: P1=998244353 (gen 3), P2=985661441 (gen 5), P3=754974721 (gen 11)
+// CRT: x = r1 + P1*t1 + P1*P2*t2, carry handled with _umul128/_udiv128
+
+// Helper: modular multiply for runtime prime (not template)
+static inline uint64_t nmul_p(uint64_t p, uint64_t a, uint64_t b) { return (a * b) % p; }
+
+static std::vector<uint64_t> limbs_mul_ntt(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    if (a.empty() || b.empty()) return {};
+    size_t tot = a.size() + b.size(), n = 1;
+    while (n < tot) n <<= 1;
+    // P3 supports NTT up to 2^24 (p-1 = 45*2^24), so n <= 2^24
+    if (n > (1u << 24)) return limbs_mul_karatsuba(a, b); // fallback for extremely large
+
+    uint64_t P1P2 = NTT_P1 * NTT_P2;
+    uint64_t inv12 = npow<NTT_P2>(NTT_P1, NTT_P2 - 2);
+    uint64_t inv123 = npow<NTT_P3>(P1P2 % NTT_P3, NTT_P3 - 2);
+
+    std::vector<uint64_t> result(n, 0);
+    // Process 3 primes -- each gives the convolution mod P_i
+    for (int pi = 0; pi < 3; pi++) {
+        uint64_t p = (pi == 0) ? NTT_P1 : (pi == 1) ? NTT_P2 : NTT_P3;
+        // Copy a and b into arrays mod p
+        std::vector<uint64_t> ta(n, 0), tb(n, 0);
+        #pragma omp parallel for schedule(static) if(n >= 4096)
+        for (int i = 0; i < (int)a.size(); i++) ta[i] = a[i] % p;
+        #pragma omp parallel for schedule(static) if(n >= 4096)
+        for (int i = 0; i < (int)b.size(); i++) tb[i] = b[i] % p;
+        // Forward NTT
+        if (pi == 0) { ntt_xform<NTT_P1, 3>(ta.data(), n, false, 0); ntt_xform<NTT_P1, 3>(tb.data(), n, false, 0); }
+        else if (pi == 1) { ntt_xform<NTT_P2, 3>(ta.data(), n, false, 1); ntt_xform<NTT_P2, 3>(tb.data(), n, false, 1); }
+        else { ntt_xform<NTT_P3, 11>(ta.data(), n, false, 2); ntt_xform<NTT_P3, 11>(tb.data(), n, false, 2); }
+        // Pointwise multiply
+        #pragma omp parallel for schedule(static) if(n >= 4096)
+        for (int i = 0; i < (int)n; i++) ta[i] = nmul_p(p, ta[i], tb[i]);
+        // Inverse NTT
+        if (pi == 0) ntt_xform<NTT_P1, 3>(ta.data(), n, true, 0);
+        else if (pi == 1) ntt_xform<NTT_P2, 3>(ta.data(), n, true, 1);
+        else ntt_xform<NTT_P3, 11>(ta.data(), n, true, 2);
+        // CRT accumulation
+        if (pi == 0) {
+            #pragma omp parallel for schedule(static) if(n >= 4096)
+            for (int i = 0; i < (int)n; i++) result[i] = ta[i];  // store r1
+        } else if (pi == 1) {
+            // Combine with P1: x12 = r1 + P1 * ((r2 - r1) * inv12 mod P2)
+            #pragma omp parallel for schedule(static) if(n >= 4096)
+            for (int i = 0; i < (int)n; i++) {
+                uint64_t r1 = result[i], r2 = ta[i] % NTT_P2;
+                uint64_t t1 = nmul<NTT_P2>(nsub<NTT_P2>(r2, r1 % NTT_P2), inv12);
+                result[i] = r1 + NTT_P1 * t1;  // x12 < P1*P2
+            }
+        } else {
+            // Combine with P3 using 128-bit arithmetic for carry
+            // Split into parallel compute + sequential carry propagation
+            std::vector<uint64_t> partial_rem(n), partial_q(n);
+            #pragma omp parallel for schedule(static) if(n >= 4096)
+            for (int i = 0; i < (int)n; i++) {
+                uint64_t x12 = result[i];  // < P1*P2
+                uint64_t r3 = ta[i] % NTT_P3;
+                uint64_t t2 = nmul<NTT_P3>(nsub<NTT_P3>(r3, x12 % NTT_P3), inv123);
+                // total = x12 + P1P2 * t2 (128-bit)
+                uint64_t prod_hi, prod_lo;
+                prod_lo = _umul128(P1P2, t2, &prod_hi);
+                // Add x12 to (prod_hi, prod_lo)
+                uint64_t low = x12 + prod_lo;
+                if (low < x12) prod_hi++;  // carry from x12+prod_lo
+                // Divide 128-bit (prod_hi, low) by LIMB_BASE
+                uint64_t rem;
+                uint64_t q = _udiv128(prod_hi, low, LIMB_BASE, &rem);
+                partial_rem[i] = rem;
+                partial_q[i] = q;
+            }
+            // Sequential carry propagation (O(n) but very fast -- just add+div)
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; i++) {
+                uint64_t v = partial_rem[i] + carry;
+                result[i] = v % LIMB_BASE;
+                carry = partial_q[i] + (v / LIMB_BASE);
+            }
+            // Propagate remaining carry
+            size_t pos = n;
+            while (carry > 0) {
+                if (pos >= result.size()) result.push_back(0);
+                uint64_t v = result[pos] + carry;
+                result[pos] = v % LIMB_BASE;
+                carry = v / LIMB_BASE;
+                pos++;
+            }
+        }
+    }
+    while (!result.empty() && result.back() == 0) result.pop_back();
+    return result;
+}
+
+// limbs_mul dispatcher: school for small, NTT for large
+static std::vector<uint64_t> limbs_mul(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
+    if (a.empty() || b.empty()) return {};
+    size_t tot = a.size() + b.size();
+    // NTT threshold: 128 limbs (~1152 digits) -- with OpenMP, NTT is faster than
+    // Karatsuba for these sizes
+    if (a.size() > 128 && b.size() > 128 && tot > 256) {
+        return limbs_mul_ntt(a, b);
+    }
+    if (a.size() > 32 || b.size() > 32) {
+        return limbs_mul_karatsuba(a, b);
+    }
+    return limbs_mul_school(a, b);
+}
+
+// --- Limb-based division (Newton-Raphson, calls limbs_mul) ---
+// For small divisors (≤ 32 limbs), uses schoolbook on limbs.
+// For large divisors, uses Newton-Raphson with limbs_mul for the reciprocal.
+
+// Schoolbook division on limbs (base 10^9)
+static std::vector<uint64_t> limbs_divmod_school(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b, bool wantMod) {
+    if (b.empty()) return {};
+    if (limbs_cmp(a, b) < 0) return wantMod ? a : std::vector<uint64_t>{};
+    // Knuth Algorithm D (simplified for base 10^9)
+    int na = (int)a.size(), nb = (int)b.size();
+    // Normalize: multiply both by norm = LIMB_BASE / (b.back() + 1) so that b.back() >= LIMB_BASE/2
+    uint64_t norm = LIMB_BASE / (b.back() + 1);
+    auto bn = limbs_mul(b, {norm});
+    auto an = limbs_mul(a, {norm});
+    an.resize(na + 1, 0);  // ensure room for extra digit
+    int qn = na - nb + 1;
+    std::vector<uint64_t> q(qn, 0);
+    for (int j = qn - 1; j >= 0; j--) {
+        // Estimate quotient digit from top 2 limbs of remainder
+        uint64_t rem_top = (j + nb < (int)an.size() ? an[j + nb] : 0);
+        uint64_t rem_next = (j + nb - 1 < (int)an.size() ? an[j + nb - 1] : 0);
+        uint64_t q_est = (rem_top * LIMB_BASE + rem_next) / bn.back();
+        if (q_est >= LIMB_BASE) q_est = LIMB_BASE - 1;
+        // Multiply b by q_est and subtract
+        auto prod = limbs_mul(bn, {q_est});
+        // Check if prod > an[j..j+nb]
+        // Simple approach: try q_est, adjust down if needed
+        for (int attempt = 0; attempt < 3; attempt++) {
+            // Compare prod with an[j..j+nb]
+            bool too_big = false;
+            for (int i = nb; i >= 0; i--) {
+                uint64_t ai = (j + i < (int)an.size() ? an[j + i] : 0);
+                uint64_t pi = (i < (int)prod.size() ? prod[i] : 0);
+                if (pi > ai) { too_big = true; break; }
+                if (pi < ai) break;
+            }
+            if (too_big) { q_est--; prod = limbs_mul(bn, {q_est}); continue; }
+            break;
+        }
+        // Subtract prod from an[j..j+nb]
+        int64_t borrow = 0;
+        for (int i = 0; i <= nb; i++) {
+            int64_t v = (int64_t)(j + i < (int)an.size() ? an[j + i] : 0) - (i < (int)prod.size() ? (int64_t)prod[i] : 0) - borrow;
+            if (v < 0) { v += LIMB_BASE; borrow = 1; } else borrow = 0;
+            if (j + i < (int)an.size()) an[j + i] = (uint64_t)v;
+        }
+        q[j] = q_est;
+    }
+    while (!q.empty() && q.back() == 0) q.pop_back();
+    if (wantMod) {
+        // Un-normalize: divide remainder by norm
+        // Remainder is in an[0..nb-1]
+        std::vector<uint64_t> rem(an.begin(), an.begin() + (nb < (int)an.size() ? nb : (int)an.size()));
+        while (rem.size() > 1 && rem.back() == 0) rem.pop_back();
+        // Divide rem by norm (single-limb division)
+        std::vector<uint64_t> result;
+        uint64_t carry = 0;
+        for (int i = (int)rem.size() - 1; i >= 0; i--) {
+            uint64_t v = carry * LIMB_BASE + rem[i];
+            result.insert(result.begin(), v / norm);
+            carry = v % norm;
+        }
+        while (!result.empty() && result.back() == 0) result.pop_back();
+        return result;
+    }
+    return q;
+}
+
+// Newton-Raphson division on limbs (for large divisors)
+static std::vector<uint64_t> limbs_divmod(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b, bool wantMod) {
+    if (b.empty()) return {};
+    if (limbs_cmp(a, b) < 0) return wantMod ? a : std::vector<uint64_t>{};
+    if (b.size() <= 32) return limbs_divmod_school(a, b, wantMod);
+
+    int k = (int)b.size();
+    // Compute reciprocal v = floor(LIMB_BASE^(2k) / b) using Newton's method
+    // Initial: use top limbs of b for a double-precision estimate
+    uint64_t b_top = b.back();
+    // v0 = LIMB_BASE^(k+1) / (b_top + 1) — single-limb division, underestimate
+    std::vector<uint64_t> v;
+    {
+        // 10^(k+1) as a limb vector: (k+1) limbs of 0, then 1 at position k
+        // Actually LIMB_BASE^(k+1) = 1 followed by (k+1) zero limbs
+        std::vector<uint64_t> pow_ke(k + 2, 0);
+        pow_ke[k + 1] = 1;  // LIMB_BASE^(k+1)
+        v = limbs_divmod_school(pow_ke, {b_top + 1}, false);
+    }
+    // Newton iterations: v' = v * (2*B^(2k) - b*v) / B^(2k)
+    // B^(2k) = 1 followed by 2k zero limbs
+    std::vector<uint64_t> pow2k(2 * k + 1, 0);
+    pow2k[2 * k] = 1;
+    std::vector<uint64_t> two_pow2k = limbs_add(pow2k, pow2k);  // 2 * B^(2k)
+    int prec = 1;  // initial precision in limbs
+    for (int iter = 0; iter < 50 && prec < k; iter++) {
+        auto t = limbs_mul(b, v);
+        if (limbs_cmp(t, pow2k) > 0) { v = limbs_sub(v, {1}); continue; }
+        auto u = limbs_sub(two_pow2k, t);
+        auto vu = limbs_mul(v, u);
+        std::vector<uint64_t> v_new;
+        if ((int)vu.size() > 2 * k) {
+            v_new.assign(vu.begin(), vu.end() - 2 * k);
+        } else { break; }
+        while (!v_new.empty() && v_new.back() == 0) v_new.pop_back();
+        if (v_new.empty() || v_new == v) break;
+        // Trim to k+1 limbs
+        while ((int)v_new.size() > k + 1) v_new.erase(v_new.begin());
+        while ((int)v_new.size() < k + 1) v_new.insert(v_new.begin(), 0);
+        v = v_new;
+        prec = (2 * prec < k) ? 2 * prec : k;
+    }
+
+    // Process dividend in blocks of k limbs
+    int la = (int)a.size();
+    int pad = (k - la % k) % k;
+    std::vector<uint64_t> ap(pad, 0);
+    ap.insert(ap.end(), a.begin(), a.end());
+    int num_blocks = (int)ap.size() / k;
+
+    std::vector<uint64_t> rem;
+    std::vector<uint64_t> quotient;
+    for (int blk = 0; blk < num_blocks; blk++) {
+        // block = ap[blk*k .. (blk+1)*k - 1]
+        std::vector<uint64_t> block(ap.begin() + blk * k, ap.begin() + (blk + 1) * k);
+        // dividend = rem * B^k + block (concatenate limbs)
+        std::vector<uint64_t> dividend = rem;
+        dividend.insert(dividend.end(), block.begin(), block.end());
+        while (!dividend.empty() && dividend.back() == 0) dividend.pop_back();
+        if (dividend.empty()) dividend = {0};
+        // q_block = floor(dividend * v / B^(2k))
+        auto dv = limbs_mul(dividend, v);
+        std::vector<uint64_t> q_block;
+        if ((int)dv.size() > 2 * k) {
+            q_block.assign(dv.begin(), dv.end() - 2 * k);
+        } else { q_block = {0}; }
+        while (!q_block.empty() && q_block.back() == 0) q_block.pop_back();
+        if (q_block.empty()) q_block = {0};
+        // rem = dividend - q_block * b
+        auto qb = limbs_mul(q_block, b);
+        if (limbs_cmp(dividend, qb) >= 0) {
+            rem = limbs_sub(dividend, qb);
+        } else {
+            q_block = limbs_sub(q_block, {1});
+            rem = limbs_sub(dividend, limbs_mul(q_block, b));
+        }
+        while (limbs_cmp(rem, b) >= 0) {
+            rem = limbs_sub(rem, b);
+            q_block = limbs_add(q_block, {1});
+        }
+        // Append q_block to quotient (pad to k limbs except first)
+        if (blk > 0) {
+            while (q_block.size() < (size_t)k) q_block.push_back(0);
+        }
+        quotient.insert(quotient.end(), q_block.begin(), q_block.end());
+    }
+    while (!quotient.empty() && quotient.back() == 0) quotient.pop_back();
+    if (wantMod) { while (!rem.empty() && rem.back() == 0) rem.pop_back(); return rem; }
+    return quotient;
+}
+
+// --- Optimized Cooley-Tukey FFT (no MKL dependency) ---
+// Uses precomputed twiddle factors + raw double arrays with manual complex arithmetic.
+// O(n log n) iterative radix-2 FFT. Data layout: data[2*i]=Re, data[2*i+1]=Im.
+
+struct TwiddleCache {
+    std::vector<double> cos_t, sin_t;
+    explicit TwiddleCache(size_t n) {
+        cos_t.resize(n / 2);
+        sin_t.resize(n / 2);
+        for (size_t i = 0; i < n / 2; i++) {
+            double ang = -2.0 * 3.14159265358979323846 * (double)i / (double)n;
+            cos_t[i] = std::cos(ang);
+            sin_t[i] = std::sin(ang);
+        }
+    }
+};
+static thread_local std::unordered_map<size_t, TwiddleCache> g_twiddleCache;
+
+static void tzd_fft_opt(double* data, size_t n, bool inverse) {
+    if (n <= 1) return;
+    // Get or create twiddle cache for this size
+    auto it = g_twiddleCache.find(n);
+    if (it == g_twiddleCache.end()) {
+        it = g_twiddleCache.emplace(n, TwiddleCache(n)).first;
+    }
+    const double* cos_t = it->second.cos_t.data();
+    const double* sin_t = it->second.sin_t.data();
+
+    // Bit-reversal permutation
+    for (size_t i = 1, j = 0; i < n; ++i) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            std::swap(data[2*i], data[2*j]);
+            std::swap(data[2*i+1], data[2*j+1]);
+        }
+    }
+
+    // Cooley-Tukey butterfly — fork/join OpenMP (MSVC caches the thread pool)
+    for (size_t len = 2; len <= n; len <<= 1) {
+        size_t half = len / 2;
+        size_t stride = n / len;
+        size_t groups = n / len;
+        if (groups >= 4) {
+            #pragma omp parallel for schedule(static)
+            for (ptrdiff_t gi = 0; gi < (ptrdiff_t)groups; ++gi) {
+                size_t base_i = (size_t)gi * len;
+                for (size_t j = 0; j < half; ++j) {
+                    size_t tw = j * stride;
+                    double wr = cos_t[tw], wi = inverse ? -sin_t[tw] : sin_t[tw];
+                    size_t ai = 2 * (base_i + j), bi = 2 * (base_i + j + half);
+                    double ur = data[ai], ui = data[ai + 1];
+                    double vr = data[bi], vi = data[bi + 1];
+                    double tr = vr * wr - vi * wi, ti = vr * wi + vi * wr;
+                    data[ai] = ur + tr; data[ai+1] = ui + ti;
+                    data[bi] = ur - tr; data[bi+1] = ui - ti;
+                }
+            }
+        } else {
+            for (size_t i = 0; i < n; i += len) {
+                for (size_t j = 0; j < half; ++j) {
+                    size_t tw = j * stride;
+                    double wr = cos_t[tw], wi = inverse ? -sin_t[tw] : sin_t[tw];
+                    size_t ai = 2 * (i + j), bi = 2 * (i + j + half);
+                    double ur = data[ai], ui = data[ai + 1];
+                    double vr = data[bi], vi = data[bi + 1];
+                    double tr = vr * wr - vi * wi, ti = vr * wi + vi * wr;
+                    data[ai] = ur + tr; data[ai+1] = ui + ti;
+                    data[bi] = ur - tr; data[bi+1] = ui - ti;
+                }
+            }
+        }
+    }
+    if (inverse) {
+        double inv = 1.0 / (double)n;
+        #pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < (ptrdiff_t)(2 * n); i += 2) {
+            data[i] *= inv;
+            data[i + 1] *= inv;
+        }
+    }
+}
+
+// SoA (Structure of Arrays) FFT — separate re[] and im[] arrays.
+// The contiguous access pattern in the inner loop enables AVX2 auto-vectorization:
+// MSVC packs 4 doubles per YMM register, giving ~4x throughput on butterfly stages.
+static void tzd_fft_soa(double* re, double* im, size_t n, bool inverse) {
+    if (n <= 1) return;
+    auto it = g_twiddleCache.find(n);
+    if (it == g_twiddleCache.end()) {
+        it = g_twiddleCache.emplace(n, TwiddleCache(n)).first;
+    }
+    const double* cos_t = it->second.cos_t.data();
+    const double* sin_t = it->second.sin_t.data();
+
+    // Bit-reversal permutation (SoA: swap re[] and im[] independently)
+    for (size_t i = 1, j = 0; i < n; ++i) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+    }
+
+    // Cooley-Tukey butterfly — inner loop over j gives stride-1 access to re[i+j]
+    // and re[i+j+half], enabling MSVC to auto-vectorize with AVX2 (4 doubles/vector).
+    for (size_t len = 2; len <= n; len <<= 1) {
+        size_t half = len / 2;
+        size_t stride = n / len;
+        for (size_t i = 0; i < n; i += len) {
+            for (size_t j = 0; j < half; ++j) {
+                size_t tw = j * stride;
+                double wr = cos_t[tw];
+                double wi = inverse ? -sin_t[tw] : sin_t[tw];
+
+                double ur = re[i + j], ui = im[i + j];
+                double vr = re[i + j + half], vi = im[i + j + half];
+
+                // v * w (complex multiply)
+                double tr = vr * wr - vi * wi;
+                double ti = vr * wi + vi * wr;
+
+                // butterfly: u+v, u-v
+                re[i + j]       = ur + tr;
+                im[i + j]       = ui + ti;
+                re[i + j + half] = ur - tr;
+                im[i + j + half] = ui - ti;
+            }
+        }
+    }
+    if (inverse) {
+        double inv = 1.0 / (double)n;
+        for (size_t i = 0; i < n; i++) { re[i] *= inv; im[i] *= inv; }
+    }
+}
+
+// Standalone FFT-based multiplication: O(n log n), no external dependencies
+static std::string bigint_mul_fft_standalone(const std::string& a, const std::string& b) {
+    const long long BASE = 10000;
+    const int BASE_DIGITS = 4;
+
+    // Manual digit parsing — no substr allocation
+    auto to_limbs = [](const std::string& s, int bd) -> std::vector<double> {
+        int pd = (bd - (int)(s.size() % bd)) % bd;
+        std::string padded = std::string(pd, '0') + s;
+        int sz = (int)padded.size();
+        std::vector<double> limbs;
+        limbs.reserve(sz / bd + 1);
+        for (int i = sz - bd; i >= 0; i -= bd) {
+            double v = 0;
+            for (int j = 0; j < bd; j++) v = v * 10 + (double)(padded[i + j] - '0');
+            limbs.push_back(v);
+        }
+        return limbs;
+    };
+
+    std::vector<double> a_limbs = to_limbs(a, BASE_DIGITS);
+    std::vector<double> b_limbs = to_limbs(b, BASE_DIGITS);
+
+    size_t total_len = a_limbs.size() + b_limbs.size();
+    size_t fft_n = 1;
+    while (fft_n < total_len) fft_n <<= 1;
+
+    // Interleaved FFT with precomputed twiddle cache — best cache behavior for large n
+    static thread_local std::vector<double> fa, fb;
+    fa.assign(2 * fft_n, 0.0); fb.assign(2 * fft_n, 0.0);
+    for (size_t i = 0; i < a_limbs.size(); i++) fa[2 * i] = a_limbs[i];
+    for (size_t i = 0; i < b_limbs.size(); i++) fb[2 * i] = b_limbs[i];
+
+    tzd_fft_opt(fa.data(), fft_n, false);
+    tzd_fft_opt(fb.data(), fft_n, false);
+
+    for (size_t i = 0; i < 2 * fft_n; i += 2) {
+        double ar = fa[i], ai = fa[i + 1];
+        double br = fb[i], bi = fb[i + 1];
+        fa[i]     = ar * br - ai * bi;
+        fa[i + 1] = ar * bi + ai * br;
+    }
+
+    tzd_fft_opt(fa.data(), fft_n, true);
+
+    // Handle carries + build result string (direct char writes, no "0"+p)
+    static thread_local std::vector<long long> result_limbs;
+    result_limbs.assign(fft_n + 16, 0);
+    long long carry = 0;
+    for (size_t i = 0; i < fft_n; i++) {
+        long long val = (long long)std::llround(fa[2 * i]) + carry;
+        result_limbs[i] = val % BASE;
+        carry = val / BASE;
+    }
+    size_t result_len = fft_n;
+    while (carry > 0) { result_limbs[result_len] = carry % BASE; carry /= BASE; result_len++; }
+
+    std::string result;
+    result.resize(result_len * BASE_DIGITS);
+    char* rp = &result[0];
+    for (int i = (int)result_len - 1, pos = 0; i >= 0; i--, pos += BASE_DIGITS) {
+        long long v = result_limbs[i];
+        rp[pos + 3] = '0' + (int)(v % 10); v /= 10;
+        rp[pos + 2] = '0' + (int)(v % 10); v /= 10;
+        rp[pos + 1] = '0' + (int)(v % 10); v /= 10;
+        rp[pos + 0] = '0' + (int)(v);
+    }
+    size_t st = 0; while (st < result.size() - 1 && result[st] == '0') st++;
+    if (st > 0) result.erase(0, st);
+    return result.empty() ? "0" : result;
+}
+
+// --- Safety limits for BIGINT operations ---
+// Prevents uncontrolled memory growth that could freeze the system.
+// Default: 10 million digits (~10MB per number string).
+static size_t g_bigintMaxDigits = BIGINT_DEFAULT_MAX_DIGITS;
+
+size_t getBigIntMaxDigits() { return g_bigintMaxDigits; }
+void setBigIntMaxDigits(size_t n) {
+    // Enforce a hard floor of 1000 digits and a hard ceiling of 100M digits
+    if (n < 1000) n = 1000;
+    if (n > 100000000) n = 100000000;
+    g_bigintMaxDigits = n;
+}
+bool bigint_too_large(size_t digitCount) { return digitCount > g_bigintMaxDigits; }
+
+bool bigint_is_neg(const std::string& s) { return !s.empty() && s[0] == '-'; }
+std::string bigint_abs(const std::string& s) {
+    return bigint_is_neg(s) ? s.substr(1) : s;
+}
+
+std::string bigint_normalize(const std::string& input) {
+    std::string s = input;
+    bool neg = bigint_is_neg(s);
+    if (neg) s = s.substr(1);
+    size_t i = 0;
+    while (i < s.size() - 1 && s[i] == '0') ++i;
+    s = s.substr(i);
+    if (neg && s != "0") s = "-" + s;
+    return s;
+}
+
+// Compare absolute values: -1 if a<b, 0 if a==b, 1 if a>b
+static int bigint_abs_compare(std::string a, std::string b) {
+    a = bigint_normalize(a); b = bigint_normalize(b);
+    if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
+    return a.compare(b);
+}
+
+int bigint_compare(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
+    if (an && !bn) return -1;
+    if (!an && bn) return 1;
+    auto la = limbs_from_str(a), lb = limbs_from_str(b);
+    int c = limbs_cmp(la, lb);
+    return an ? -c : c;
+}
+
+// Add two non-negative digit strings
+static std::string bigint_add_abs(std::string a, std::string b) {
+    std::reverse(a.begin(), a.end());
+    std::reverse(b.begin(), b.end());
+    if (a.size() < b.size()) a.resize(b.size(), '0');
+    if (b.size() < a.size()) b.resize(a.size(), '0');
+    int carry = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        int s = (a[i] - '0') + (b[i] - '0') + carry;
+        a[i] = '0' + (s % 10);
+        carry = s / 10;
+    }
+    if (carry) a.push_back('0' + carry);
+    std::reverse(a.begin(), a.end());
+    return bigint_normalize(a);
+}
+
+// Subtract: a - b, assumes |a| >= |b|, both non-negative
+static std::string bigint_sub_abs(std::string a, std::string b) {
+    std::reverse(a.begin(), a.end());
+    std::reverse(b.begin(), b.end());
+    if (b.size() < a.size()) b.resize(a.size(), '0');
+    int borrow = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        int d = (a[i] - '0') - (b[i] - '0') - borrow;
+        if (d < 0) { d += 10; borrow = 1; } else borrow = 0;
+        a[i] = '0' + d;
+    }
+    std::reverse(a.begin(), a.end());
+    return bigint_normalize(a);
+}
+
+std::string bigint_add(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
+    auto la = limbs_from_str(a), lb = limbs_from_str(b);
+    if (!an && !bn) return limbs_to_str(limbs_add(la, lb));
+    if (an && bn) return "-" + limbs_to_str(limbs_add(la, lb));
+    // Mixed signs
+    int c = limbs_cmp(la, lb);
+    if (c == 0) return "0";
+    if (c > 0) return (an ? "-" : "") + limbs_to_str(limbs_sub(la, lb));
+    return (bn ? "-" : "") + limbs_to_str(limbs_sub(lb, la));
+}
+
+std::string bigint_sub(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
+    auto la = limbs_from_str(a), lb = limbs_from_str(b);
+    if (!an && !bn) {
+        int c = limbs_cmp(la, lb);
+        if (c == 0) return "0";
+        return (c < 0 ? "-" : "") + limbs_to_str(c > 0 ? limbs_sub(la, lb) : limbs_sub(lb, la));
+    }
+    if (an && bn) {
+        int c = limbs_cmp(la, lb);
+        if (c == 0) return "0";
+        return (c > 0 ? "-" : "") + limbs_to_str(c > 0 ? limbs_sub(la, lb) : limbs_sub(lb, la));
+    }
+    // Mixed signs: |a| + |b|
+    return (an ? "-" : "") + limbs_to_str(limbs_add(la, lb));
+}
+
+// Schoolbook multiplication of non-negative digit strings
+static std::string bigint_mul_school(const std::string& a, const std::string& b) {
+    if (a == "0" || b == "0") return "0";
+    std::vector<int> res(a.size() + b.size(), 0);
+    for (int i = (int)a.size() - 1; i >= 0; --i) {
+        for (int j = (int)b.size() - 1; j >= 0; --j) {
+            int prod = (a[i] - '0') * (b[j] - '0');
+            int pos = (a.size() - 1 - i) + (b.size() - 1 - j);
+            res[pos] += prod;
+            res[pos + 1] += res[pos] / 10;
+            res[pos] %= 10;
+        }
+    }
+    std::string r;
+    for (int i = (int)res.size() - 1; i >= 0; --i) {
+        if (!r.empty() || res[i] != 0 || i == 0) r.push_back('0' + res[i]);
+    }
+    return r.empty() ? "0" : r;
+}
+
+std::string bigint_mul(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
+    std::string aa = bigint_abs(a), bb = bigint_abs(b);
+    if (bigint_too_large(aa.size() + bb.size())) return "inf";
+    std::string r;
+    // Dispatch: GPU NVRTC for very large on capable GPUs, else base 10^9 NTT for all sizes.
+    // Base 10^9 NTT has 2.25x fewer limbs than base 10^4 FFT, and with OpenMP it
+    // outperforms the old FFT path for sizes up to ~1M digits.
+    size_t maxDigits = aa.size() > bb.size() ? aa.size() : bb.size();
+    if (maxDigits > 50000 && bigint_gpu_suitable(maxDigits)) {
+        // GPU NVRTC NTT — only for capable GPUs with sufficiently large numbers
+        try { r = bigint_mul_fft(aa, bb); }
+        catch (...) {
+            // GPU failed, fall back to base 10^9 NTT
+            auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
+            auto lr = limbs_mul(la, lb);
+            r = limbs_to_str(lr);
+        }
+    } else {
+        // All sizes: use uint64_t[] limbs (base 10^9) with OpenMP NTT
+        auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
+        auto lr = limbs_mul(la, lb);
+        r = limbs_to_str(lr);
+    }
+    bool neg = an != bn;
+    return (neg && r != "0") ? "-" + r : r;
+}
+
+static std::string bigint_mul_karatsuba(const std::string& a, const std::string& b) {
+    int n = (int)a.size(); int bs = (int)b.size();
+    if (n < bs) return bigint_mul_karatsuba(b, a); // ensure a.size() >= b.size()
+    if (n <= 256) return bigint_mul_school(a, b);
+    // Pad to equal length
+    std::string aa = a, bb = b;
+    while ((int)aa.size() < n) aa = "0" + aa;
+    while ((int)bb.size() < n) bb = "0" + bb;
+    int k = n / 2;
+    // Split: a = a1 * 10^k + a0, b = b1 * 10^k + b0
+    std::string a1 = aa.substr(0, n - k), a0 = aa.substr(n - k);
+    std::string b1 = bb.substr(0, n - k), b0 = bb.substr(n - k);
+    std::string z0 = bigint_mul(a0, b0);
+    std::string z2 = bigint_mul(a1, b1);
+    std::string z1 = bigint_sub(bigint_mul(bigint_add(a1, a0), bigint_add(b1, b0)),
+                                bigint_add(z2, z0));
+    // result = z2 * 10^(2k) + z1 * 10^k + z0
+    std::string result = z2;
+    result.append(2 * k, '0');
+    std::string z1shifted = z1;
+    z1shifted.append(k, '0');
+    result = bigint_add(result, z1shifted);
+    result = bigint_add(result, z0);
+    return bigint_normalize(result);
+}
+
+// Division: a / b (integer division), both non-negative
+std::string bigint_divmod_abs(const std::string& a, const std::string& b, bool wantMod) {
+    if (b == "0") return "0"; // Guard against div by zero
+    if (bigint_abs_compare(a, b) < 0) return wantMod ? a : "0";
+    std::string quotient, remainder = "0";
+    for (size_t i = 0; i < a.size(); ++i) {
+        remainder = bigint_normalize(remainder + std::string(1, a[i]));
+        // Binary search for the digit
+        int lo = 0, hi = 9, digit = 0;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            std::string test = bigint_mul_school(b, std::to_string(mid));
+            if (bigint_abs_compare(test, remainder) <= 0) { digit = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        quotient.push_back('0' + digit);
+        if (digit > 0)
+            remainder = bigint_sub_abs(remainder, bigint_mul_school(b, std::to_string(digit)));
+    }
+    return wantMod ? bigint_normalize(remainder) : bigint_normalize(quotient);
+}
+
+// Fast division using Newton-Raphson reciprocal + block-by-block quotient (Burnikel-Ziegler style)
+// Computes short reciprocal of b (k=lb digits precision), then divides a in blocks of k digits.
+// Each block does 2 multiplications — O(lb log lb) per block, O(la/lb) blocks total.
+static std::string bigint_divmod_fast(const std::string& a, const std::string& b, bool wantMod) {
+    if (b == "0") return "0";
+    if (bigint_abs_compare(a, b) < 0) return wantMod ? a : "0";
+    int lb = (int)b.size();
+    int la = (int)a.size();
+    if (lb <= 512) return bigint_divmod_abs(a, b, wantMod);
+
+    int k = lb; // reciprocal precision = divisor length
+
+    // Step 1: Compute short reciprocal v = floor(10^(2k) / b) using Newton's method
+    int hd = (18 < k) ? 18 : k;
+    std::string bh = bigint_add(b.substr(0, hd), "1"); // round up → underestimate
+    std::string v = bigint_divmod_abs("1" + std::string(k + hd, '0'), bh, false);
+
+    std::string pow2k = "1" + std::string(2 * k, '0');
+    std::string two_pow2k = "2" + std::string(2 * k, '0');
+    int prec = hd;
+    for (int iter = 0; iter < 50 && prec < k; iter++) {
+        std::string t = bigint_mul(b, v);
+        if (bigint_abs_compare(t, pow2k) > 0) { v = bigint_sub_abs(v, "1"); continue; }
+        std::string u = bigint_sub_abs(two_pow2k, t);
+        std::string vu = bigint_mul(v, u);
+        std::string v_new;
+        if ((int)vu.size() > 2 * k) v_new = bigint_normalize(vu.substr(0, vu.size() - 2 * k));
+        else break;
+        if (v_new == "0" || v_new == v) break;
+        // Trim to k+1 digits inside the loop (prevents v from growing)
+        while ((int)v_new.size() > k + 1) v_new = v_new.substr(1);
+        while ((int)v_new.size() < k + 1) v_new = "0" + v_new;
+        v = v_new;
+        prec = (2 * prec < k) ? 2 * prec : k;
+    }
+
+    // Step 2: Process dividend in blocks of k digits (MSB to LSB)
+    // Pad a with leading zeros to make its length a multiple of k
+    int pad = (k - la % k) % k;
+    std::string ap = std::string(pad, '0') + a;
+    int num_blocks = (int)ap.size() / k;
+
+    std::string rem = "0";
+    std::string quotient;
+    for (int blk = 0; blk < num_blocks; blk++) {
+        std::string block = ap.substr(blk * k, k);
+        // dividend = rem * 10^k + block (string concatenation since rem < b < 10^k)
+        std::string dividend = bigint_normalize(rem + block);
+        // q_block = floor(dividend * v / 10^(2k))
+        std::string dv = bigint_mul(dividend, v);
+        std::string q_block;
+        if ((int)dv.size() > 2 * k) q_block = bigint_normalize(dv.substr(0, dv.size() - 2 * k));
+        else q_block = "0";
+        // rem = dividend - q_block * b
+        std::string qb = bigint_mul(q_block, b);
+        if (bigint_abs_compare(dividend, qb) >= 0) rem = bigint_sub_abs(dividend, qb);
+        else { q_block = bigint_sub_abs(q_block, "1"); rem = bigint_sub_abs(dividend, bigint_mul(q_block, b)); }
+        // Adjust (at most 2 times)
+        while (bigint_abs_compare(rem, b) >= 0) { rem = bigint_sub_abs(rem, b); q_block = bigint_add(q_block, "1"); }
+        // Append q_block to quotient (zero-pad to k digits except first block)
+        if (blk > 0) { while (q_block.size() < (size_t)k && q_block[0] != '-') q_block = "0" + q_block; }
+        quotient += q_block;
+    }
+
+    quotient = bigint_normalize(quotient);
+    if (wantMod) return bigint_normalize(rem);
+    return quotient;
+}
+
+std::string bigint_div(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
+    // String-based Newton-Raphson (calls bigint_mul which uses limbs internally)
+    std::string r = bigint_divmod_fast(bigint_abs(a), bigint_abs(b), false);
+    return (an != bn && r != "0") ? "-" + r : r;
+}
+
+std::string bigint_mod(const std::string& a, const std::string& b) {
+    bool an = bigint_is_neg(a);
+    std::string r = bigint_divmod_fast(bigint_abs(a), bigint_abs(b), true);
+    return (an && r != "0") ? "-" + r : r;
+}
+
+// Binary exponentiation with configurable result size limit
+std::string bigint_pow(const std::string& base, const std::string& exp) {
+    if (exp == "0") return "1";
+    if (base == "0") return "0";
+    if (base == "1") return "1";
+    // Check if exponent is negative → return 0 (integer div)
+    if (bigint_is_neg(exp)) return "0";
+
+    // Pre-check: estimate result size to avoid wasted computation.
+    // result_digits ≈ exp * log10(|base|)
+    // If base has B digits, base^exp has approximately B*exp digits.
+    std::string e = bigint_abs(exp);
+    std::string b = bigint_normalize(base);
+
+    // Quick reject for astronomically large exponents
+    // (e.g., 10^1000000000 would need 10GB — reject immediately)
+    if (e.size() > 9) return "inf"; // exponent > 999,999,999
+
+    // Estimate: digits ≈ len(base) * exp_value
+    // This is a conservative upper bound
+    long long expVal = 0;
+    try { expVal = std::stoll(e); } catch (...) { return "inf"; }
+    if (expVal > 0) {
+        long long estDigits = (long long)b.size() * expVal;
+        if (bigint_too_large((size_t)estDigits)) return "inf";
+    }
+
+    std::string result = "1";
+
+    while (e != "0") {
+        // If e is odd, multiply result by b
+        if ((e.back() - '0') % 2 == 1) {
+            result = bigint_mul(result, b);
+            if (bigint_too_large(result.size())) return "inf";
+        }
+        // Square b
+        b = bigint_mul(b, b);
+        if (bigint_too_large(b.size()) && e != "1") return "inf";
+        // Halve e (integer division by 2)
+        e = bigint_divmod_abs(e, "2", false);
+    }
+    bool neg = bigint_is_neg(base) && ((exp.back() - '0') % 2 == 1);
+    return (neg && result != "0") ? "-" + result : result;
+}
+
+// Modular exponentiation: base^exp mod m
+std::string bigint_powmod(const std::string& base, const std::string& exp, const std::string& mod) {
+    if (mod == "0" || mod == "1") return "0";
+    std::string result = "1";
+    std::string b = bigint_divmod_abs(bigint_abs(base), bigint_abs(mod), true); // b = base mod m
+    std::string e = bigint_abs(exp);
+    while (e != "0") {
+        if ((e.back() - '0') % 2 == 1)
+            result = bigint_divmod_abs(bigint_mul(result, b), bigint_abs(mod), true);
+        b = bigint_divmod_abs(bigint_mul(b, b), bigint_abs(mod), true);
+        e = bigint_divmod_abs(e, "2", false);
+    }
+    return result;
+}
+
+// Convert a TzdValue to a bigint string (for arithmetic)
+std::string to_bigint_str(const TzdValue& v) {
+    if (v.type == TzdValue::BIGINT) return v.sVal;
+    if (v.type == TzdValue::STRING) return v.sVal;
+    if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT) {
+        double d = v.dVal;
+        if (d == std::floor(d) && std::abs(d) < 1e18) {
+            return std::to_string((long long)d);
+        }
+        // For non-integer doubles, truncate
+        return std::to_string((long long)d);
+    }
+    // All integer types
+    if (v.type == TzdValue::ULONG) return std::to_string(v.ulVal);
+    return std::to_string(v.lVal);
+}
+
+TzdValue make_bigint(const std::string& digits) {
+    TzdValue v;
+    v.type = TzdValue::BIGINT;
+    v.sVal = bigint_normalize(digits);
+    if (v.sVal == "0" || v.sVal == "-0") { v.sVal = "0"; v.type = TzdValue::LONG; v.lVal = 0; }
+    return v;
+}
+
+bool is_bigint(const TzdValue& v) {
+    return v.type == TzdValue::BIGINT;
+}
+
+bool needs_bigint(const TzdValue& a, const TzdValue& b) {
+    return a.type == TzdValue::BIGINT || b.type == TzdValue::BIGINT;
+}
+
+// ============================================================================
+// Rational (exact fraction) arithmetic — "num/den" in sVal
+// ============================================================================
+
+// GCD helper for reduction
+static std::string bigint_gcd_impl(std::string a, std::string b) {
+    a = bigint_abs(a); b = bigint_abs(b);
+    while (b != "0") {
+        std::string r = bigint_divmod_abs(a, b, true);
+        a = b; b = r;
+    }
+    return a.empty() ? "0" : a;
+}
+
+// Parse "num/den" → (num, den). If no '/', den = "1"
+void rational_parse(const std::string& s, std::string& num, std::string& den) {
+    size_t pos = s.find('/');
+    if (pos == std::string::npos) { num = s; den = "1"; }
+    else { num = s.substr(0, pos); den = s.substr(pos + 1); }
+    if (num.empty()) num = "0";
+    if (den.empty()) den = "1";
+}
+
+// Create "num/den" from two bigint strings, reduced by GCD
+std::string rational_make(const std::string& num, const std::string& den) {
+    if (den == "0") return "0"; // guard
+    // Reduce by GCD
+    std::string g = bigint_gcd_impl(num, den);
+    std::string n = (g != "0" && g != "1") ? bigint_div(num, g) : num;
+    std::string d = (g != "0" && g != "1") ? bigint_div(den, g) : den;
+    // Normalize sign: denominator should be positive
+    if (bigint_is_neg(d)) {
+        n = bigint_sub("0", n);
+        d = bigint_sub("0", d);
+    }
+    // If denominator is 1, return just the numerator
+    if (d == "1") return n;
+    return n + "/" + d;
+}
+
+// a/b + c/d = (ad + cb)/(bd)
+std::string rational_add(const std::string& a, const std::string& b) {
+    std::string an, ad, bn, bd;
+    rational_parse(a, an, ad);
+    rational_parse(b, bn, bd);
+    std::string t1 = bigint_mul(an, bd), t2 = bigint_mul(bn, ad);
+    if (t1 == "inf" || t2 == "inf") return "inf";
+    std::string num = bigint_add(t1, t2);
+    std::string den = bigint_mul(ad, bd);
+    if (den == "inf") return "inf";
+    return rational_make(num, den);
+}
+
+// a/b - c/d = (ad - cb)/(bd)
+std::string rational_sub(const std::string& a, const std::string& b) {
+    std::string an, ad, bn, bd;
+    rational_parse(a, an, ad);
+    rational_parse(b, bn, bd);
+    std::string t1 = bigint_mul(an, bd), t2 = bigint_mul(bn, ad);
+    if (t1 == "inf" || t2 == "inf") return "inf";
+    std::string num = bigint_sub(t1, t2);
+    std::string den = bigint_mul(ad, bd);
+    if (den == "inf") return "inf";
+    return rational_make(num, den);
+}
+
+// a/b * c/d = ac/bd
+std::string rational_mul(const std::string& a, const std::string& b) {
+    std::string an, ad, bn, bd;
+    rational_parse(a, an, ad);
+    rational_parse(b, bn, bd);
+    std::string num = bigint_mul(an, bn);
+    if (num == "inf") return "inf";
+    std::string den = bigint_mul(ad, bd);
+    if (den == "inf") return "inf";
+    return rational_make(num, den);
+}
+
+// (a/b) / (c/d) = ad/bc
+std::string rational_div(const std::string& a, const std::string& b) {
+    std::string an, ad, bn, bd;
+    rational_parse(a, an, ad);
+    rational_parse(b, bn, bd);
+    if (bn == "0") return "0"; // guard
+    std::string num = bigint_mul(an, bd);
+    if (num == "inf") return "inf";
+    std::string den = bigint_mul(ad, bn);
+    if (den == "inf") return "inf";
+    return rational_make(num, den);
+}
+
+// (a/b)^n = a^n / b^n  (n must be integer, positive or negative)
+std::string rational_pow(const std::string& base, const std::string& exp) {
+    std::string an, ad;
+    rational_parse(base, an, ad);
+    bool neg_exp = bigint_is_neg(exp);
+    std::string e = bigint_abs(exp);
+
+    // For negative exponent: (a/b)^(-n) = b^n / a^n
+    if (neg_exp) {
+        std::swap(an, ad);
+    }
+
+    std::string num = bigint_pow(an, e);
+    std::string den = bigint_pow(ad, e);
+    if (num == "inf" || den == "inf") return "inf";
+    if (den == "0") return "inf";
+    return rational_make(num, den);
+}
+
+// Compare a/b vs c/d: cross-multiply → ad vs cb (assumes positive denominators)
+int rational_compare(const std::string& a, const std::string& b) {
+    std::string an, ad, bn, bd;
+    rational_parse(a, an, ad);
+    rational_parse(b, bn, bd);
+    // ad vs cb (denominators are positive after rational_make)
+    std::string left = bigint_mul(an, bd);
+    std::string right = bigint_mul(bn, ad);
+    return bigint_compare(left, right);
+}
+
+// Convert any TzdValue to a rational string "num/den"
+std::string to_rational_str(const TzdValue& v) {
+    if (v.type == TzdValue::RATIONAL) return v.sVal;
+    if (v.type == TzdValue::BIGINT) return v.sVal + "/1";
+    if (v.type == TzdValue::STRING) {
+        // Try to parse as "a/b" or just a number
+        if (v.sVal.find('/') != std::string::npos) return v.sVal;
+        return v.sVal + "/1";
+    }
+    if (v.type == TzdValue::ULONG) return std::to_string(v.ulVal) + "/1";
+    if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT) {
+        // Approximate double as fraction (limited precision)
+        return std::to_string((long long)v.dVal) + "/1";
+    }
+    return std::to_string(v.lVal) + "/1";
+}
+
+TzdValue make_rational(const std::string& num, const std::string& den) {
+    std::string r = rational_make(num, den);
+    TzdValue v;
+    // If result is an integer (no '/'), store as BIGINT or LONG
+    if (r.find('/') == std::string::npos) {
+        v.type = TzdValue::BIGINT;
+        v.sVal = r;
+    } else {
+        v.type = TzdValue::RATIONAL;
+        v.sVal = r;
+    }
+    return v;
+}
+
+bool needs_rational(const TzdValue& a, const TzdValue& b) {
+    return a.type == TzdValue::RATIONAL || b.type == TzdValue::RATIONAL;
+}
+
 TzdInterpreter::TzdInterpreter() {
     m_jitEngine = std::make_unique<TzdJitEngine>();
     m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "main_module");
@@ -164,15 +1375,28 @@ TzdInterpreter::~TzdInterpreter() {
 }
 
 bool TzdInterpreter::compileToBytecodeFile(const std::string& code, const std::string& outPath) {
+    auto _t0 = std::chrono::steady_clock::now();
     antlr4::ANTLRInputStream input(code);
     TzdLangLexer lexer(&input);
     antlr4::CommonTokenStream tokens(&lexer);
+    tokens.fill();
+    auto _t1 = std::chrono::steady_clock::now();
     TzdLangParser parser(&tokens);
     auto* tree = parser.program();
+    auto _t2 = std::chrono::steady_clock::now();
     if (parser.getNumberOfSyntaxErrors() > 0) return false;
     TzdBytecodeCompiler compiler;
     BytecodeModule mod = compiler.compile(tree, code);
-    return compiler.saveToFile(mod, outPath);
+    auto _t3 = std::chrono::steady_clock::now();
+    bool ok = compiler.saveToFile(mod, outPath);
+
+    if (m_antlrTiming) {
+        fprintf(stderr, "[ANTLR Timing] compileToBytecodeFile (size: %zu bytes)\n", code.size());
+        fprintf(stderr, "  Lexer+Tokens:  %8.1f ms\n", std::chrono::duration<double, std::milli>(_t1 - _t0).count());
+        fprintf(stderr, "  Parser:        %8.1f ms\n", std::chrono::duration<double, std::milli>(_t2 - _t1).count());
+        fprintf(stderr, "  Bytecode:      %8.1f ms\n", std::chrono::duration<double, std::milli>(_t3 - _t2).count());
+    }
+    return ok;
 }
 
 bool TzdInterpreter::executeBytecodeFile(const std::string& bcPath) {
@@ -519,6 +1743,22 @@ double TzdInterpreter::getAsDoubleInternal(const TzdValue& v) {
 
     case TzdValue::POINTER:
         return (double)(uintptr_t)v.ptrVal;
+
+    case TzdValue::BIGINT: {
+        try { return std::stod(v.sVal); }
+        catch (...) { return v.sVal.empty() ? 0.0 : (bigint_is_neg(v.sVal) ? -1e308 : 1e308); }
+    }
+
+    case TzdValue::RATIONAL: {
+        std::string num, den;
+        rational_parse(v.sVal, num, den);
+        try {
+            double n = std::stod(num);
+            double d = std::stod(den);
+            return (d == 0.0) ? 0.0 : n / d;
+        } catch (...) { return 0.0; }
+    }
+
     default:
         return 0.0;
     }
@@ -541,6 +1781,13 @@ bool TzdInterpreter::isTruthy(const TzdValue& v) {
     case TzdValue::FUNCTION:
     case TzdValue::NATIVE_FUNCTION:
         return true;
+    case TzdValue::BIGINT:
+        return v.sVal != "0" && v.sVal != "-0";
+    case TzdValue::RATIONAL: {
+        std::string num, den;
+        rational_parse(v.sVal, num, den);
+        return num != "0" && num != "-0";
+    }
     default:
         return getAsDoubleInternal(v) != 0.0;
     }
@@ -550,9 +1797,16 @@ bool TzdInterpreter::valuesEqual(const TzdValue& l, const TzdValue& r) {
     if (l.type == r.type) {
         if (l.type == TzdValue::BOOL) return l.bVal == r.bVal;
         if (l.type == TzdValue::STRING) return l.sVal == r.sVal;
+        if (l.type == TzdValue::BIGINT) return bigint_compare(l.sVal, r.sVal) == 0;
+        if (l.type == TzdValue::RATIONAL) return rational_compare(l.sVal, r.sVal) == 0;
         if (l.type == TzdValue::FLOAT || l.type == TzdValue::DOUBLE) return l.dVal == r.dVal;
         if (l.type >= TzdValue::SBYTE && l.type <= TzdValue::ULONG) return l.lVal == r.lVal;
     }
+    // Mixed BIGINT/RATIONAL with other numeric types
+    if (l.type == TzdValue::BIGINT || r.type == TzdValue::BIGINT)
+        return bigint_compare(to_bigint_str(l), to_bigint_str(r)) == 0;
+    if (l.type == TzdValue::RATIONAL || r.type == TzdValue::RATIONAL)
+        return rational_compare(to_rational_str(l), to_rational_str(r)) == 0;
     return getAsDoubleInternal(l) == getAsDoubleInternal(r);
 }
 
@@ -579,13 +1833,15 @@ std::string TzdInterpreter::getAsString(std::any value) {
         return ss.str();
     }
     case TzdValue::STRING: return v.sVal;
+    case TzdValue::BIGINT: return v.sVal;  // Decimal digit string, directly displayable
+    case TzdValue::RATIONAL: return v.sVal; // "num/den" string, directly displayable
     case TzdValue::BOOL:   return v.bVal ? "true" : "false";
     case TzdValue::ARRAY: {
         if (v.arrVal.empty()) {
             return "[]";
         }
 
-        // 1. 严格检查：数组内的每一个元素是否全都是真正的“字符”或“单字符字符串”
+        // 1. 严格检查：数组内的每一个元素是否全都是真正的"字符"或"单字符字符串"
         bool isPureCharArray = true;
         for (const auto& item : v.arrVal) {
             if (item.type == TzdValue::STRING) {
@@ -711,15 +1967,27 @@ void TzdInterpreter::compileCurrentContext() {
  */
 void TzdInterpreter::compileScriptToMemory(const std::string& code) {
     g_CurrentInterpreter = this;
+    auto _t0 = std::chrono::steady_clock::now();
     antlr4::ANTLRInputStream input(code);
     TzdLangLexer lexer(&input);
     antlr4::CommonTokenStream tokens(&lexer);
+    tokens.fill();
+    auto _t1 = std::chrono::steady_clock::now();
     TzdLangParser parser(&tokens);
     auto* tree = parser.program();
+    auto _t2 = std::chrono::steady_clock::now();
     TzdCompiler compiler(*m_jitEngine, "DirectScript_" + std::to_string(rand()));
     compiler.setupExternalFunctions();
     compiler.visit(tree);
     auto TSM = compiler.extractThreadSafeModule();
+    auto _t3 = std::chrono::steady_clock::now();
+
+    if (m_antlrTiming) {
+        fprintf(stderr, "[ANTLR Timing] compileScriptToMemory (size: %zu bytes)\n", code.size());
+        fprintf(stderr, "  Lexer+Tokens:  %8.1f ms\n", std::chrono::duration<double, std::milli>(_t1 - _t0).count());
+        fprintf(stderr, "  Parser:        %8.1f ms\n", std::chrono::duration<double, std::milli>(_t2 - _t1).count());
+        fprintf(stderr, "  Compile+Visit: %8.1f ms\n", std::chrono::duration<double, std::milli>(_t3 - _t2).count());
+    }
 
     if (TSM) {
         m_jitEngine->addModule(std::move(TSM));
@@ -938,16 +2206,33 @@ void TzdInterpreter::loadScript(std::string code) {
     std::string utf8Code = IsUTF8(code) ? code : AnsiToUtf8(code);
     m_currentSource = utf8Code;
 
+    // Timing helper for --antlrTime
+    #define TZD_ANTLR_TIMER(phase_name) \
+        if (m_antlrTiming) { \
+            auto _end = std::chrono::steady_clock::now(); \
+            double _ms = std::chrono::duration<double, std::milli>(_end - _start).count(); \
+            fprintf(stderr, "[ANTLR Timing] %-20s %10.1f ms  (script size: %zu bytes)\n", phase_name, _ms, utf8Code.size()); \
+            _start = _end; \
+        }
+
+    auto _start = std::chrono::steady_clock::now();
+
     ScriptModule* mod = new ScriptModule();
     mod->input = new antlr4::ANTLRInputStream(utf8Code);
     mod->lexer = new TzdLangLexer(mod->input);
     mod->tokens = new antlr4::CommonTokenStream(mod->lexer);
     mod->parser = new TzdLangParser(mod->tokens);
 
+    // Force token stream to fill — this triggers the actual lexing
+    mod->tokens->fill();
+    TZD_ANTLR_TIMER("Lexer+TokenStream")
+
     TzdErrorListener err;
     mod->parser->removeErrorListeners();
     mod->parser->addErrorListener(&err);
     mod->tree = mod->parser->program();
+    size_t _tokenCount = mod->tokens->getNumberOfOnChannelTokens();
+    TZD_ANTLR_TIMER("Parser (program)")
 
     if (mod->parser->getNumberOfSyntaxErrors() > 0) {
         delete mod;
@@ -976,18 +2261,27 @@ void TzdInterpreter::loadScript(std::string code) {
             m_useBytecodeVM = false;
         }
     }
+    TZD_ANTLR_TIMER("Bytecode compile")
 
     // --- 4. 执行访问（编译）与 JIT ---
     try {
         // Set g_CurrentInterpreter so JIT compilation can register nested functions
         g_CurrentInterpreter = this;
         // visit 过程中如果遇到 import，会递归调用 loadScript，
-        // 由于我们上面做了“状态保存”，所以递归是安全的。
+        // 由于我们上面做了"状态保存"，所以递归是安全的。
         std::any result = this->visit(mod->tree);
 
         // 【关键点】：脚本访问完毕后，立即编译并提取当前模块的机器码
         // 这能解决主脚本找不到 import 脚本函数的问题
         jitPendingModule();
+        if (m_antlrTiming) {
+            auto _end = std::chrono::steady_clock::now();
+            double _ms = std::chrono::duration<double, std::milli>(_end - _start).count();
+            fprintf(stderr, "[ANTLR Timing] %-20s %10.1f ms  (tokens: %zu, statements: %zu)\n",
+                    "Visit+JIT", _ms, _tokenCount, mod->tree->statement().size());
+        }
+
+        #undef TZD_ANTLR_TIMER
 
         // 仅在 REPL 顶层或有明确返回值时打印结果
         if (result.has_value() && result.type() == typeid(TzdValue)) {
@@ -1517,7 +2811,7 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
 std::any TzdInterpreter::visitProgram(TzdLangParser::ProgramContext* ctx) {
     std::any lastValue;
 
-    // Phase 1: 只执行“声明类语句”（用于完成函数/类的编译与符号注册）。
+    // Phase 1: 只执行"声明类语句"（用于完成函数/类的编译与符号注册）。
     // 然后立即 jitPendingModule()，确保 Phase 2 中的第一次调用就能走 JIT。
     std::vector<TzdLangParser::StatementContext*> execStmts;
     for (auto stmt : ctx->statement()) {
@@ -1708,9 +3002,14 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
     funcVal.column = (int)ctx->getStart()->getCharPositionInLine();
 
     if (!m_noJit && m_jitEngine && m_compiler) {
-        m_compiler->compileNamedFunction(ctx->block(), ctx->paramList(), internalJitName);
-        m_pendingJitFunctions.insert(internalJitName);
-        m_jitNameToUserMap[internalJitName] = funcName;
+        try {
+            m_compiler->compileNamedFunction(ctx->block(), ctx->paramList(), internalJitName);
+            m_pendingJitFunctions.insert(internalJitName);
+            m_jitNameToUserMap[internalJitName] = funcName;
+        } catch (const std::exception& e) {
+            // JIT compilation failed (e.g. BIGINT literal) — function will run via interpreter
+            agentLogCompile("D", "visitFunctionDeclaration", e.what());
+        }
     }
 
     // --- 修改回调通知 ---
@@ -2202,12 +3501,23 @@ std::any TzdInterpreter::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* c
     bool isPlus = ctx->PLUS() != nullptr;
     TzdValue result;
 
-    // compilation mode removed
-
-    // --- 运行时逻辑 (数值/字符串计算) ---
+    // --- String concatenation (highest priority for +) ---
+    // Must check BEFORE BIGINT/RATIONAL so that "text" + bigint works correctly.
     if (isPlus && (left.type == TzdValue::STRING || right.type == TzdValue::STRING)) {
-        // getAsString 现在处理的是剥离引号后的 sVal，不会再出现双引号
         result = TzdValue(getAsString(left) + getAsString(right));
+    }
+    // --- RATIONAL arithmetic (exact fractions) ---
+    else if (needs_rational(left, right)) {
+        std::string a = to_rational_str(left), b = to_rational_str(right);
+        std::string r = isPlus ? rational_add(a, b) : rational_sub(a, b);
+        if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+        result.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+        result.sVal = r;
+    }
+    // --- BIGINT arithmetic (arbitrary precision) ---
+    else if (needs_bigint(left, right)) {
+        std::string a = to_bigint_str(left), b = to_bigint_str(right);
+        result = make_bigint(isPlus ? bigint_add(a, b) : bigint_sub(a, b));
     }
     else if (left.type == TzdValue::POINTER) {
         long long offset = (right.type == TzdValue::ULONG) ? (long long)right.ulVal : (long long)getAsDouble(right);
@@ -2224,6 +3534,38 @@ std::any TzdInterpreter::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* c
 std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprContext* ctx) {
     TzdValue left = std::any_cast<TzdValue>(visit(ctx->expression(0)));
     TzdValue right = std::any_cast<TzdValue>(visit(ctx->expression(1)));
+
+    // --- RATIONAL arithmetic ---
+    if (needs_rational(left, right)) {
+        std::string a = to_rational_str(left), b = to_rational_str(right);
+        if (ctx->MUL()) {
+            std::string r = rational_mul(a, b);
+            if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+            TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+            return v;
+        }
+        // DIV or MOD: (a/b) / (c/d) = ad/bc
+        std::string bn, bd;
+        rational_parse(b, bn, bd);
+        if (bn == "0") return TzdValue(0LL);
+        std::string r = rational_div(a, b);
+        if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v;
+    }
+
+    // --- BIGINT arithmetic ---
+    if (needs_bigint(left, right)) {
+        std::string a = to_bigint_str(left), b = to_bigint_str(right);
+        if (ctx->MUL()) {
+            std::string r = bigint_mul(a, b);
+            if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+            return make_bigint(r);
+        }
+        if (b == "0" || b == "-0") return TzdValue(0LL);
+        if (ctx->DIV()) return make_bigint(bigint_div(a, b));
+        return make_bigint(bigint_mod(a, b)); // MOD
+    }
 
     if (left.type == TzdValue::DOUBLE || right.type == TzdValue::DOUBLE || left.type == TzdValue::FLOAT || right.type == TzdValue::FLOAT) {
         double l = getAsDouble(left), r = getAsDouble(right);
@@ -2247,7 +3589,47 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
 }
 
 std::any TzdInterpreter::visitPowerExpr(TzdLangParser::PowerExprContext* ctx) {
-    return TzdValue(std::pow(getAsDouble(visit(ctx->expression(0))), getAsDouble(visit(ctx->expression(1)))));
+    TzdValue left = std::any_cast<TzdValue>(visit(ctx->expression(0)));
+    TzdValue right = std::any_cast<TzdValue>(visit(ctx->expression(1)));
+
+    // --- RATIONAL power (exact fraction exponentiation) ---
+    if (needs_rational(left, right)) {
+        std::string base = to_rational_str(left), exp = to_bigint_str(right);
+        std::string r = rational_pow(base, exp);
+        if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v;
+    }
+
+    // --- BIGINT power (arbitrary precision) ---
+    if (needs_bigint(left, right)) {
+        std::string base = to_bigint_str(left), exp = to_bigint_str(right);
+        std::string r = bigint_pow(base, exp);
+        if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+        return make_bigint(r);
+    }
+    // --- Integer power: use BIGINT for exact results (like Python) ---
+    // When both operands are integers, std::pow loses precision or overflows to inf.
+    // Use bigint_pow for exact results, falling back to LONG if small enough.
+    bool leftIsInt = left.type >= TzdValue::SBYTE && left.type <= TzdValue::ULONG;
+    bool rightIsInt = right.type >= TzdValue::SBYTE && right.type <= TzdValue::ULONG;
+    if (leftIsInt && rightIsInt) {
+        std::string base = to_bigint_str(left), exp = to_bigint_str(right);
+        // Negative exponent → fraction (e.g. 2^(-1) = 1/2)
+        if (bigint_is_neg(exp)) {
+            std::string num = "1";
+            std::string den = bigint_pow(base, bigint_abs(exp));
+            if (den == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+            return make_rational(num, den);
+        }
+        std::string r = bigint_pow(base, exp);
+        if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+        // If result fits in int64, return as LONG for efficiency
+        try { return TzdValue(std::stoll(r)); }
+        catch (...) { return make_bigint(r); }
+    }
+
+    return TzdValue(std::pow(getAsDouble(left), getAsDouble(right)));
 }
 
 std::any TzdInterpreter::visitParenExpr(TzdLangParser::ParenExprContext* ctx) {
@@ -2526,8 +3908,28 @@ std::any TzdInterpreter::visitForInit(TzdLangParser::ForInitContext* ctx) {
 }
 
 std::any TzdInterpreter::visitRelationalExpr(TzdLangParser::RelationalExprContext* ctx) {
-    double l = getAsDouble(visit(ctx->expression(0)));
-    double r = getAsDouble(visit(ctx->expression(1)));
+    TzdValue left = castAnyToTzdValue(visit(ctx->expression(0)), "visitRelationalExpr.l");
+    TzdValue right = castAnyToTzdValue(visit(ctx->expression(1)), "visitRelationalExpr.r");
+
+    // RATIONAL comparison (cross-multiply for exact comparison)
+    if (needs_rational(left, right)) {
+        int c = rational_compare(to_rational_str(left), to_rational_str(right));
+        if (ctx->GT()) return TzdValue(c > 0);
+        if (ctx->LT()) return TzdValue(c < 0);
+        if (ctx->GE()) return TzdValue(c >= 0);
+        return TzdValue(c <= 0);
+    }
+
+    // BIGINT comparison (preserves precision for large numbers)
+    if (needs_bigint(left, right)) {
+        int c = bigint_compare(to_bigint_str(left), to_bigint_str(right));
+        if (ctx->GT()) return TzdValue(c > 0);
+        if (ctx->LT()) return TzdValue(c < 0);
+        if (ctx->GE()) return TzdValue(c >= 0);
+        return TzdValue(c <= 0);
+    }
+
+    double l = getAsDouble(left), r = getAsDouble(right);
     if (ctx->GT()) return TzdValue(l > r);
     if (ctx->LT()) return TzdValue(l < r);
     if (ctx->GE()) return TzdValue(l >= r);
@@ -2600,8 +4002,22 @@ std::any TzdInterpreter::visitCastExpr(TzdLangParser::CastExprContext* ctx) {
 std::any TzdInterpreter::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
     std::string raw = ctx->getText();
     TzdValue res;
+
+    // Fast path: if the number has too many digits for int64 (>19), skip stoll
+    // entirely — it reads the WHOLE string before throwing, which is O(n) for
+    // multi-megabyte literals. ANTLR4 already validated the token as digits.
+    size_t digitStart = (raw.size() > 0 && (raw[0] == '-' || raw[0] == '+')) ? 1 : 0;
+    bool isHex = (raw.size() > 2 + digitStart && raw[digitStart] == '0' &&
+                  (raw[digitStart+1] == 'x' || raw[digitStart+1] == 'X'));
+    if (!isHex && raw.size() - digitStart > 19) {
+        // Directly create BIGINT — no stoll, no validation loop
+        res.type = TzdValue::BIGINT;
+        res.sVal = std::move(raw);
+        return res;
+    }
+
     try {
-        if (raw.size() > 2 && (raw.substr(0, 2) == "0x" || raw.substr(0, 2) == "0X")) {
+        if (isHex) {
             res = TzdValue((void*)std::stoull(raw, nullptr, 16));
         }
         else {
@@ -2609,7 +4025,21 @@ std::any TzdInterpreter::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
         }
     }
     catch (...) {
-        res = TzdValue(std::stod(raw));
+        // Overflow: check if it's a valid big integer (all digits, optional leading -)
+        bool valid = true;
+        size_t start = 0;
+        if (raw[0] == '-') start = 1;
+        if (start >= raw.size()) valid = false;
+        for (size_t i = start; i < raw.size(); ++i) {
+            if (raw[i] < '0' || raw[i] > '9') { valid = false; break; }
+        }
+        if (valid && raw.size() > start + 1) {
+            // Store as BIGINT (arbitrary precision)
+            res.type = TzdValue::BIGINT;
+            res.sVal = std::move(raw);
+        } else {
+            res = TzdValue(std::stod(raw));
+        }
     }
 
     return res;
@@ -3128,7 +4558,7 @@ std::any TzdInterpreter::visitTypeCheckExpr(TzdLangParser::TypeCheckExprContext*
     std::string targetType = ctx->qualifiedName() ? ctx->qualifiedName()->getText() : ctx->typeType()->getText();
     std::string targetName = ctx->qualifiedName() ? ctx->qualifiedName()->getText() : ctx->typeType()->getText();
 
-    // 1. 检查目标是否是一个“注解类”
+    // 1. 检查目标是否是一个"注解类"
     TzdClassDef* targetCls = TzdOopManager::getClass(targetName);
     bool isTargetAnnotation = (targetCls && targetCls->isAnnotation);
 

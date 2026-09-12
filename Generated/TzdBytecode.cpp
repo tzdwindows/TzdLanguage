@@ -62,6 +62,48 @@ bool bcIsIntLike(const TzdValue& v) {
     return v.type >= TzdValue::SBYTE && v.type <= TzdValue::LONG;
 }
 
+// Check if either operand requires BIGINT/RATIONAL arithmetic
+static bool bcNeedsBigint(const TzdValue& a, const TzdValue& b) {
+    return a.type == TzdValue::BIGINT || b.type == TzdValue::BIGINT ||
+           a.type == TzdValue::RATIONAL || b.type == TzdValue::RATIONAL;
+}
+
+// Perform BIGINT/RATIONAL binary arithmetic: op is '+','-','*','/','%'
+static TzdValue bcBigintArith(const TzdValue& a, const TzdValue& b, char op) {
+    bool useRational = needs_rational(a, b);
+    std::string r;
+    if (useRational) {
+        std::string sa = to_rational_str(a), sb = to_rational_str(b);
+        switch (op) {
+            case '+': r = rational_add(sa, sb); break;
+            case '-': r = rational_sub(sa, sb); break;
+            case '*': r = rational_mul(sa, sb); break;
+            case '/': {
+                std::string bn, bd; rational_parse(sb, bn, bd);
+                if (bn == "0") return TzdValue(0LL);
+                r = rational_div(sa, sb); break;
+            }
+            default: r = bigint_mod(to_bigint_str(a), to_bigint_str(b)); break;
+        }
+    } else {
+        std::string sa = to_bigint_str(a), sb = to_bigint_str(b);
+        switch (op) {
+            case '+': r = bigint_add(sa, sb); break;
+            case '-': r = bigint_sub(sa, sb); break;
+            case '*': r = bigint_mul(sa, sb); break;
+            case '/': if (sb == "0" || sb == "-0") return TzdValue(0LL);
+                      r = bigint_div(sa, sb); break;
+            case '%': if (sb == "0" || sb == "-0") return TzdValue(0LL);
+                      r = bigint_mod(sa, sb); break;
+        }
+    }
+    if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
+    TzdValue v;
+    v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
+    v.sVal = std::move(r);
+    return v;
+}
+
 } // namespace
 
 // ============================================================================
@@ -103,6 +145,11 @@ int TzdBytecodeCompiler::addConstant(bool v) {
     ConstEntry e;
     e.type = ConstEntry::BOOL;
     e.bVal = v;
+    m_module.constants.push_back(e);
+    return (int)m_module.constants.size() - 1;
+}
+
+int TzdBytecodeCompiler::addConstant(const ConstEntry& e) {
     m_module.constants.push_back(e);
     return (int)m_module.constants.size() - 1;
 }
@@ -762,10 +809,28 @@ std::any TzdBytecodeCompiler::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
     int64_t val = 0;
     try {
         val = std::stoll(raw, nullptr, 0);
+        emit(OpCode::PUSH_INT, addConstant(val));
     } catch (...) {
-        try { val = (int64_t)std::stod(raw); } catch (...) { val = 0; }
+        // Overflow: check if it's a valid big integer (all digits, optional leading -)
+        bool valid = true;
+        size_t start = (raw[0] == '-') ? 1 : 0;
+        for (size_t i = start; i < raw.size(); ++i) {
+            if (raw[i] < '0' || raw[i] > '9') { valid = false; break; }
+        }
+        if (valid && raw.size() > start + 1) {
+            // Store as BIGINT constant (raw digit string)
+            ConstEntry ce;
+            ce.type = ConstEntry::BIGINT;
+            ce.sVal = raw;
+            ce.iVal = 0;
+            ce.dVal = 0;
+            ce.bVal = false;
+            emit(OpCode::PUSH_INT, addConstant(ce));
+        } else {
+            try { val = (int64_t)std::stod(raw); } catch (...) { val = 0; }
+            emit(OpCode::PUSH_INT, addConstant(val));
+        }
     }
-    emit(OpCode::PUSH_INT, addConstant(val));
     return std::any();
 }
 
@@ -1587,7 +1652,15 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             }
             case OpCode::PUSH_INT: {
                 const ConstEntry& c = module.constants[instr.arg1];
-                m_stack.emplace_back(c.iVal);
+                if (c.type == ConstEntry::BIGINT) {
+                    // Big integer literal — push as BIGINT TzdValue
+                    TzdValue v;
+                    v.type = TzdValue::BIGINT;
+                    v.sVal = c.sVal;
+                    m_stack.push_back(std::move(v));
+                } else {
+                    m_stack.emplace_back(c.iVal);
+                }
                 ++ip; break;
             }
             case OpCode::PUSH_STRING: {
@@ -1672,6 +1745,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     m_stack.emplace_back(bcValueToString(a) + bcValueToString(b));
                 } else if (bcIsIntLike(a) && bcIsIntLike(b)) {
                     m_stack.emplace_back(a.lVal + b.lVal);
+                } else if (bcNeedsBigint(a, b)) {
+                    m_stack.emplace_back(bcBigintArith(a, b, '+'));
                 } else {
                     m_stack.emplace_back(bcAsDouble(a) + bcAsDouble(b));
                 }
@@ -1694,6 +1769,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b))
                     m_stack.emplace_back(a.lVal - b.lVal);
+                else if (bcNeedsBigint(a, b))
+                    m_stack.emplace_back(bcBigintArith(a, b, '-'));
                 else
                     m_stack.emplace_back(bcAsDouble(a) - bcAsDouble(b));
                 ++ip; break;
@@ -1715,6 +1792,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b))
                     m_stack.emplace_back(a.lVal * b.lVal);
+                else if (bcNeedsBigint(a, b))
+                    m_stack.emplace_back(bcBigintArith(a, b, '*'));
                 else
                     m_stack.emplace_back(bcAsDouble(a) * bcAsDouble(b));
                 ++ip; break;
@@ -1724,6 +1803,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 if (bcIsIntLike(a) && bcIsIntLike(b)) {
                     if (b.lVal == 0) throw std::runtime_error("Division by zero");
                     m_stack.emplace_back(a.lVal / b.lVal);
+                } else if (bcNeedsBigint(a, b)) {
+                    m_stack.emplace_back(bcBigintArith(a, b, '/'));
                 } else {
                     double r = bcAsDouble(b);
                     if (r == 0.0) throw std::runtime_error("Division by zero");
@@ -1735,6 +1816,8 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b) && b.lVal != 0) {
                     m_stack.emplace_back(a.lVal % b.lVal);
+                } else if (bcNeedsBigint(a, b)) {
+                    m_stack.emplace_back(bcBigintArith(a, b, '%'));
                 } else {
                     double r = bcAsDouble(b);
                     if (r == 0.0) throw std::runtime_error("Modulo by zero");
