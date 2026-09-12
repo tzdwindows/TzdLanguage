@@ -47,6 +47,8 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - `core/`: Error handling, reflection, I/O
    - `thread/`: OS thread primitives, synchronization
    - `torch/`: Neural network layers and deep learning utilities
+9. [**Built-in Functions Reference Manual**](Builtin-Functions-Reference.md)
+   - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
 
 ---
 
