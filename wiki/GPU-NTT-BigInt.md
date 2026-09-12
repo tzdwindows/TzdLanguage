@@ -112,7 +112,7 @@ TzdLang solves this with a **2-Round Reduction Pipeline**:
 3. **Kogge-Stone Parallel Scan**:
    - **Phase 1 (Intra-block)**: 512 threads per block compute $(G_k, P_k)$ tree prefix scan.
    - **Phase 2 (Inter-block)**: Sequential scan across 4096 block carries (takes only $0.01\text{ ms}$).
-   - **Phase 3 (Distribution)**: Broadcast block carry $C_{\text{block}}$ to finalize digit $D_i = r_2[i] + (g_i \mid (p_i \ \& \ C_{\text{block}}))$.
+   - **Phase 3 (Distribution)**: Broadcast block carry $C_{\text{block}}$ to finalize digit: $D_i = r_2[i] + (g_i \lor (p_i \land C_{\text{block}}))$ (implemented as `D[i] = r2[i] + (g[i] | (p[i] & C_block))`).
 
 ---
 

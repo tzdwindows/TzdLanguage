@@ -113,7 +113,7 @@ TzdLang 独创了 **两轮规约流水线（2-Round Reduction Pipeline）**：
 3. **Kogge-Stone 三阶段并行扫描**：
    - **Phase 1（块内扫描）**：每块 512 个线程构建 $(G_k, P_k)$ 并行前缀扫描树。
    - **Phase 2（块间扫描）**：CPU 或极简核函数对 4096 个块级进位执行极速扫描（仅耗时 $0.01\text{ ms}$）。
-   - **Phase 3（结果分发）**：广播块进位 $C_{\text{block}}$ 确定最终数值 $D_i = r_2[i] + (g_i \mid (p_i \ \& \ C_{\text{block}}))$。
+   - **Phase 3（结果分发）**：广播块进位 $C_{\text{block}}$ 确定最终数值 $D_i = r_2[i] + (g_i \lor (p_i \land C_{\text{block}}))$（代码实现为 `D[i] = r2[i] + (g[i] | (p[i] & C_block))`）。
 
 ---
 
