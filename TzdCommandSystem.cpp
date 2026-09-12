@@ -743,7 +743,7 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             if (arg == "-s" || arg == "--silent" ||
                 arg == "--noJit" || arg == "--no-jit" ||
                 arg == "--interpreter" || arg == "--tree-walk" ||
-                arg == "--antlrTime" || arg == "--bigTime" ||
+                arg == "--antlrTime" || arg == "--bigTime" || arg == "--forceGPU" ||
                 arg.rfind("--debug-port=", 0) == 0 ||
                 arg.rfind("--debug-host=", 0) == 0 ||
                 arg.rfind("--debug-addr=", 0) == 0 ||

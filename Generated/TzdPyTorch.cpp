@@ -638,8 +638,17 @@ static std::string bigint_mul_gpu_ntt(const std::string& a, const std::string& b
 // ---- GPU model detection: only use NVRTC NTT for capable GPUs ----
 // Low-end GPUs (Pascal P106, GTX 10x0) have too much kernel launch overhead.
 // Only Turing+ (RTX 20x0, CC 7.5+) or datacenter GPUs (V100/A100) are fast enough.
+// Global flag set by --forceGPU: when true, always use GPU regardless of model
+bool g_forceGPU = false;
+
 bool bigint_gpu_suitable(size_t digitCount = 0) {
 #ifdef WITH_CUDA
+    // --forceGPU: skip model check, always try GPU
+    if (g_forceGPU) {
+        if (!torch::cuda::is_available()) return false;
+        return true;
+    }
+
     static bool s_checked = false;
     static bool s_suitable = false;
     static int s_minDigits = 0;
@@ -653,10 +662,6 @@ bool bigint_gpu_suitable(size_t digitCount = 0) {
             int cc = prop.major * 10 + prop.minor;
             int smCount = prop.multiProcessorCount;
             const char* name = prop.name;
-
-            // Debug: print GPU info once
-            fprintf(stderr, "[GPU] %s (CC %d.%d, %d SMs, %d MHz)\n",
-                    name, prop.major, prop.minor, smCount, (int)prop.clockRate / 1000);
 
             // Tier 1: Datacenter GPUs (V100/A100/H100) — always suitable, min 50k digits
             // Tier 2: RTX 20x0+ (CC >= 7.5, SM >= 20) — suitable, min 100k digits

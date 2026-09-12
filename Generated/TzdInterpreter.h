@@ -228,6 +228,7 @@ bool needs_bigint(const TzdValue& a, const TzdValue& b);
 std::string bigint_mul_fft(const std::string& a, const std::string& b);
 bool bigint_fft_available();
 bool bigint_gpu_suitable(size_t digitCount);
+extern bool g_forceGPU;
 
 // --- Rational (exact fraction) functions ---
 // Stored as "num/den" in sVal. Uses BIGINT arithmetic for numerator/denominator.

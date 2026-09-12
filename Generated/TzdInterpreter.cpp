@@ -1076,6 +1076,7 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
     size_t maxDigits = aa.size() > bb.size() ? aa.size() : bb.size();
 
     // GPU check (first call initializes CUDA runtime — keep out of timing)
+    g_forceGPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceGPU);
     bool useGPU = bigint_gpu_suitable(maxDigits);
 
     auto bt0 = std::chrono::steady_clock::now();
