@@ -1,5 +1,9 @@
 # Deep Learning & LibTorch Native Integration
 
+<p align="right">
+  <a href="Deep-Learning-and-PyTorch.md"><strong>English</strong></a> | <a href="Deep-Learning-and-PyTorch-zh.md"><strong>中文</strong></a>
+</p>
+
 TzdLang provides native, first-class integration with PyTorch's C++ library (**LibTorch**), allowing developers to build, train, and deploy deep learning models directly within TzdLang without Python runtime overhead.
 
 ---

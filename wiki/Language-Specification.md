@@ -1,5 +1,9 @@
 # TzdLang Language Specification & Syntax Guide
 
+<p align="right">
+  <a href="Language-Specification.md"><strong>English</strong></a> | <a href="Language-Specification-zh.md"><strong>中文</strong></a>
+</p>
+
 This document provides a comprehensive guide to the syntax, semantics, and standard programming paradigms of the **TzdLang (TZD)** programming language.
 
 ---

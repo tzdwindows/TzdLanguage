@@ -1,5 +1,9 @@
 # TzdLang (TZD) & TzdTools Technical Wiki
 
+<p align="right">
+  <a href="Home.md"><strong>English</strong></a> | <a href="Home-zh.md"><strong>中文</strong></a>
+</p>
+
 Welcome to the official technical documentation and architecture wiki for **TzdLang (TZD)** and **TzdTools**.
 
 TzdLang is an independently developed, high-performance object-oriented programming language featuring a hybrid tiered compilation model, native deep learning primitives, an ultra-fast GPU Number Theoretic Transform (NTT) BigInt multiplication engine, and complete tooling support.

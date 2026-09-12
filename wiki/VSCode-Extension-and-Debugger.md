@@ -1,5 +1,9 @@
 # VS Code Extension & DAP Debugger
 
+<p align="right">
+  <a href="VSCode-Extension-and-Debugger.md"><strong>English</strong></a> | <a href="VSCode-Extension-and-Debugger-zh.md"><strong>中文</strong></a>
+</p>
+
 TzdLang includes an integrated development environment (IDE) extension for Visual Studio Code, located under `vscodePlugin/tzdlang`.
 
 ---

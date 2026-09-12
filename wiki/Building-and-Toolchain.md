@@ -1,5 +1,9 @@
 # Building and Toolchain Guide
 
+<p align="right">
+  <a href="Building-and-Toolchain.md"><strong>English</strong></a> | <a href="Building-and-Toolchain-zh.md"><strong>中文</strong></a>
+</p>
+
 This guide describes how to build **TzdTools** and the **TzdLang** runtime environment on Windows from source.
 
 ---

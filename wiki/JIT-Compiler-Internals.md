@@ -1,5 +1,9 @@
 # JIT Compiler Architecture & Optimization Internals
 
+<p align="right">
+  <a href="JIT-Compiler-Internals.md"><strong>English</strong></a> | <a href="JIT-Compiler-Internals-zh.md"><strong>中文</strong></a>
+</p>
+
 TzdLang features a cutting-edge hybrid tiered compilation engine designed to combine the sub-millisecond startup of an interpreter with the maximum throughput of an optimizing native compiler.
 
 ---

@@ -1,5 +1,9 @@
 # GPU NTT BigInt Multiplication Architecture
 
+<p align="right">
+  <a href="GPU-NTT-BigInt.md"><strong>English</strong></a> | <a href="GPU-NTT-BigInt-zh.md"><strong>中文</strong></a>
+</p>
+
 TzdLang features a world-class, custom CUDA-accelerated Number Theoretic Transform (NTT) pipeline for multi-million-digit integer arithmetic. It is capable of multiplying two **4.74-million-digit** integers in **29.20 ms** of pure GPU kernel execution on an NVIDIA GeForce / Pascal P106-090 GPU (total end-to-end time **56.52 ms** including string parsing and radix conversion), surpassing single-core **GNU MP (GMP 6.3.0) by over 10x**.
 
 ---

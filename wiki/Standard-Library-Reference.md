@@ -1,5 +1,9 @@
 # Standard Library Reference Manual
 
+<p align="right">
+  <a href="Standard-Library-Reference.md"><strong>English</strong></a> | <a href="Standard-Library-Reference-zh.md"><strong>中文</strong></a>
+</p>
+
 TzdLang ships with a modular standard library located under the `stdlib/` directory.
 
 ---
