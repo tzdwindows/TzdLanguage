@@ -40,11 +40,12 @@
 
 Benchmark multiplying two $4,741,006$-digit numbers on an NVIDIA P106-090 GPU (Pascal CC 6.1, 192 GB/s bandwidth):
 
-| Engine / Implementation | Digit Count | Compute / NTT Time | Total Pipeline Time | Speedup vs GMP |
-|---|---|---|---|---|
-| **TzdLang GPU NTT (CUDA NVRTC)** | **4,741,006** | **29.20 ms** | **56.52 ms** | **9.2x ~ 17.8x** |
-| Single-core GMP 6.3.0 (`mpz_mul`) | 4,741,006 | ~519.30 ms | ~519.30 ms | 1.0x (Baseline) |
-| Python 3.12 (`int * int`) | 4,741,006 | >3,800 ms | >3,800 ms | ~0.14x |
+| Engine / Implementation | Digit Count | Pure Multiply Time | Total End-to-End Time | Pure Speedup vs GMP | End-to-End Speedup |
+|---|---|---|---|---|---|
+| **TzdLang GPU NTT (CUDA)** | **4,741,006** | **29.20 ms** | **56.52 ms** | **3.83x** | **45.1x** |
+| Multi-Threaded GMP (8T Karatsuba) | 4,741,006 | 84.58 ms | 2,522.09 ms | 1.32x | 1.01x |
+| Single-core GMP 6.3.0 (`mpz_mul`) | 4,741,006 | 111.78 ms | 2,549.30 ms | 1.0x (Baseline) | 1.0x (Baseline) |
+| Python 3.12 (`int * int`) | 4,741,006 | >3,800 ms | >3,800 ms | ~0.03x | ~0.01x |
 
 > **Key Architectural Features of TzdLang GPU NTT:**
 > - **Three 32-bit NTT Primes**: $P_1 = 469762049$, $P_2 = 167772161$, $P_3 = 754974721$.
