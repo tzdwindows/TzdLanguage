@@ -226,9 +226,13 @@ bool needs_bigint(const TzdValue& a, const TzdValue& b);
 // FFT-based multiplication using ATen/libtorch (O(n log n) vs Karatsuba O(n^1.585))
 // Implemented in TzdPyTorch.cpp. Used automatically by bigint_mul for large numbers.
 std::string bigint_mul_fft(const std::string& a, const std::string& b);
+std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, const std::vector<uint64_t>& lb);
+std::vector<uint64_t> limbs_from_str(const std::string& s);
+std::string limbs_to_str(const std::vector<uint64_t>& limbs);
 bool bigint_fft_available();
 bool bigint_gpu_suitable(size_t digitCount);
 extern bool g_forceGPU;
+extern bool g_bigTime;
 
 // --- Rational (exact fraction) functions ---
 // Stored as "num/den" in sVal. Uses BIGINT arithmetic for numerator/denominator.

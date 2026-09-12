@@ -1,4 +1,4 @@
-﻿#include "TzdInterpreter.h"
+#include "TzdInterpreter.h"
 
 #include "TzdGC.h"
 #include "TzdTieringEngine.h"
@@ -173,46 +173,53 @@ void tzdPoolSlotReleaseInstance(TzdValue* v) {
 static constexpr uint64_t LIMB_BASE = 1000000000ULL;  // 10^9
 static constexpr int LIMB_DIGITS = 9;
 
-// --- string ↔ limbs conversion (O(n), no allocation per limb) ---
-static std::vector<uint64_t> limbs_from_str(const std::string& s) {
-    // Skip leading '-' and leading zeros
+// --- string ↔ limbs conversion (O(n), no allocation per limb, parallelized) ---
+std::vector<uint64_t> limbs_from_str(const std::string& s) {
     size_t start = 0;
     while (start < s.size() && (s[start] == '-' || s[start] == '0')) start++;
     if (start >= s.size()) return {};  // zero
-    std::vector<uint64_t> limbs;
     int len = (int)(s.size() - start);
-    limbs.reserve((len + LIMB_DIGITS - 1) / LIMB_DIGITS);
-    // Process from LSB (right) to MSB (left), 9 digits at a time
-    for (int i = len; i > 0; i -= LIMB_DIGITS) {
-        int b = i - LIMB_DIGITS;
-        if (b < 0) b = 0;
+    int n_limbs = (len + LIMB_DIGITS - 1) / LIMB_DIGITS;
+    std::vector<uint64_t> limbs(n_limbs);
+    const char* str = s.data() + start;
+
+    #pragma omp parallel for schedule(static) if(n_limbs > 10000)
+    for (int k = 0; k < n_limbs; k++) {
+        int end_pos = len - k * LIMB_DIGITS;
+        int start_pos = end_pos - LIMB_DIGITS;
+        if (start_pos < 0) start_pos = 0;
         uint64_t v = 0;
-        for (int j = b; j < i; j++) v = v * 10 + (uint64_t)(s[start + j] - '0');
-        limbs.push_back(v);
+        const char* p = str + start_pos;
+        const char* p_end = str + end_pos;
+        while (p < p_end) {
+            v = v * 10 + (uint64_t)(*p++ - '0');
+        }
+        limbs[k] = v;
     }
-    // Trim trailing zeros (MSB side)
     while (!limbs.empty() && limbs.back() == 0) limbs.pop_back();
     return limbs;
 }
 
-static std::string limbs_to_str(const std::vector<uint64_t>& limbs) {
+std::string limbs_to_str(const std::vector<uint64_t>& limbs) {
     if (limbs.empty()) return "0";
     size_t sz = limbs.size();
-    // Pre-allocate exact size, write directly into buffer (avoids snprintf overhead)
-    std::string r;
-    r.resize(sz * LIMB_DIGITS);
-    char* p = &r[0];
-    // First limb (MSB) -- variable length, no leading zeros
     uint64_t top = limbs.back();
-    if (top == 0) { *p++ = '0'; }
+    char tmp[16]; int tl = 0;
+    if (top == 0) { tmp[tl++] = '0'; }
     else {
-        char tmp[12]; int tl = 0;
-        while (top > 0) { tmp[tl++] = '0' + (int)(top % 10); top /= 10; }
-        while (tl > 0) *p++ = tmp[--tl];  // reverse into output
+        uint64_t t = top;
+        while (t > 0) { tmp[tl++] = '0' + (int)(t % 10); t /= 10; }
+        std::reverse(tmp, tmp + tl);
     }
-    // Remaining limbs -- fixed 9 digits, zero-padded, direct write
-    for (int i = (int)sz - 2; i >= 0; i--) {
-        uint64_t v = limbs[i];
+    size_t total_len = (size_t)tl + (sz - 1) * LIMB_DIGITS;
+    std::string r;
+    r.resize(total_len);
+    memcpy(&r[0], tmp, tl);
+
+    #pragma omp parallel for schedule(static) if(sz > 10000)
+    for (int k = 0; k < (int)sz - 1; k++) {
+        char* p = &r[0] + tl + (sz - 2 - k) * LIMB_DIGITS;
+        uint64_t v = limbs[k];
         p[8] = '0' + (int)(v % 10); v /= 10;
         p[7] = '0' + (int)(v % 10); v /= 10;
         p[6] = '0' + (int)(v % 10); v /= 10;
@@ -222,9 +229,7 @@ static std::string limbs_to_str(const std::vector<uint64_t>& limbs) {
         p[2] = '0' + (int)(v % 10); v /= 10;
         p[1] = '0' + (int)(v % 10); v /= 10;
         p[0] = '0' + (int)(v);
-        p += 9;
     }
-    r.resize(p - &r[0]);
     return r;
 }
 
@@ -1077,32 +1082,39 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
 
     // GPU check (first call initializes CUDA runtime — keep out of timing)
     g_forceGPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceGPU);
+    g_bigTime = bigTime;
     bool useGPU = bigint_gpu_suitable(maxDigits);
 
     auto bt0 = std::chrono::steady_clock::now();
+    auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
+    auto bt1 = std::chrono::steady_clock::now();
 
+    std::vector<uint64_t> lr;
     if (useGPU) {
-        try { r = bigint_mul_fft(aa, bb); }
-        catch (...) {
-            auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
-            auto lr = limbs_mul(la, lb);
-            r = limbs_to_str(lr);
+        try {
+            lr = bigint_mul_gpu_ntt_limbs(la, lb);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[GPU Error] %s\n", e.what());
+            lr = limbs_mul(la, lb);
+        } catch (...) {
+            fprintf(stderr, "[GPU Error] unknown exception\n");
+            lr = limbs_mul(la, lb);
         }
     } else {
-        auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
-        auto bt1 = std::chrono::steady_clock::now();
-        auto lr = limbs_mul(la, lb);
-        auto bt2 = std::chrono::steady_clock::now();
-        r = limbs_to_str(lr);
-        auto bt3 = std::chrono::steady_clock::now();
-        if (bigTime) {
-            fprintf(stderr, "[BigTime] digits=%zu  str2limb=%.2fms  ntt=%.2fms  limb2str=%.2fms  total=%.2fms\n",
-                    maxDigits,
-                    std::chrono::duration<double, std::milli>(bt1 - bt0).count(),
-                    std::chrono::duration<double, std::milli>(bt2 - bt1).count(),
-                    std::chrono::duration<double, std::milli>(bt3 - bt2).count(),
-                    std::chrono::duration<double, std::milli>(bt3 - bt0).count());
-        }
+        lr = limbs_mul(la, lb);
+    }
+    auto bt2 = std::chrono::steady_clock::now();
+
+    r = limbs_to_str(lr);
+    auto bt3 = std::chrono::steady_clock::now();
+
+    if (bigTime) {
+        fprintf(stderr, "[BigTime] digits=%zu  str2limb=%.2fms  ntt=%.2fms  limb2str=%.2fms  total=%.2fms\n",
+                maxDigits,
+                std::chrono::duration<double, std::milli>(bt1 - bt0).count(),
+                std::chrono::duration<double, std::milli>(bt2 - bt1).count(),
+                std::chrono::duration<double, std::milli>(bt3 - bt2).count(),
+                std::chrono::duration<double, std::milli>(bt3 - bt0).count());
     }
 
     bool neg = an != bn;

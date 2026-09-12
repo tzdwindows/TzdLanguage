@@ -1,4 +1,4 @@
-﻿// Prevent Windows min/max macros from breaking libtorch headers
+// Prevent Windows min/max macros from breaking libtorch headers
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -369,86 +369,367 @@ extern "C" void tzdTensorRelease(void* ptr) {
 }
 
 // ============================================================================
-// GPU-accelerated NTT BIGINT multiplication using NVRTC fused CUDA kernel.
-// NVRTC compiles a custom CUDA kernel at runtime — Barrett reduction avoids
-// integer division on GPU (8x faster per butterfly), and fused kernel stages
-// eliminate ATen tensor op overhead (612 launches → ~94).
-// Uses 2 NTT primes + CRT, base 10^4.
+// High-Performance GPU-Accelerated Big Number Multiplication Architecture
+// Stockham 4-Step NTT (Radix-10^9) with On-Chip Shared Memory Fusion,
+// Montgomery 32-Bit Twiddle Factor Pipeline, GPU CRT, and 3-Phase Block-Scan
+// Parallel Prefix Carry Elimination.
 // ============================================================================
 #ifdef WITH_CUDA
+#include <omp.h>
 
 // ---- CUDA kernel source (compiled at runtime by NVRTC) ----
 static const char* s_nttKernelSrc = R"CUDA(
+typedef unsigned int u32;
 typedef unsigned long long u64;
-__device__ __forceinline__ u64 mulmod(u64 a, u64 b, u64 p, u64 M) {
-    u64 prod = a * b;
-    u64 q = __umul64hi(prod, M);   // Barrett: q = floor(prod * M / 2^64) ≈ prod/p
-    u64 r = prod - q * p;          // remainder, in [0, 2p)
-    if (r >= p) r -= p;            // one conditional subtract suffices
+
+__device__ __forceinline__ u32 mont_mul(u32 a, u32 b, u32 P, u32 P_inv) {
+    u64 prod = (u64)a * b;
+    u32 m = (u32)prod * P_inv;
+    u64 t = prod + (u64)m * P;
+    u32 res = (u32)(t >> 32);
+    if (res >= P) res -= P;
+    return res;
+}
+
+__device__ __forceinline__ u32 barrett_mul(u32 a, u32 b, u32 P, u64 M) {
+    u64 prod = (u64)a * b;
+    u64 q = __umul64hi(prod, M);
+    u32 r = (u32)(prod - q * P);
+    if (r >= P) r -= P;
     return r;
 }
-// Process one butterfly stage on a single array
-__global__ void ntt_stage(u64* a, int n, int len, const u64* roots, u64 p, u64 M) {
-    int half = len >> 1, stride = n / len, total = n >> 1;
-    for (int idx = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-         idx < total; idx += (int)(gridDim.x * blockDim.x)) {
-        int g = idx / half, j = idx - g * half;
-        int i = g * len + j, k = i + half;
-        u64 w = roots[j * stride];
-        u64 l = a[i], rv = a[k];
-        u64 v = mulmod(rv, w, p, M);
-        u64 nl = l + v; if (nl >= p) nl -= p;
-        u64 nr = (l >= v) ? (l - v) : (l + p - v);
-        a[i] = nl; a[k] = nr;
+
+extern "C" __global__
+void stockham_row_ntt(u32* dst, const u32* src, const u32* twiddles,
+                      int R, int log2R, int num_rows,
+                      int is_inv, u32 scale,
+                      u32 P, u32 P_inv) {
+    int row = blockIdx.x;
+    if (row >= num_rows) return;
+
+    extern __shared__ u32 s_mem[];
+    u32* s_src = s_mem;
+    u32* s_dst = s_mem + R;
+    u32* s_tw = s_mem + 2 * R;
+
+    int tid = threadIdx.x;
+    int halfR = R >> 1;
+
+    // Load twiddles into fast on-chip shared memory
+    s_tw[tid] = __ldg(&twiddles[tid]);
+    s_tw[tid + halfR] = __ldg(&twiddles[tid + halfR]);
+
+    const u32* row_in = src + (size_t)row * R;
+    u32 in1 = __ldg(&row_in[tid]);
+    if (in1 >= P) in1 -= P;
+    u32 in2 = __ldg(&row_in[tid + halfR]);
+    if (in2 >= P) in2 -= P;
+
+    s_src[tid] = in1;
+    s_src[tid + halfR] = in2;
+    __syncthreads();
+
+    for (int s = 0; s < log2R; s++) {
+        int L = 1 << s;
+        int group = tid / L;
+        int j = tid - group * L;
+        u32 u = s_src[tid];
+        u32 v = s_src[tid + halfR];
+
+        int tw_idx = j * (R / (2 * L));
+        if (is_inv && tw_idx > 0) tw_idx = R - tw_idx;
+        u32 tw = s_tw[tw_idx];
+        u32 v_tw = mont_mul(v, tw, P, P_inv);
+
+        u32 r1 = u + v_tw;
+        if (r1 >= P) r1 -= P;
+        u32 r2 = (u >= v_tw) ? (u - v_tw) : (u + P - v_tw);
+
+        s_dst[group * (2 * L) + j] = r1;
+        s_dst[group * (2 * L) + j + L] = r2;
+
+        __syncthreads();
+        u32* tmp = s_src; s_src = s_dst; s_dst = tmp;
+    }
+
+    u32* row_out = dst + (size_t)row * R;
+    u32 out1 = s_src[tid];
+    u32 out2 = s_src[tid + halfR];
+    if (scale != 0) {
+        out1 = mont_mul(out1, scale, P, P_inv);
+        out2 = mont_mul(out2, scale, P, P_inv);
+    }
+    row_out[tid] = out1;
+    row_out[tid + halfR] = out2;
+}
+
+extern "C" __global__
+void transpose_twiddle(u32* dst, const u32* src,
+                       int Rows, int Cols, int N,
+                       const u32* twiddles,
+                       int is_inv, u32 scale,
+                       u32 P, u32 P_inv) {
+    __shared__ u32 tile[32][33];
+
+    int x = blockIdx.x * 32 + threadIdx.x;
+    int y = blockIdx.y * 32 + threadIdx.y;
+
+    if (x < Cols && y < Rows) {
+        u32 val = __ldg(&src[(size_t)y * Cols + x]);
+        if (twiddles) {
+            u32 k = (u32)(((size_t)y * x) & (N - 1));
+            if (is_inv && k > 0) k = N - k;
+            u32 tw = __ldg(&twiddles[k]);
+            val = mont_mul(val, tw, P, P_inv);
+        }
+        if (scale != 0) {
+            val = mont_mul(val, scale, P, P_inv);
+        }
+        tile[threadIdx.y][threadIdx.x] = val;
+    }
+    __syncthreads();
+
+    int tx = blockIdx.y * 32 + threadIdx.x;
+    int ty = blockIdx.x * 32 + threadIdx.y;
+
+    if (tx < Rows && ty < Cols) {
+        dst[(size_t)ty * Rows + tx] = tile[threadIdx.x][threadIdx.y];
     }
 }
-// Fused: process one butterfly stage on BOTH a and b (halves launch count)
-__global__ void ntt_stage2(u64* a, u64* b, int n, int len, const u64* roots, u64 p, u64 M) {
-    int half = len >> 1, stride = n / len, total = n >> 1;
-    for (int idx = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-         idx < total; idx += (int)(gridDim.x * blockDim.x)) {
-        int g = idx / half, j = idx - g * half;
-        int i = g * len + j, k = i + half;
-        u64 w = roots[j * stride];
-        // Array a
-        u64 la = a[i], ra = a[k];
-        u64 va = mulmod(ra, w, p, M);
-        u64 nla = la + va; if (nla >= p) nla -= p;
-        u64 nra = (la >= va) ? (la - va) : (la + p - va);
-        a[i] = nla; a[k] = nra;
-        // Array b
-        u64 lb = b[i], rb = b[k];
-        u64 vb = mulmod(rb, w, p, M);
-        u64 nlb = lb + vb; if (nlb >= p) nlb -= p;
-        u64 nrb = (lb >= vb) ? (lb - vb) : (lb + p - vb);
-        b[i] = nlb; b[k] = nrb;
+
+extern "C" __global__
+void pointwise_mul(u32* a, const u32* b, int n, u32 P, u64 M) {
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
+         idx < n;
+         idx += gridDim.x * blockDim.x) {
+        a[idx] = barrett_mul(a[idx], b[idx], P, M);
     }
 }
-__global__ void pointwise_mul(u64* a, const u64* b, int n, u64 p, u64 M) {
-    for (int idx = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-         idx < n; idx += (int)(gridDim.x * blockDim.x))
-        a[idx] = mulmod(a[idx], b[idx], p, M);
+
+extern "C" __global__
+void init_twiddles(u32* twiddles, int n, u32 w_mont, u32 P, u32 P_inv) {
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
+         idx < n;
+         idx += gridDim.x * blockDim.x) {
+        u32 res = (u32)(((u64)1 << 32) % P);
+        u32 base = w_mont;
+        int exp = idx;
+        while (exp > 0) {
+            if (exp & 1) res = mont_mul(res, base, P, P_inv);
+            base = mont_mul(base, base, P, P_inv);
+            exp >>= 1;
+        }
+        twiddles[idx] = res;
+    }
 }
-__global__ void ntt_scale(u64* a, int n, u64 n_inv, u64 p, u64 M) {
-    for (int idx = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-         idx < n; idx += (int)(gridDim.x * blockDim.x))
-        a[idx] = mulmod(a[idx], n_inv, p, M);
+
+extern "C" __global__
+void crt_kernel(u32* d_rem, u64* d_q,
+                const u32* r1, const u32* r2, const u32* r3,
+                int n,
+                u32 P1, u32 P2, u32 P3,
+                u32 inv12, u32 inv123,
+                u64 q_P1P2, u64 rem_P1P2) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < n;
+         i += gridDim.x * blockDim.x) {
+        u32 v1 = r1[i];
+        u32 v2 = r2[i];
+        u32 v3 = r3[i];
+
+        u32 t1 = (v2 >= v1 % P2) ? (v2 - v1 % P2) : (v2 + P2 - v1 % P2);
+        t1 = (u32)(((u64)t1 * inv12) % P2);
+        u64 x12 = (u64)v1 + (u64)P1 * t1;
+
+        u32 x12_mod_P3 = (u32)(x12 % P3);
+        u32 t2 = (v3 >= x12_mod_P3) ? (v3 - x12_mod_P3) : (v3 + P3 - x12_mod_P3);
+        t2 = (u32)(((u64)t2 * inv123) % P3);
+
+        u64 low = x12 + rem_P1P2 * t2;
+        d_rem[i] = (u32)(low % 1000000000ULL);
+        d_q[i] = q_P1P2 * t2 + (low / 1000000000ULL);
+    }
+}
+
+extern "C" __global__
+void carry_round1(u32* d_rem1, u64* d_c1, const u32* d_rem, const u64* d_q, int n) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < n;
+         i += gridDim.x * blockDim.x) {
+        u64 v = (u64)d_rem[i] + (i > 0 ? d_q[i - 1] : 0ULL);
+        d_rem1[i] = (u32)(v % 1000000000ULL);
+        d_c1[i] = v / 1000000000ULL;
+    }
+}
+
+extern "C" __global__
+void carry_round2(u32* d_rem2, u32* d_c2, const u32* d_rem1, const u64* d_c1, int n) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < n;
+         i += gridDim.x * blockDim.x) {
+        u64 v = (u64)d_rem1[i] + (i > 0 ? d_c1[i - 1] : 0ULL);
+        d_rem2[i] = (u32)(v % 1000000000ULL);
+        d_c2[i] = (u32)(v / 1000000000ULL);
+    }
+}
+
+extern "C" __global__
+void carry_scan_phase1(u32* d_local_g, u32* d_local_p,
+                       u32* d_block_g, u32* d_block_p,
+                       const u32* d_rem2, const u32* d_c2,
+                       int n) {
+    int b = blockIdx.x;
+    int tid = threadIdx.x;
+    int i = b * 512 + tid;
+
+    u32 g = 0, p = 0;
+    if (i < n) {
+        g = (i == 0) ? 0 : d_c2[i];
+        p = (i == 0) ? 0 : (d_rem2[i - 1] == 999999999U ? 1 : 0);
+    }
+
+    int lane = tid & 31;
+    int warp_id = tid >> 5;
+
+    #pragma unroll
+    for (int offset = 1; offset < 32; offset <<= 1) {
+        u32 g_left = __shfl_up_sync(0xffffffff, g, offset);
+        u32 p_left = __shfl_up_sync(0xffffffff, p, offset);
+        if (lane >= offset) {
+            g = g | (p & g_left);
+            p = p & p_left;
+        }
+    }
+
+    __shared__ u32 s_warp_g[16];
+    __shared__ u32 s_warp_p[16];
+    if (lane == 31) {
+        s_warp_g[warp_id] = g;
+        s_warp_p[warp_id] = p;
+    }
+    __syncthreads();
+
+    if (warp_id == 0 && lane < 16) {
+        u32 wg = s_warp_g[lane];
+        u32 wp = s_warp_p[lane];
+        #pragma unroll
+        for (int offset = 1; offset < 16; offset <<= 1) {
+            u32 wg_left = __shfl_up_sync(0x0000ffff, wg, offset);
+            u32 wp_left = __shfl_up_sync(0x0000ffff, wp, offset);
+            if (lane >= offset) {
+                wg = wg | (wp & wg_left);
+                wp = wp & wp_left;
+            }
+        }
+        s_warp_g[lane] = wg;
+        s_warp_p[lane] = wp;
+    }
+    __syncthreads();
+
+    if (warp_id > 0) {
+        u32 prev_g = s_warp_g[warp_id - 1];
+        u32 prev_p = s_warp_p[warp_id - 1];
+        g = g | (p & prev_g);
+        p = p & prev_p;
+    }
+
+    if (i < n) {
+        d_local_g[i] = g;
+        d_local_p[i] = p;
+    }
+    if (tid == 511) {
+        d_block_g[b] = g;
+        d_block_p[b] = p;
+    }
+}
+
+extern "C" __global__
+void carry_scan_phase2(u32* d_block_carry, const u32* d_block_g, const u32* d_block_p, int num_blocks) {
+    if (threadIdx.x == 0) {
+        u32 running_g = 0;
+        u32 running_p = 1;
+        d_block_carry[0] = 0;
+        for (int b = 0; b < num_blocks - 1; b++) {
+            u32 bg = d_block_g[b];
+            u32 bp = d_block_p[b];
+            running_g = bg | (bp & running_g);
+            running_p = bp & running_p;
+            d_block_carry[b + 1] = running_g;
+        }
+    }
+}
+
+extern "C" __global__
+void carry_scan_phase3(u32* d_result,
+                       const u32* d_rem2,
+                       const u32* d_local_g, const u32* d_local_p,
+                       const u32* d_block_carry,
+                       int n) {
+    int b = blockIdx.x;
+    int tid = threadIdx.x;
+    int i = b * 512 + tid;
+    if (i >= n) return;
+
+    u32 cin = d_block_carry[b];
+    u32 C_i = d_local_g[i] | (d_local_p[i] & cin);
+    u32 val = d_rem2[i] + C_i;
+    if (val >= 1000000000U) val -= 1000000000U;
+    d_result[i] = val;
 }
 )CUDA";
 
-// ---- NVRTC context (compiled once, cached) ----
 struct NvrtcNttCtx {
     CUmodule mod = nullptr;
-    CUfunction fn_stage = nullptr, fn_stage2 = nullptr, fn_mul = nullptr, fn_scale = nullptr;
+    CUfunction fn_stockham_row_ntt = nullptr;
+    CUfunction fn_transpose_twiddle = nullptr;
+    CUfunction fn_pointwise_mul = nullptr;
+    CUfunction fn_init_twiddles = nullptr;
+    CUfunction fn_crt = nullptr;
+    CUfunction fn_carry_round1 = nullptr;
+    CUfunction fn_carry_round2 = nullptr;
+    CUfunction fn_carry_scan_phase1 = nullptr;
+    CUfunction fn_carry_scan_phase2 = nullptr;
+    CUfunction fn_carry_scan_phase3 = nullptr;
     bool tried = false, ok = false;
 };
 static NvrtcNttCtx g_nvrtcNtt;
+
+static uint32_t npow(uint64_t b, uint64_t e, uint32_t mod) {
+    uint64_t r = 1;
+    b %= mod;
+    while (e > 0) {
+        if (e & 1) r = (r * b) % mod;
+        b = (b * b) % mod;
+        e >>= 1;
+    }
+    return (uint32_t)r;
+}
 
 static bool init_nvrtc_ntt() {
     if (g_nvrtcNtt.tried) return g_nvrtcNtt.ok;
     g_nvrtcNtt.tried = true;
 
-    int dev = 0; cudaGetDevice(&dev);
+    CUresult cures = cuInit(0);
+    if (cures != CUDA_SUCCESS) {
+        fprintf(stderr, "[NVRTC Init] cuInit failed: %d\n", cures);
+        return false;
+    }
+
+    int dev = 0;
+    cudaError_t cerr = cudaGetDevice(&dev);
+    if (cerr != cudaSuccess) {
+        fprintf(stderr, "[NVRTC Init] cudaGetDevice failed: %d\n", (int)cerr);
+        return false;
+    }
+
+    CUcontext ctx;
+    cures = cuDevicePrimaryCtxRetain(&ctx, dev);
+    if (cures != CUDA_SUCCESS) {
+        fprintf(stderr, "[NVRTC Init] cuDevicePrimaryCtxRetain failed: %d\n", cures);
+    } else {
+        cuCtxSetCurrent(ctx);
+    }
+
     int maj = 0, minn = 0;
     cudaDeviceGetAttribute(&maj, cudaDevAttrComputeCapabilityMajor, dev);
     cudaDeviceGetAttribute(&minn, cudaDevAttrComputeCapabilityMinor, dev);
@@ -456,12 +737,22 @@ static bool init_nvrtc_ntt() {
     snprintf(arch, sizeof(arch), "--gpu-architecture=compute_%d%d", maj, minn);
 
     nvrtcProgram prog;
-    if (nvrtcCreateProgram(&prog, s_nttKernelSrc, "ntt_k.cu", 0, nullptr, nullptr) != NVRTC_SUCCESS)
+    nvrtcResult nres = nvrtcCreateProgram(&prog, s_nttKernelSrc, "ntt_stockham.cu", 0, nullptr, nullptr);
+    if (nres != NVRTC_SUCCESS) {
+        fprintf(stderr, "[NVRTC Init] nvrtcCreateProgram failed: %d\n", (int)nres);
         return false;
-    const char* opts[] = { arch, "--std=c++17" };
-    if (nvrtcCompileProgram(prog, 2, opts) != NVRTC_SUCCESS) {
+    }
+    const char* opts[] = { arch };
+    nres = nvrtcCompileProgram(prog, 1, opts);
+    if (nres != NVRTC_SUCCESS) {
         size_t ls = 0; nvrtcGetProgramLogSize(prog, &ls);
-        if (ls > 0) { std::vector<char> log(ls + 1, 0); nvrtcGetProgramLog(prog, log.data()); fprintf(stderr, "NVRTC: %s\n", log.data()); }
+        if (ls > 0) {
+            std::vector<char> log(ls + 1, 0);
+            nvrtcGetProgramLog(prog, log.data());
+            fprintf(stderr, "[NVRTC Compile Error]\n%s\n", log.data());
+        } else {
+            fprintf(stderr, "[NVRTC Compile Error] code %d\n", (int)nres);
+        }
         nvrtcDestroyProgram(&prog);
         return false;
     }
@@ -470,217 +761,403 @@ static bool init_nvrtc_ntt() {
     nvrtcGetPTX(prog, ptx.data());
     nvrtcDestroyProgram(&prog);
 
-    if (cuModuleLoadData(&g_nvrtcNtt.mod, ptx.data()) != CUDA_SUCCESS) return false;
-    cuModuleGetFunction(&g_nvrtcNtt.fn_stage,  g_nvrtcNtt.mod, "ntt_stage");
-    cuModuleGetFunction(&g_nvrtcNtt.fn_stage2, g_nvrtcNtt.mod, "ntt_stage2");
-    cuModuleGetFunction(&g_nvrtcNtt.fn_mul,    g_nvrtcNtt.mod, "pointwise_mul");
-    cuModuleGetFunction(&g_nvrtcNtt.fn_scale, g_nvrtcNtt.mod, "ntt_scale");
-    g_nvrtcNtt.ok = g_nvrtcNtt.fn_stage && g_nvrtcNtt.fn_stage2 && g_nvrtcNtt.fn_mul && g_nvrtcNtt.fn_scale;
+    cures = cuModuleLoadData(&g_nvrtcNtt.mod, ptx.data());
+    if (cures != CUDA_SUCCESS) {
+        fprintf(stderr, "[NVRTC Init] cuModuleLoadData failed: %d\n", cures);
+        return false;
+    }
+    cuModuleGetFunction(&g_nvrtcNtt.fn_stockham_row_ntt, g_nvrtcNtt.mod, "stockham_row_ntt");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_transpose_twiddle, g_nvrtcNtt.mod, "transpose_twiddle");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_pointwise_mul, g_nvrtcNtt.mod, "pointwise_mul");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_init_twiddles, g_nvrtcNtt.mod, "init_twiddles");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_crt, g_nvrtcNtt.mod, "crt_kernel");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_round1, g_nvrtcNtt.mod, "carry_round1");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_round2, g_nvrtcNtt.mod, "carry_round2");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase1, g_nvrtcNtt.mod, "carry_scan_phase1");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase2, g_nvrtcNtt.mod, "carry_scan_phase2");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase3, g_nvrtcNtt.mod, "carry_scan_phase3");
+
+    g_nvrtcNtt.ok = g_nvrtcNtt.fn_stockham_row_ntt &&
+                    g_nvrtcNtt.fn_transpose_twiddle &&
+                    g_nvrtcNtt.fn_pointwise_mul &&
+                    g_nvrtcNtt.fn_init_twiddles &&
+                    g_nvrtcNtt.fn_crt &&
+                    g_nvrtcNtt.fn_carry_round1 &&
+                    g_nvrtcNtt.fn_carry_round2 &&
+                    g_nvrtcNtt.fn_carry_scan_phase1 &&
+                    g_nvrtcNtt.fn_carry_scan_phase2 &&
+                    g_nvrtcNtt.fn_carry_scan_phase3;
+    if (!g_nvrtcNtt.ok) {
+        fprintf(stderr, "[NVRTC Init] cuModuleGetFunction failed for one or more functions\n");
+    }
     return g_nvrtcNtt.ok;
 }
 
-// Barrett magic M = floor(2^64 / p).  Since q = __umul64hi(prod, M) <= floor(prod/p),
-// r = prod - q*p is in [0, 2p) — one conditional subtract corrects it.  No underflow.
-static uint64_t compute_barrett_m(uint64_t p) {
-    uint64_t d = UINT64_MAX / p, r = UINT64_MAX % p;
-    return (r == p - 1) ? (d + 1) : d;
+// 3-Prime constants and Barrett constants
+static const uint32_t P[3] = { 998244353U, 985661441U, 754974721U };
+static const uint32_t GEN[3] = { 3U, 3U, 11U };
+static const uint32_t P_INV[3] = { 998244351U, 985661439U, 754974719U };
+static const uint64_t M_BARRETT[3] = { 18479187002ULL, 18715091517ULL, 24433591695ULL };
+
+static const uint32_t inv12 = 657107549U;
+static const uint32_t inv123 = 284003040U;
+static const uint64_t q_P1P2 = 983930967ULL;
+static const uint64_t rem_P1P2 = 448092673ULL;
+
+// Persistent device and pinned memory buffers for zero-allocation hot execution
+static uint32_t* d_a[3] = {nullptr, nullptr, nullptr};
+static uint32_t* d_b[3] = {nullptr, nullptr, nullptr};
+static uint32_t* d_scratch[3] = {nullptr, nullptr, nullptr};
+static uint32_t* d_tw_N[3] = {nullptr, nullptr, nullptr};
+static uint32_t* d_tw_N1[3] = {nullptr, nullptr, nullptr};
+static uint32_t* d_tw_N2[3] = {nullptr, nullptr, nullptr};
+
+static uint32_t* d_rem = nullptr;
+static uint64_t* d_q = nullptr;
+static uint32_t* d_rem1 = nullptr;
+static uint64_t* d_c1 = nullptr;
+static uint32_t* d_rem2 = nullptr;
+static uint32_t* d_c2 = nullptr;
+static uint32_t* d_local_g = nullptr;
+static uint32_t* d_local_p = nullptr;
+static uint32_t* d_block_g = nullptr;
+static uint32_t* d_block_p = nullptr;
+static uint32_t* d_block_carry = nullptr;
+static uint32_t* d_result = nullptr;
+
+static int s_buf_cap = 0;
+static int s_cached_tw_n = 0;
+
+static uint32_t* s_pinned_a = nullptr;
+static uint32_t* s_pinned_b = nullptr;
+static uint32_t* s_pinned_res = nullptr;
+static size_t s_pinned_cap = 0;
+
+static CUstream s_streams[3] = {0, 0, 0};
+
+static void run_ntt_stream(int pi, uint32_t* d_in_out, uint32_t* d_sc,
+                           int n, int N1, int N2, int k1, int k2,
+                           bool inv, uint32_t scale, CUstream st) {
+    uint32_t p = P[pi];
+    uint32_t p_inv = P_INV[pi];
+    if (n <= 2048) {
+        int log2N = k1 + k2;
+        int num_rows = 1;
+        int inv_flag = inv ? 1 : 0;
+        void* args[] = { &d_in_out, &d_in_out, &d_tw_N[pi],
+                         &n, &log2N, &num_rows,
+                         &inv_flag, &scale, &p, &p_inv };
+        cuLaunchKernel(g_nvrtcNtt.fn_stockham_row_ntt,
+                       1, 1, 1,
+                       n / 2, 1, 1,
+                       3 * n * sizeof(uint32_t),
+                       st, args, nullptr);
+    } else {
+        if (!inv) {
+            // Forward NTT
+            void* tw_null = nullptr;
+            int inv0 = 0;
+            uint32_t scale0 = 0;
+            void* args1[] = { &d_sc, &d_in_out, &N1, &N2, &n, &tw_null, &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N2 + 31) / 32, (N1 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args1, nullptr);
+
+            void* args2[] = { &d_sc, &d_sc, &d_tw_N1[pi],
+                             &N1, &k1, &N2, &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_stockham_row_ntt,
+                           N2, 1, 1,
+                           N1 / 2, 1, 1,
+                           3 * N1 * sizeof(uint32_t),
+                           st, args2, nullptr);
+
+            void* args3[] = { &d_in_out, &d_sc, &N2, &N1, &n, &d_tw_N[pi], &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N1 + 31) / 32, (N2 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args3, nullptr);
+
+            void* args4[] = { &d_in_out, &d_in_out, &d_tw_N2[pi],
+                             &N2, &k2, &N1, &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_stockham_row_ntt,
+                           N1, 1, 1,
+                           N2 / 2, 1, 1,
+                           3 * N2 * sizeof(uint32_t),
+                           st, args4, nullptr);
+        } else {
+            // Inverse NTT
+            int inv1 = 1;
+            uint32_t scale0 = 0;
+            void* args1[] = { &d_in_out, &d_in_out, &d_tw_N2[pi],
+                             &N2, &k2, &N1, &inv1, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_stockham_row_ntt,
+                           N1, 1, 1,
+                           N2 / 2, 1, 1,
+                           3 * N2 * sizeof(uint32_t),
+                           st, args1, nullptr);
+
+            void* args2[] = { &d_sc, &d_in_out, &N1, &N2, &n, &d_tw_N[pi], &inv1, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N2 + 31) / 32, (N1 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args2, nullptr);
+
+            void* args3[] = { &d_sc, &d_sc, &d_tw_N1[pi],
+                             &N1, &k1, &N2, &inv1, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_stockham_row_ntt,
+                           N2, 1, 1,
+                           N1 / 2, 1, 1,
+                           3 * N1 * sizeof(uint32_t),
+                           st, args3, nullptr);
+
+            void* tw_null = nullptr;
+            int inv0 = 0;
+            void* args4[] = { &d_in_out, &d_sc, &N2, &N1, &n, &tw_null, &inv0, &scale, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N1 + 31) / 32, (N2 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args4, nullptr);
+        }
+    }
 }
 
-static std::string bigint_mul_gpu_ntt(const std::string& a, const std::string& b) {
+std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, const std::vector<uint64_t>& lb) {
+    if (la.empty() || lb.empty()) return {};
     if (!init_nvrtc_ntt()) throw std::runtime_error("NVRTC init failed");
-    bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
-    std::string aa = bigint_abs(a), bb = bigint_abs(b);
-    const uint64_t BASE = 10000; const int BD = 4;
-    const uint64_t P[2] = { 998244353ULL, 985661441ULL };
-    const uint64_t GEN[2] = { 3ULL, 5ULL };
-    uint64_t MM[2] = { compute_barrett_m(P[0]), compute_barrett_m(P[1]) };
 
-    auto to_limbs = [&](const std::string& s) -> std::vector<uint64_t> {
-        int pd = (BD - (int)(s.size() % BD)) % BD;
-        std::string pfx = std::string(pd, '0') + s;
-        int sz = (int)pfx.size();
-        std::vector<uint64_t> l;
-        l.reserve(sz / BD + 1);
-        for (int i = sz - BD; i >= 0; i -= BD) {
-            uint64_t v = 0;
-            for (int j = 0; j < BD; j++) v = v * 10 + (uint64_t)(pfx[i + j] - '0');
-            l.push_back(v);
-        }
-        return l;
-    };
-    auto al = to_limbs(aa), bl = to_limbs(bb);
-    size_t tot = al.size() + bl.size(); int n = 1;
+    size_t tot = la.size() + lb.size();
+    int n = 1;
     while ((size_t)n < tot) n <<= 1;
-    if (n < 2) n = 2;
-    // P2 = 235*2^22+1 — NTT supports at most 2^22 points
-    if (n > (1 << 22)) throw std::runtime_error("NTT size exceeds prime limit");
+    if (n < 512) n = 512;
+    if (n > (1 << 22)) throw std::runtime_error("NTT size exceeds prime limit 2^22");
 
-    // Dedicated stream — avoids sync with libtorch background operations
-    static CUstream s_nttStream = 0;
-    if (!s_nttStream) { cudaStream_t s; cudaStreamCreate(&s); s_nttStream = (CUstream)s; }
-    CUstream stream = s_nttStream;
-    const int blk = 256;
+    int k = 0, m = n;
+    while (m > 1) { m >>= 1; k++; }
+    int k1 = k / 2;
+    int k2 = k - k1;
+    int N1 = 1 << k1;
+    int N2 = 1 << k2;
 
-    // Cache GPU buffers across calls (avoids cudaMalloc/cudaFree overhead)
-    static uint64_t *d_a = nullptr, *d_b = nullptr, *d_rw = nullptr, *d_iw = nullptr;
-    static int d_cap = 0;
-    if (d_cap < n) {
-        if (d_a) cudaFree(d_a);
-        if (d_b) cudaFree(d_b);
-        if (d_rw) cudaFree(d_rw);
-        if (d_iw) cudaFree(d_iw);
-        cudaMalloc(&d_a, n * sizeof(uint64_t));
-        cudaMalloc(&d_b, n * sizeof(uint64_t));
-        cudaMalloc(&d_rw, (n / 2) * sizeof(uint64_t));
-        cudaMalloc(&d_iw, (n / 2) * sizeof(uint64_t));
-        d_cap = n;
+    if (!s_streams[0]) {
+        for (int i = 0; i < 3; i++) {
+            cudaStream_t st;
+            cudaStreamCreate(&st);
+            s_streams[i] = (CUstream)st;
+        }
     }
-    if (!d_a || !d_b || !d_rw || !d_iw) {
-        throw std::runtime_error("GPU OOM in NTT");
+    auto t_start = std::chrono::steady_clock::now();
+
+    if (s_buf_cap < n) {
+        for (int pi = 0; pi < 3; pi++) {
+            if (d_a[pi]) cudaFree(d_a[pi]);
+            if (d_b[pi]) cudaFree(d_b[pi]);
+            if (d_scratch[pi]) cudaFree(d_scratch[pi]);
+            if (d_tw_N[pi]) cudaFree(d_tw_N[pi]);
+            if (d_tw_N1[pi]) cudaFree(d_tw_N1[pi]);
+            if (d_tw_N2[pi]) cudaFree(d_tw_N2[pi]);
+
+            cudaMalloc(&d_a[pi], n * sizeof(uint32_t));
+            cudaMalloc(&d_b[pi], n * sizeof(uint32_t));
+            cudaMalloc(&d_scratch[pi], n * sizeof(uint32_t));
+            cudaMalloc(&d_tw_N[pi], n * sizeof(uint32_t));
+            cudaMalloc(&d_tw_N1[pi], 2048 * sizeof(uint32_t));
+            cudaMalloc(&d_tw_N2[pi], 2048 * sizeof(uint32_t));
+        }
+        if (d_rem) cudaFree(d_rem);
+        if (d_q) cudaFree(d_q);
+        if (d_rem1) cudaFree(d_rem1);
+        if (d_c1) cudaFree(d_c1);
+        if (d_rem2) cudaFree(d_rem2);
+        if (d_c2) cudaFree(d_c2);
+        if (d_local_g) cudaFree(d_local_g);
+        if (d_local_p) cudaFree(d_local_p);
+        if (d_block_g) cudaFree(d_block_g);
+        if (d_block_p) cudaFree(d_block_p);
+        if (d_block_carry) cudaFree(d_block_carry);
+        if (d_result) cudaFree(d_result);
+
+        cudaMalloc(&d_rem, n * sizeof(uint32_t));
+        cudaMalloc(&d_q, n * sizeof(uint64_t));
+        cudaMalloc(&d_rem1, n * sizeof(uint32_t));
+        cudaMalloc(&d_c1, n * sizeof(uint64_t));
+        cudaMalloc(&d_rem2, n * sizeof(uint32_t));
+        cudaMalloc(&d_c2, n * sizeof(uint32_t));
+        cudaMalloc(&d_local_g, n * sizeof(uint32_t));
+        cudaMalloc(&d_local_p, n * sizeof(uint32_t));
+
+        int max_blocks = (n + 511) / 512;
+        cudaMalloc(&d_block_g, max_blocks * sizeof(uint32_t));
+        cudaMalloc(&d_block_p, max_blocks * sizeof(uint32_t));
+        cudaMalloc(&d_block_carry, max_blocks * sizeof(uint32_t));
+        cudaMalloc(&d_result, n * sizeof(uint32_t));
+
+        s_buf_cap = n;
+        s_cached_tw_n = 0;
     }
 
-    static thread_local std::vector<uint64_t> crt;
-    crt.assign(n, 0);
+    if (s_pinned_cap < (size_t)n) {
+        if (s_pinned_a) cudaFreeHost(s_pinned_a);
+        if (s_pinned_b) cudaFreeHost(s_pinned_b);
+        if (s_pinned_res) cudaFreeHost(s_pinned_res);
 
-    for (int pi = 0; pi < 2; pi++) {
-        uint64_t p = P[pi], m = MM[pi];
+        cudaHostAlloc(&s_pinned_a, n * sizeof(uint32_t), cudaHostAllocDefault);
+        cudaHostAlloc(&s_pinned_b, n * sizeof(uint32_t), cudaHostAllocDefault);
+        cudaHostAlloc(&s_pinned_res, n * sizeof(uint32_t), cudaHostAllocDefault);
+        s_pinned_cap = n;
+    }
+    auto t_alloc = std::chrono::steady_clock::now();
 
-        // Compute twiddle factors on CPU
-        uint64_t w = 1, base = GEN[pi], exp = (p - 1) / n;
-        while (exp) { if (exp & 1) w = (w * base) % p; base = (base * base) % p; exp >>= 1; }
-        uint64_t wi = 1, wb = w, we = n - 1;
-        while (we) { if (we & 1) wi = (wi * wb) % p; wb = (wb * wb) % p; we >>= 1; }
-        std::vector<uint64_t> rw(n / 2), iw(n / 2);
-        uint64_t a1 = 1, a2 = 1;
-        for (int i = 0; i < n / 2; i++) { rw[i] = a1; iw[i] = a2; a1 = (a1 * w) % p; a2 = (a2 * wi) % p; }
+    // Initialize twiddle factor cache on GPU if transform size changed
+    if (s_cached_tw_n != n) {
+        for (int pi = 0; pi < 3; pi++) {
+            uint32_t p = P[pi];
+            uint32_t p_inv = P_INV[pi];
+            uint32_t w_n = npow(GEN[pi], (p - 1) / n, p);
+            uint32_t w_n_mont = (uint32_t)(((uint64_t)w_n << 32) % p);
+            int blk = 256;
+            int grid = (n + blk - 1) / blk;
+            void* args_n[] = { &d_tw_N[pi], &n, &w_n_mont, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_init_twiddles, grid, 1, 1, blk, 1, 1, 0, s_streams[pi], args_n, nullptr);
 
-        // Copy roots + zero-padded limbs to GPU
-        al.resize(n, 0); bl.resize(n, 0);
-        cudaMemcpyAsync(d_rw, rw.data(), (n / 2) * 8, cudaMemcpyHostToDevice, (cudaStream_t)stream);
-        cudaMemcpyAsync(d_iw, iw.data(), (n / 2) * 8, cudaMemcpyHostToDevice, (cudaStream_t)stream);
-        cudaMemcpyAsync(d_a, al.data(), n * 8, cudaMemcpyHostToDevice, (cudaStream_t)stream);
-        cudaMemcpyAsync(d_b, bl.data(), n * 8, cudaMemcpyHostToDevice, (cudaStream_t)stream);
+            if (n > 2048) {
+                uint32_t w_n1 = npow(GEN[pi], (p - 1) / N1, p);
+                uint32_t w_n1_mont = (uint32_t)(((uint64_t)w_n1 << 32) % p);
+                int grid1 = (N1 + blk - 1) / blk;
+                void* args_n1[] = { &d_tw_N1[pi], &N1, &w_n1_mont, &p, &p_inv };
+                cuLaunchKernel(g_nvrtcNtt.fn_init_twiddles, grid1, 1, 1, blk, 1, 1, 0, s_streams[pi], args_n1, nullptr);
 
-        // Forward NTT on both a and b (fused — single launch per stage)
-        for (int len = 2; len <= n; len <<= 1) {
-            int total = n / 2, grid = (total + blk - 1) / blk; if (grid > 1024) grid = 1024;
-            void* args[] = { &d_a, &d_b, &n, &len, &d_rw, &p, &m };
-            cuLaunchKernel(g_nvrtcNtt.fn_stage2, grid, 1, 1, blk, 1, 1, 0, stream, args, nullptr);
-        }
-        // Pointwise multiply a *= b
-        {
-            int total = n, grid = (total + blk - 1) / blk; if (grid > 1024) grid = 1024;
-            void* args[] = { &d_a, &d_b, &n, &p, &m };
-            cuLaunchKernel(g_nvrtcNtt.fn_mul, grid, 1, 1, blk, 1, 1, 0, stream, args, nullptr);
-        }
-        // Inverse NTT on a (uses inverse roots)
-        for (int len = 2; len <= n; len <<= 1) {
-            int total = n / 2, grid = (total + blk - 1) / blk; if (grid > 1024) grid = 1024;
-            void* args[] = { &d_a, &n, &len, &d_iw, &p, &m };
-            cuLaunchKernel(g_nvrtcNtt.fn_stage, grid, 1, 1, blk, 1, 1, 0, stream, args, nullptr);
-        }
-        // Scale by n^(-1) mod p
-        {
-            uint64_t n_inv = 1, b2 = n, e2 = p - 2;
-            while (e2) { if (e2 & 1) n_inv = (n_inv * b2) % p; b2 = (b2 * b2) % p; e2 >>= 1; }
-            int total = n, grid = (total + blk - 1) / blk; if (grid > 1024) grid = 1024;
-            void* args[] = { &d_a, &n, &n_inv, &p, &m };
-            cuLaunchKernel(g_nvrtcNtt.fn_scale, grid, 1, 1, blk, 1, 1, 0, stream, args, nullptr);
-        }
-
-        // Copy result to CPU
-        std::vector<uint64_t> result(n);
-        cudaMemcpyAsync(result.data(), d_a, n * 8, cudaMemcpyDeviceToHost, (cudaStream_t)stream);
-        cudaStreamSynchronize((cudaStream_t)stream);
-
-        // CRT reconstruction
-        if (pi == 0) {
-            for (int i = 0; i < n; i++) crt[i] = result[i];
-        } else {
-            uint64_t inv = 1, b3 = P[0], e3 = p - 2;
-            while (e3) { if (e3 & 1) inv = (inv * b3) % p; b3 = (b3 * b3) % p; e3 >>= 1; }
-            for (int i = 0; i < n; i++) {
-                uint64_t r0 = crt[i] % p;
-                uint64_t t = ((result[i] - r0 % p + p) % p);
-                t = (t * inv) % p;
-                crt[i] = crt[i] + P[0] * t;
+                uint32_t w_n2 = npow(GEN[pi], (p - 1) / N2, p);
+                uint32_t w_n2_mont = (uint32_t)(((uint64_t)w_n2 << 32) % p);
+                int grid2 = (N2 + blk - 1) / blk;
+                void* args_n2[] = { &d_tw_N2[pi], &N2, &w_n2_mont, &p, &p_inv };
+                cuLaunchKernel(g_nvrtcNtt.fn_init_twiddles, grid2, 1, 1, blk, 1, 1, 0, s_streams[pi], args_n2, nullptr);
             }
         }
+        s_cached_tw_n = n;
+    }
+    auto t_twiddle = std::chrono::steady_clock::now();
+
+    // Populate pinned host memory (parallelized)
+    memset(s_pinned_a, 0, n * sizeof(uint32_t));
+    memset(s_pinned_b, 0, n * sizeof(uint32_t));
+    #pragma omp parallel for schedule(static) if(la.size() > 10000)
+    for (int i = 0; i < (int)la.size(); i++) s_pinned_a[i] = (uint32_t)la[i];
+    #pragma omp parallel for schedule(static) if(lb.size() > 10000)
+    for (int i = 0; i < (int)lb.size(); i++) s_pinned_b[i] = (uint32_t)lb[i];
+    auto t_pin = std::chrono::steady_clock::now();
+
+    // Launch 3 prime NTT pipelines across 3 concurrent CUDA streams
+    for (int pi = 0; pi < 3; pi++) {
+        CUstream st = s_streams[pi];
+        cudaMemcpyAsync(d_a[pi], s_pinned_a, n * sizeof(uint32_t), cudaMemcpyHostToDevice, (cudaStream_t)st);
+        cudaMemcpyAsync(d_b[pi], s_pinned_b, n * sizeof(uint32_t), cudaMemcpyHostToDevice, (cudaStream_t)st);
+
+        // Forward NTT on a and b
+        run_ntt_stream(pi, d_a[pi], d_scratch[pi], n, N1, N2, k1, k2, false, 0, st);
+        run_ntt_stream(pi, d_b[pi], d_scratch[pi], n, N1, N2, k1, k2, false, 0, st);
+
+        // Pointwise multiply a *= b
+        int blk = 256;
+        int grid = (n + blk - 1) / blk;
+        uint32_t p = P[pi];
+        uint64_t m_barrett = M_BARRETT[pi];
+        void* args_mul[] = { &d_a[pi], &d_b[pi], &n, &p, &m_barrett };
+        cuLaunchKernel(g_nvrtcNtt.fn_pointwise_mul, grid, 1, 1, blk, 1, 1, 0, st, args_mul, nullptr);
+
+        // Inverse NTT on a, scaling by n^(-1)
+        uint32_t inv_n = npow(n, p - 2, p);
+        uint32_t inv_n_mont = (uint32_t)(((uint64_t)inv_n << 32) % p);
+        run_ntt_stream(pi, d_a[pi], d_scratch[pi], n, N1, N2, k1, k2, true, inv_n_mont, st);
+    }
+    auto t_launch = std::chrono::steady_clock::now();
+
+    // Synchronize streams 1 and 2, continue pipeline on stream 0
+    cudaStreamSynchronize((cudaStream_t)s_streams[1]);
+    cudaStreamSynchronize((cudaStream_t)s_streams[2]);
+    auto t_ntt_wait = std::chrono::steady_clock::now();
+    CUstream st0 = s_streams[0];
+
+    // GPU CRT Kernel
+    int blk = 256;
+    int grid = (n + blk - 1) / blk;
+    uint32_t p1 = P[0], p2 = P[1], p3 = P[2];
+    void* args_crt[] = { &d_rem, &d_q, &d_a[0], &d_a[1], &d_a[2], &n,
+                         (void*)&p1, (void*)&p2, (void*)&p3,
+                         (void*)&inv12, (void*)&inv123,
+                         (void*)&q_P1P2, (void*)&rem_P1P2 };
+    cuLaunchKernel(g_nvrtcNtt.fn_crt, grid, 1, 1, blk, 1, 1, 0, st0, args_crt, nullptr);
+
+    // Carry Reduction Rounds 1 and 2
+    void* args_c1[] = { &d_rem1, &d_c1, &d_rem, &d_q, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_round1, grid, 1, 1, blk, 1, 1, 0, st0, args_c1, nullptr);
+
+    void* args_c2[] = { &d_rem2, &d_c2, &d_rem1, &d_c1, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_round2, grid, 1, 1, blk, 1, 1, 0, st0, args_c2, nullptr);
+
+    // 3-Phase Block-Scan Parallel Prefix Carry Elimination
+    int num_blocks = (n + 511) / 512;
+    void* args_p1[] = { &d_local_g, &d_local_p, &d_block_g, &d_block_p, &d_rem2, &d_c2, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase1, num_blocks, 1, 1, 512, 1, 1, 0, st0, args_p1, nullptr);
+
+    void* args_p2[] = { &d_block_carry, &d_block_g, &d_block_p, &num_blocks };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase2, 1, 1, 1, 512, 1, 1, 0, st0, args_p2, nullptr);
+
+    void* args_p3[] = { &d_result, &d_rem2, &d_local_g, &d_local_p, &d_block_carry, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase3, num_blocks, 1, 1, 512, 1, 1, 0, st0, args_p3, nullptr);
+
+    // Transfer result back to host via pinned memory
+    cudaMemcpyAsync(s_pinned_res, d_result, n * sizeof(uint32_t), cudaMemcpyDeviceToHost, (cudaStream_t)st0);
+    cudaStreamSynchronize((cudaStream_t)st0);
+    auto t_crt_carry = std::chrono::steady_clock::now();
+
+    // Find actual limb length and copy back to vector
+    int rl = (int)(la.size() + lb.size());
+    if (rl > n) rl = n;
+    while (rl > 0 && s_pinned_res[rl - 1] == 0) rl--;
+    if (rl == 0) return {};
+
+    std::vector<uint64_t> lr(rl);
+    #pragma omp parallel for schedule(static) if(rl > 10000)
+    for (int i = 0; i < rl; i++) lr[i] = s_pinned_res[i];
+    auto t_end = std::chrono::steady_clock::now();
+
+    if (g_bigTime) {
+        fprintf(stderr, "[GPU Detail] alloc=%.2fms twiddle=%.2fms pin=%.2fms launch=%.2fms ntt_wait=%.2fms crt_carry=%.2fms copy=%.2fms\n",
+            std::chrono::duration<double, std::milli>(t_alloc - t_start).count(),
+            std::chrono::duration<double, std::milli>(t_twiddle - t_alloc).count(),
+            std::chrono::duration<double, std::milli>(t_pin - t_twiddle).count(),
+            std::chrono::duration<double, std::milli>(t_launch - t_pin).count(),
+            std::chrono::duration<double, std::milli>(t_ntt_wait - t_launch).count(),
+            std::chrono::duration<double, std::milli>(t_crt_carry - t_ntt_wait).count(),
+            std::chrono::duration<double, std::milli>(t_end - t_crt_carry).count());
     }
 
-    // GPU buffers are cached (static) — no free here
-
-    // Carry handling (CPU)
-    static thread_local std::vector<uint64_t> res;
-    res.assign(n + 16, 0);
-    uint64_t carry = 0;
-    for (int i = 0; i < n; i++) { uint64_t v = crt[i] + carry; res[i] = v % BASE; carry = v / BASE; }
-    size_t rl = n; while (carry > 0) { res[rl] = carry % BASE; carry /= BASE; rl++; }
-    // Build result string with direct char writes (no snprintf per limb)
-    std::string r;
-    r.resize(rl * BD);
-    char* rp = &r[0];
-    for (int i = (int)rl - 1, pos = 0; i >= 0; i--, pos += BD) {
-        uint64_t v = res[i];
-        rp[pos + 3] = '0' + (int)(v % 10); v /= 10;
-        rp[pos + 2] = '0' + (int)(v % 10); v /= 10;
-        rp[pos + 1] = '0' + (int)(v % 10); v /= 10;
-        rp[pos + 0] = '0' + (int)(v);
-    }
-    size_t st = 0; while (st < r.size() - 1 && r[st] == '0') st++;
-    if (st > 0) r.erase(0, st);
-    if (r == "0") return "0";
-    bool neg = an != bn;
-    return (neg && r != "0") ? "-" + r : r;
+    return lr;
 }
 #endif
 
-// ---- GPU model detection: only use NVRTC NTT for capable GPUs ----
-// Low-end GPUs (Pascal P106, GTX 10x0) have too much kernel launch overhead.
-// Only Turing+ (RTX 20x0, CC 7.5+) or datacenter GPUs (V100/A100) are fast enough.
-// Global flag set by --forceGPU: when true, always use GPU regardless of model
+// ---- GPU model detection: universal compatibility for all CC >= 6.0 GPUs ----
 bool g_forceGPU = false;
+bool g_bigTime = false;
 
 bool bigint_gpu_suitable(size_t digitCount = 0) {
 #ifdef WITH_CUDA
-    // --forceGPU: skip model check, always try GPU
     if (g_forceGPU) {
         if (!torch::cuda::is_available()) return false;
+        init_nvrtc_ntt();
         return true;
     }
 
     static bool s_checked = false;
     static bool s_suitable = false;
-    static int s_minDigits = 0;
+    static const size_t s_crossoverDigits = 100000; // 100k digits crossover threshold
     if (!s_checked) {
         s_checked = true;
         if (!torch::cuda::is_available()) return false;
         try {
-            int dev = 0; cudaGetDevice(&dev);
+            int dev = 0;
+            if (cudaGetDevice(&dev) != cudaSuccess) return false;
             cudaDeviceProp prop;
             if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return false;
-            int cc = prop.major * 10 + prop.minor;
-            int smCount = prop.multiProcessorCount;
-            const char* name = prop.name;
-
-            // Tier 1: Datacenter GPUs (V100/A100/H100) — always suitable, min 50k digits
-            // Tier 2: RTX 20x0+ (CC >= 7.5, SM >= 20) — suitable, min 100k digits
-            // Tier 3: GTX 10x0 (CC 6.x, SM >= 15) — only for very large, min 1M digits
-            // Below: P106-090 (CC 6.1, SM=5) and integrated — never use GPU
-            bool hasRtx = strstr(name, "RTX") != nullptr;
-            bool hasV100 = strstr(name, "V100") != nullptr;
-            bool hasA100 = strstr(name, "A100") != nullptr || strstr(name, "A30") != nullptr;
-            bool hasH100 = strstr(name, "H100") != nullptr;
-
-            if (hasV100 || hasA100 || hasH100) {
+            if (prop.major >= 6) {
                 s_suitable = true;
-                s_minDigits = 50000;
-            } else if (hasRtx || cc >= 75) {
-                s_suitable = true;
-                s_minDigits = 100000;
-            } else if (cc >= 60 && smCount >= 15) {
-                s_suitable = true;
-                s_minDigits = 1000000;
             } else {
                 s_suitable = false;
             }
@@ -689,7 +1166,8 @@ bool bigint_gpu_suitable(size_t digitCount = 0) {
         }
     }
     if (!s_suitable) return false;
-    if (s_minDigits > 0 && digitCount < (size_t)s_minDigits) return false;
+    if (digitCount < s_crossoverDigits) return false;
+    init_nvrtc_ntt();
     return true;
 #else
     return false;
@@ -701,17 +1179,20 @@ std::string bigint_mul_fft(const std::string& a, const std::string& b) {
     std::string aa = bigint_abs(a), bb = bigint_abs(b);
 
 #ifdef WITH_CUDA
-    // GPU NTT path: only for capable GPUs AND sufficiently large numbers
     if (bigint_gpu_suitable(aa.size() > bb.size() ? aa.size() : bb.size())) {
         try {
-            return bigint_mul_gpu_ntt(aa, bb);
+            auto la = limbs_from_str(aa);
+            auto lb = limbs_from_str(bb);
+            auto lr = bigint_mul_gpu_ntt_limbs(la, lb);
+            std::string r = limbs_to_str(lr);
+            bool neg = an != bn;
+            return (neg && r != "0") ? "-" + r : r;
         } catch (...) {
-            // NVRTC unavailable or GPU error — fall through to throw
+            // Fall through to throw
         }
     }
 #endif
 
-    // Defer to bigint_mul_fft_standalone in TzdInterpreter.cpp
     throw std::runtime_error("GPU NTT unavailable, use standalone FFT");
 }
 
