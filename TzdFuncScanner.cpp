@@ -13,35 +13,34 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <thread>
-#include <atlbase.h>
 
 std::vector<ScanResult> TzdFuncScanner::g_GuiResults;
 bool TzdFuncScanner::g_GuiRunning = false;
 
-// ¸¨Öúº¯Êı£º¶ş·Ö²éÕÒ×î½üµÄ·ûºÅ
-// ·µ»ØÖ¸Ïò Entry µÄÖ¸Õë£¬Èç¹ûÃ»ÓĞÕÒµ½£¨¼´µØÖ·Ğ¡ÓÚËùÓĞ·ûºÅ£©·µ»Ø nullptr
+// è¾…åŠ©å‡½æ•°ï¼šäºŒåˆ†æŸ¥æ‰¾æœ€è¿‘çš„ç¬¦å·
+// è¿”å›æŒ‡å‘ Entry çš„æŒ‡é’ˆï¼Œå¦‚æœæ²¡æœ‰æ‰¾åˆ°ï¼ˆå³åœ°å€å°äºæ‰€æœ‰ç¬¦å·ï¼‰è¿”å› nullptr
 static const ExportEntry* FindNearestSymbol(const std::vector<ExportEntry>& symbols, uintptr_t address) {
     if (symbols.empty()) return nullptr;
 
     ExportEntry target;
     target.va = address;
 
-    // upper_bound ·µ»ØµÚÒ»¸ö > address µÄÔªËØ
+    // upper_bound è¿”å›ç¬¬ä¸€ä¸ª > address çš„å…ƒç´ 
     auto it = std::upper_bound(symbols.begin(), symbols.end(), target,
         [](const ExportEntry& a, const ExportEntry& b) {
             return a.va < b.va;
         });
 
-    // Èç¹ûÊÇ begin()£¬ËµÃ÷ËùÓĞ·ûºÅ¶¼±È address ´ó£¬ÕÒ²»µ½Ç°Ò»¸ö
+    // å¦‚æœæ˜¯ begin()ï¼Œè¯´æ˜æ‰€æœ‰ç¬¦å·éƒ½æ¯” address å¤§ï¼Œæ‰¾ä¸åˆ°å‰ä¸€ä¸ª
     if (it == symbols.begin()) {
         return nullptr;
     }
 
-    // ·µ»ØÇ°Ò»¸ö£¨¼´ <= address µÄ×î´óÄÇ¸ö£©
+    // è¿”å›å‰ä¸€ä¸ªï¼ˆå³ <= address çš„æœ€å¤§é‚£ä¸ªï¼‰
     return &(*std::prev(it));
 }
 
-// 1. ¼ÓÔØ PDB ·ûºÅ (½öÌî³ä PDB ÁĞ±í)
+// 1. åŠ è½½ PDB ç¬¦å· (ä»…å¡«å…… PDB åˆ—è¡¨)
 void TzdFuncScanner::loadPdbSymbols(HANDLE hProcess, uintptr_t modBase, const std::string& pdbPath, std::vector<ExportEntry>& pdbList) {
     if (pdbPath.empty()) return;
 
@@ -83,7 +82,7 @@ void TzdFuncScanner::loadPdbSymbols(HANDLE hProcess, uintptr_t modBase, const st
     }
 }
 
-// 2. ¼ÓÔØµ¼³ö±í (½öÌî³ä Export ÁĞ±í)
+// 2. åŠ è½½å¯¼å‡ºè¡¨ (ä»…å¡«å…… Export åˆ—è¡¨)
 std::vector<ExportEntry> TzdFuncScanner::getModuleExports(HANDLE hProcess, HMODULE hMod, const std::string& modName) {
     std::vector<ExportEntry> exports;
     uintptr_t base = (uintptr_t)hMod;
@@ -111,8 +110,8 @@ std::vector<ExportEntry> TzdFuncScanner::getModuleExports(HANDLE hProcess, HMODU
         char nameBuf[256];
         if (ReadProcessMemory(hProcess, (LPCVOID)(base + nameTable[i]), nameBuf, sizeof(nameBuf), NULL)) {
             ExportEntry entry;
-            // ¸ñÊ½ÒªÇó£ºÄ£¿éÃû.dll!º¯ÊıÃû (»òÕß Ä£¿éÃû!º¯ÊıÃû)
-            // ÕâÀïÎªÁË·ûºÏÍ¨³£Ï°¹ß£¬ÓÃ ! Á¬½Ó
+            // æ ¼å¼è¦æ±‚ï¼šæ¨¡å—å.dll!å‡½æ•°å (æˆ–è€… æ¨¡å—å!å‡½æ•°å)
+            // è¿™é‡Œä¸ºäº†ç¬¦åˆé€šå¸¸ä¹ æƒ¯ï¼Œç”¨ ! è¿æ¥
             entry.name = modName + "!" + nameBuf;
             entry.va = base + addrTable[ordinalTable[i]];
             entry.isPdb = false;
@@ -128,7 +127,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-// GUI äÖÈ¾Ñ­»·
+// GUI æ¸²æŸ“å¾ªç¯
 void TzdFuncScanner::GuiThreadLoop() {
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, TzdGui::FUNC_CLASS_NAME_W, NULL };
     RegisterClassExW(&wc);
@@ -226,7 +225,7 @@ void TzdFuncScanner::GuiThreadLoop() {
             for (int i = 0; i < (int)g_GuiResults.size(); i++) {
                 const auto& res = g_GuiResults[i];
 
-                // ¹ıÂË£ºÖ»¿´ÓĞ PDB ĞÅÏ¢µÄ
+                // è¿‡æ»¤ï¼šåªçœ‹æœ‰ PDB ä¿¡æ¯çš„
                 if (catIdx == 1 && res.type != ScanResult::Type::PDB_SYM) continue;
 
                 if (!sLow.empty()) {
@@ -263,7 +262,7 @@ void TzdFuncScanner::GuiThreadLoop() {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.4f, 1.0f));
 
                     if (ImGui::Selectable(addrBuf, false, ImGuiSelectableFlags_SpanAllColumns)) {
-                        // === [×îÖÕĞŞÕıµÄ¸´ÖÆ¸ñÊ½] ===
+                        // === [æœ€ç»ˆä¿®æ­£çš„å¤åˆ¶æ ¼å¼] ===
                         std::stringstream ss;
                         // Line 1: Address:0x...
                         ss << TzdGui::DETAIL_ADDRESS << std::hex << std::uppercase << res.actualAddr << "\n";
@@ -274,18 +273,18 @@ void TzdFuncScanner::GuiThreadLoop() {
                         // Line 3: asm:xxx
                         ss << TzdGui::DETAIL_ASM << res.instruction << "\n";
 
-                        // Line 4: Symbol: µ¼³öÃû+Æ«ÒÆ (PEB: PDBÃû)
-                        // displayLocation ÒÑ¾­ÔÚÉ¨Ãè½×¶Î°´ÕÕ "xxx + xxx£¨PEB£ºxxx£©" ¸ñÊ½»¯ºÃÁË
+                        // Line 4: Symbol: å¯¼å‡ºå+åç§» (PEB: PDBå)
+                        // displayLocation å·²ç»åœ¨æ‰«æé˜¶æ®µæŒ‰ç…§ "xxx + xxxï¼ˆPEBï¼šxxxï¼‰" æ ¼å¼åŒ–å¥½äº†
                         ss << TzdGui::DETAIL_SYMBOL << res.displayLocation << "\n";
 
                         // Line 5: Change of name before conversion:
                         ss << TzdGui::DETAIL_CONV_BEFORE;
-                        // Èç¹ûÓĞ PDB µÄÔ­Ê¼Ãû£¬ÏÔÊ¾Ô­Ê¼Ãû£»·ñÔòÏÔÊ¾ N/A
+                        // å¦‚æœæœ‰ PDB çš„åŸå§‹åï¼Œæ˜¾ç¤ºåŸå§‹åï¼›å¦åˆ™æ˜¾ç¤º N/A
                         if (!res.rawSymbol.empty()) {
                             ss << res.rawSymbol << TzdGui::DETAIL_PLUS_HEX << std::hex << res.offset;
                         }
                         else {
-                            ss << TzdGui::DETAIL_NA_OFFSET << std::hex << res.offset; // ÕâÀïµÄ offset ÊÇÏà¶ÔÓÚµ¼³öµÄÆ«ÒÆ
+                            ss << TzdGui::DETAIL_NA_OFFSET << std::hex << res.offset; // è¿™é‡Œçš„ offset æ˜¯ç›¸å¯¹äºå¯¼å‡ºçš„åç§»
                         }
 
                         ImGui::SetClipboardText(ss.str().c_str());
@@ -303,7 +302,7 @@ void TzdFuncScanner::GuiThreadLoop() {
                     // Col 3
                     ImGui::TableSetColumnIndex(3);
                     ImVec4 typeColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-                    // Ö»ÒªÓĞ PEB Ò²¾ÍÊÇ PDB Æ¥Åä£¬¾Í±äÂÌ£¬·ñÔòÀ¶É«/»ÒÉ«
+                    // åªè¦æœ‰ PEB ä¹Ÿå°±æ˜¯ PDB åŒ¹é…ï¼Œå°±å˜ç»¿ï¼Œå¦åˆ™è“è‰²/ç°è‰²
                     if (res.type == ScanResult::Type::PDB_SYM) typeColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
                     else typeColor = ImVec4(0.7f, 0.8f, 1.0f, 1.0f);
 
@@ -342,12 +341,12 @@ void TzdFuncScanner::GuiThreadLoop() {
     DestroyWindow(hwnd);
 }
 
-// 3. É¨ÃèÈë¿Ú
+// 3. æ‰«æå…¥å£
 void TzdFuncScanner::scanProcess(DWORD processId, const std::string& targetModuleName, const std::string& pdbPath, std::vector<ScanResult>* guiResults) {
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
     if (!hProcess) return;
 
-    // ·Ö¿ª´æ´¢ Export ºÍ PDB£¬±ÜÃâ»ìÏı
+    // åˆ†å¼€å­˜å‚¨ Export å’Œ PDBï¼Œé¿å…æ··æ·†
     std::map<uintptr_t, std::vector<ExportEntry>> moduleExportsMap;
     std::map<uintptr_t, std::vector<ExportEntry>> modulePdbMap;
     std::vector<uintptr_t> allowedBases;
@@ -375,7 +374,7 @@ void TzdFuncScanner::scanProcess(DWORD processId, const std::string& targetModul
                     std::vector<ExportEntry> exports;
                     std::vector<ExportEntry> pdbs;
 
-                    // 1. ¼ÓÔØ PDB (Èç¹û·ûºÏÌõ¼ş)
+                    // 1. åŠ è½½ PDB (å¦‚æœç¬¦åˆæ¡ä»¶)
                     bool shouldLoadPdb = false;
                     if (!pdbPath.empty()) {
                         if (!targetModuleName.empty()) shouldLoadPdb = true;
@@ -383,16 +382,16 @@ void TzdFuncScanner::scanProcess(DWORD processId, const std::string& targetModul
                     }
                     if (shouldLoadPdb) {
                         loadPdbSymbols(hProcess, base, pdbPath, pdbs);
-                        // ÅÅĞò PDB
+                        // æ’åº PDB
                         std::sort(pdbs.begin(), pdbs.end(), [](const ExportEntry& a, const ExportEntry& b) {
                             return a.va < b.va;
                             });
                         modulePdbMap[base] = pdbs;
                     }
 
-                    // 2. ¼ÓÔØ Exports
+                    // 2. åŠ è½½ Exports
                     exports = getModuleExports(hProcess, hMods[i], currentMod);
-                    // ÅÅĞò Exports
+                    // æ’åº Exports
                     std::sort(exports.begin(), exports.end(), [](const ExportEntry& a, const ExportEntry& b) {
                         return a.va < b.va;
                         });
@@ -417,7 +416,7 @@ void TzdFuncScanner::scanProcess(DWORD processId, const std::string& targetModul
                 }
             }
             if (shouldScan) {
-                // ½«Á½¸ö map ¶¼´«½øÈ¥
+                // å°†ä¸¤ä¸ª map éƒ½ä¼ è¿›å»
                 scanMemoryRegion(hProcess, mbi, moduleExportsMap, modulePdbMap, guiResults);
             }
         }
@@ -474,7 +473,7 @@ void TzdFuncScanner::scanMemoryRegion(
 
     uintptr_t allocBase = (uintptr_t)mbi.AllocationBase;
 
-    // »ñÈ¡µ±Ç°Ä£¿éµÄ export ÁĞ±íºÍ pdb ÁĞ±í
+    // è·å–å½“å‰æ¨¡å—çš„ export åˆ—è¡¨å’Œ pdb åˆ—è¡¨
     const std::vector<ExportEntry>* currentExports = nullptr;
     const std::vector<ExportEntry>* currentPdbs = nullptr;
 
@@ -488,7 +487,7 @@ void TzdFuncScanner::scanMemoryRegion(
         bool isFunc = false;
         uint8_t* p = &buffer[i];
 
-        // ÌØÕ÷Âë¼ì²â
+        // ç‰¹å¾ç æ£€æµ‹
         if (p[0] == 0x48 && p[1] == 0x89 && p[2] == 0x4C) isFunc = true;
         else if (p[0] == 0x48 && p[1] == 0x83 && p[2] == 0xEC) isFunc = true;
         else if (p[0] == 0x55 && p[1] == 0x48 && p[2] == 0x89) isFunc = true;
@@ -514,15 +513,15 @@ void TzdFuncScanner::scanMemoryRegion(
             res.actualAddr = actualAddr;
             res.instruction = asmStmt;
             res.baseAddr = allocBase;
-            res.type = ScanResult::Type::INTERNAL; // Ä¬ÈÏÀàĞÍ
+            res.type = ScanResult::Type::INTERNAL; // é»˜è®¤ç±»å‹
             res.rawSymbol = "";
             res.demangledSymbol = "";
             res.offset = 0;
 
-            // ¹¹ÔìÏÔÊ¾×Ö·û´®
+            // æ„é€ æ˜¾ç¤ºå­—ç¬¦ä¸²
             std::stringstream ssLoc;
 
-            // 1. ²éÕÒ×î½üµÄµ¼³öº¯Êı (±ØĞëÓĞ)
+            // 1. æŸ¥æ‰¾æœ€è¿‘çš„å¯¼å‡ºå‡½æ•° (å¿…é¡»æœ‰)
             const ExportEntry* bestExport = nullptr;
             if (currentExports) {
                 bestExport = FindNearestSymbol(*currentExports, actualAddr);
@@ -530,18 +529,18 @@ void TzdFuncScanner::scanMemoryRegion(
 
             if (bestExport) {
                 uintptr_t off = actualAddr - bestExport->va;
-                // "xxx + xxx" ²¿·Ö
+                // "xxx + xxx" éƒ¨åˆ†
                 ssLoc << bestExport->name << TzdGui::DETAIL_PLUS_HEX << std::hex << off;
 
-                // ÕâÀïÎÒÃÇÓÃÏà¶ÔÓÚµ¼³öµÄÆ«ÒÆ×÷ÎªÄ¬ÈÏ offset£¬ÎªÁË¸´ÖÆÊ±ÏÔÊ¾ N/A + offset
+                // è¿™é‡Œæˆ‘ä»¬ç”¨ç›¸å¯¹äºå¯¼å‡ºçš„åç§»ä½œä¸ºé»˜è®¤ offsetï¼Œä¸ºäº†å¤åˆ¶æ—¶æ˜¾ç¤º N/A + offset
                 res.offset = off;
             }
             else {
-                // Èç¹ûÁ¬µ¼³öº¯Êı¶¼ÕÒ²»µ½£¨º±¼û£¬³ı·ÇÄ£¿éÃ»µ¼³ö±í£©£¬ÏÔÊ¾Ïà¶ÔÓÚ»ùÖ·
+                // å¦‚æœè¿å¯¼å‡ºå‡½æ•°éƒ½æ‰¾ä¸åˆ°ï¼ˆç½•è§ï¼Œé™¤éæ¨¡å—æ²¡å¯¼å‡ºè¡¨ï¼‰ï¼Œæ˜¾ç¤ºç›¸å¯¹äºåŸºå€
                 ssLoc << "0x" << std::hex << allocBase << TzdGui::DETAIL_PLUS_HEX << (actualAddr - allocBase);
             }
 
-            // 2. ²éÕÒ×î½üµÄ PDB ·ûºÅ (¿ÉÑ¡)
+            // 2. æŸ¥æ‰¾æœ€è¿‘çš„ PDB ç¬¦å· (å¯é€‰)
             const ExportEntry* bestPdb = nullptr;
             if (currentPdbs) {
                 bestPdb = FindNearestSymbol(*currentPdbs, actualAddr);
@@ -549,24 +548,24 @@ void TzdFuncScanner::scanMemoryRegion(
 
             if (bestPdb) {
                 uintptr_t offPdb = actualAddr - bestPdb->va;
-                // ·Å¿í PDB Æ¥ÅäÌõ¼ş£ºÖ»ÒªÔÚºÏÀí·¶Î§ÄÚ (±ÈÈç 1MB)
+                // æ”¾å®½ PDB åŒ¹é…æ¡ä»¶ï¼šåªè¦åœ¨åˆç†èŒƒå›´å†… (æ¯”å¦‚ 1MB)
                 if (offPdb < 0x100000) {
                     std::string demangled = SymbolDemangler::demangle(bestPdb->name);
-                    // "£¨PEB£ºxxx£©" ²¿·Ö
+                    // "ï¼ˆPEBï¼šxxxï¼‰" éƒ¨åˆ†
                     ssLoc << TzdGui::LOC_PEB_PREFIX << demangled << TzdGui::LOC_PEB_SUFFIX;
 
-                    // ±£´æÔ­Ê¼ĞÅÏ¢¹© tooltip ºÍ¸´ÖÆÊ¹ÓÃ
+                    // ä¿å­˜åŸå§‹ä¿¡æ¯ä¾› tooltip å’Œå¤åˆ¶ä½¿ç”¨
                     res.rawSymbol = bestPdb->name;
                     res.demangledSymbol = demangled;
-                    // Èç¹ûÕÒµ½ÁË PDB£¬¾ÍÈÏÎªÊÇ PDB ÀàĞÍ
+                    // å¦‚æœæ‰¾åˆ°äº† PDBï¼Œå°±è®¤ä¸ºæ˜¯ PDB ç±»å‹
                     res.type = ScanResult::Type::PDB_SYM;
 
-                    // ×¢Òâ£ºËäÈ»ÕÒµ½ÁË PDB£¬µ«¸´ÖÆ¸ñÊ½ÀïµÄ offset Í¨³£ÊÇÖ¸Ïà¶ÔÓÚ·ûºÅµÄÆ«ÒÆ
-                    // ÎªÁËÂú×ã "Change of name: N/A + offset" ÕâÀïµÄÂß¼­
-                    // ÎÒÃÇ±£Áô res.offset Îª "Ïà¶ÔÓÚµ¼³öº¯ÊıµÄÆ«ÒÆ" »¹ÊÇ "Ïà¶ÔÓÚPDBµÄÆ«ÒÆ"£¿
-                    // ¸ù¾İÄãÒªÇóµÄ "Change of name before conversion: xxx + xx"
-                    // ÕâÀïÍ¨³£ÊÇÖ¸ PDB Ô­Ê¼Ãû + Ïà¶Ô PDB µÄÆ«ÒÆ
-                    // ËùÒÔÕâÀï¸²¸Ç offset
+                    // æ³¨æ„ï¼šè™½ç„¶æ‰¾åˆ°äº† PDBï¼Œä½†å¤åˆ¶æ ¼å¼é‡Œçš„ offset é€šå¸¸æ˜¯æŒ‡ç›¸å¯¹äºç¬¦å·çš„åç§»
+                    // ä¸ºäº†æ»¡è¶³ "Change of name: N/A + offset" è¿™é‡Œçš„é€»è¾‘
+                    // æˆ‘ä»¬ä¿ç•™ res.offset ä¸º "ç›¸å¯¹äºå¯¼å‡ºå‡½æ•°çš„åç§»" è¿˜æ˜¯ "ç›¸å¯¹äºPDBçš„åç§»"ï¼Ÿ
+                    // æ ¹æ®ä½ è¦æ±‚çš„ "Change of name before conversion: xxx + xx"
+                    // è¿™é‡Œé€šå¸¸æ˜¯æŒ‡ PDB åŸå§‹å + ç›¸å¯¹ PDB çš„åç§»
+                    // æ‰€ä»¥è¿™é‡Œè¦†ç›– offset
                     res.offset = offPdb;
                 }
             }

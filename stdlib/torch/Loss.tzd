@@ -1,0 +1,120 @@
+// ============================================================================
+// Loss.tzd - Loss function modules (nn.Loss equivalents)
+// Each loss is a Module with forward(input, target) that returns a scalar tensor.
+// Supports reduction modes: "mean" (default), "sum", "none"
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class _LossBase extends Module {
+    var string reduction;
+
+    _LossBase(name) {
+        super(name);
+        this.reduction = "mean";
+    }
+
+    _LossBase(name, reduction) {
+        super(name);
+        this.reduction = reduction;
+    }
+
+    fun applyReduction(loss) {
+        if (this.reduction == "sum") {
+            return torch_sum(loss);
+        }
+        if (this.reduction == "mean") {
+            return torch_mean(torch_to_dtype(loss, "float32"));
+        }
+        return loss;
+    }
+}
+
+class CrossEntropyLoss extends _LossBase {
+    CrossEntropyLoss() {
+        super("CrossEntropyLoss");
+    }
+    CrossEntropyLoss(reduction) {
+        super("CrossEntropyLoss", reduction);
+    }
+    fun forward(input, target) {
+        var loss = torch_cross_entropy(input, target);
+        return this.applyReduction(loss);
+    }
+}
+
+class MSELoss extends _LossBase {
+    MSELoss() { super("MSELoss"); }
+    MSELoss(reduction) { super("MSELoss", reduction); }
+    fun forward(input, target) {
+        var diff = torch_sub(input, target);
+        var loss = torch_mul(diff, diff);
+        return this.applyReduction(loss);
+    }
+}
+
+class L1Loss extends _LossBase {
+    L1Loss() { super("L1Loss"); }
+    L1Loss(reduction) { super("L1Loss", reduction); }
+    fun forward(input, target) {
+        var loss = torch_abs(torch_sub(input, target));
+        return this.applyReduction(loss);
+    }
+}
+
+class SmoothL1Loss extends _LossBase {
+    var float beta;
+    SmoothL1Loss() { super("SmoothL1Loss"); this.beta = 1.0; }
+    SmoothL1Loss(reduction) { super("SmoothL1Loss", reduction); this.beta = 1.0; }
+    fun forward(input, target) {
+        var loss = torch_smooth_l1_loss(input, target);
+        return this.applyReduction(loss);
+    }
+}
+
+class BCELoss extends _LossBase {
+    BCELoss() { super("BCELoss"); }
+    BCELoss(reduction) { super("BCELoss", reduction); }
+    fun forward(input, target) {
+        var loss = torch_bce_loss(input, target);
+        return this.applyReduction(loss);
+    }
+}
+
+class NLLLoss extends _LossBase {
+    NLLLoss() { super("NLLLoss"); }
+    NLLLoss(reduction) { super("NLLLoss", reduction); }
+    fun forward(input, target) {
+        var loss = torch_nll_loss(input, target);
+        return this.applyReduction(loss);
+    }
+}
+
+class KLDivLoss extends _LossBase {
+    KLDivLoss() { super("KLDivLoss"); }
+    KLDivLoss(reduction) { super("KLDivLoss", reduction); }
+    fun forward(input, target) {
+        var loss = torch_kl_div(input, target);
+        return this.applyReduction(loss);
+    }
+}
+
+class TripletMarginLoss extends _LossBase {
+    var float margin;
+    TripletMarginLoss() { super("TripletMarginLoss"); this.margin = 1.0; }
+    TripletMarginLoss(margin) { super("TripletMarginLoss"); this.margin = margin; }
+    fun forward(anchor, positive, negative) {
+        var loss = torch_triple_margin_loss(anchor, positive, negative, this.margin);
+        return this.applyReduction(loss);
+    }
+}
+
+// Convenience constructors
+fun crossEntropyLoss() { return new CrossEntropyLoss(); }
+fun mseLoss() { return new MSELoss(); }
+fun l1Loss() { return new L1Loss(); }
+fun smoothL1Loss() { return new SmoothL1Loss(); }
+fun bceLoss() { return new BCELoss(); }
+fun nllLoss() { return new NLLLoss(); }
+fun klDivLoss() { return new KLDivLoss(); }
+fun tripletMarginLoss() { return new TripletMarginLoss(); }

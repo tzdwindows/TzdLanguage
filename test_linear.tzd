@@ -1,0 +1,42 @@
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+
+print("=== Linear Layer Test ===");
+
+print("1. Create Linear(1,1)...");
+var lin = new Linear(1, 1);
+print("   OK");
+
+print("2. Get params...");
+var params = lin.parameters();
+print("   param count: " + toString(len(params)));
+
+print("3. Create optimizer...");
+var optim = torch_optimizer_create("sgd", params, 0.01);
+print("   OK");
+
+print("4. Create MSELoss...");
+var lossFn = new MSELoss();
+print("   OK");
+
+print("5. Forward pass...");
+var input = torch_reshape(torch_tensor(1.0, 2.0, 3.0), 3, 1);
+print("   input: " + torch_to_string(input));
+var output = lin.forward(input);
+print("   output: " + torch_to_string(output));
+
+print("6. Compute loss...");
+var target = torch_reshape(torch_tensor(2.0, 4.0, 6.0), 3, 1);
+var loss = lossFn.forward(output, target);
+print("   loss: " + toString(torch_scalar_value(loss)));
+
+print("7. Backward...");
+torch_backward(loss);
+print("   OK");
+
+print("8. Optimizer step...");
+torch_optim_step(optim);
+print("   OK");
+
+print("=== All Linear tests done ===");

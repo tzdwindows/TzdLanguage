@@ -1,0 +1,11 @@
+﻿fun test() {
+    var i = 0;
+    while (i < 100000) {
+        if (i == 10) {
+            throw "boom";
+        }
+        i = i + 1;
+    }
+}
+
+test();

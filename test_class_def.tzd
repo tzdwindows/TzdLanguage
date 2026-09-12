@@ -1,0 +1,9 @@
+﻿class Point {
+    var float x;
+    var float y;
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+print("Class defined");

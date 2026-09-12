@@ -1,0 +1,11 @@
+﻿// test.tzd - TzdLang 测试文件
+fun main() {
+    print("Hello, TzdLang!");
+    
+    var x = 42;
+    var y = x + 1;
+    
+    if (y > 40) {
+        print("y is large");
+    }
+}

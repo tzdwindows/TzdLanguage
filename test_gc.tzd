@@ -1,0 +1,20 @@
+class Node {
+    var int data;
+    var ptr next;
+    Node(d) { this.data = d; this.next = null; }
+}
+fun main() {
+    var head = null;
+    for (var i = 0; i < 10000; i++) {
+        var n = new Node(i);
+        n.next = head;
+        head = n;
+    }
+    var count = 0;
+    var cur = head;
+    while (cur != null) {
+        count = count + 1;
+        cur = cur.next;
+    }
+    print("Nodes: " + toString(count));
+}

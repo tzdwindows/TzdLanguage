@@ -1,0 +1,50 @@
+// Test extended standard library functions
+print("=== DateTime ===");
+print("now = " + toString(now()));
+print("formatTime = " + formatTime(now(), "%Y-%m-%d"));
+
+print("=== Math ===");
+print("comb(10,3) = " + toString(comb(10, 3)));
+print("fib(20) = " + toString(fib(20)));
+print("isPowerOf2(64) = " + toString(isPowerOf2(64)));
+print("cbrt(27) = " + toString(cbrt(27)));
+
+print("=== String ===");
+print("toTitleCase = " + toTitleCase("hello world"));
+print("levenshtein = " + toString(levenshtein("kitten", "sitting")));
+print("countSubstr = " + toString(countSubstr("ababab", "ab")));
+
+print("=== Base64 ===");
+var enc = base64Encode("Hello!");
+print("encoded = " + enc);
+print("decoded = " + base64Decode(enc));
+
+print("=== Map ===");
+var m = jsonParse("{}");
+m["a"] = 1;
+m["b"] = 2;
+print("mapKeys count = " + toString(len(mapKeys(m))));
+print("mapHas a = " + toString(mapHas(m, "a")));
+print("mapGet a = " + toString(mapGet(m, "a", 0)));
+
+print("=== Set ===");
+var s1 = setCreate(1, 2, 3, 4, 5);
+var s2 = setCreate(3, 4, 5, 6, 7);
+print("setSize = " + toString(setSize(s1)));
+print("setContains 3 = " + toString(setContains(s1, 3)));
+print("union size = " + toString(setSize(setUnion(s1, s2))));
+print("intersect size = " + toString(setSize(setIntersect(s1, s2))));
+
+print("=== Array ===");
+var arr = [3, 1, 4, 1, 5, 9, 2, 6];
+print("argmax = " + toString(argmax(arr)));
+print("argmin = " + toString(argmin(arr)));
+var cs = cumsum(arr);
+print("cumsum len = " + toString(len(cs)));
+
+print("=== Constants ===");
+print("TAU = " + toString(TAU));
+print("EPSILON = " + toString(EPSILON));
+
+print("=== All stdlib tests passed! ===");
+exit;

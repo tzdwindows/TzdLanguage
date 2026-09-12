@@ -1,0 +1,4 @@
+﻿fun test() {
+    print("Inside test");
+}
+test();

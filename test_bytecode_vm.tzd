@@ -1,0 +1,114 @@
+// test_bytecode_vm.tzd - Tests to verify bytecode VM matches interpreter behavior
+// Run with: TzdTools.exe --runbc=test_bytecode_vm.tzdc
+// Compare with: TzdTools.exe --noJit --runMainTzd=test_bytecode_vm.tzd
+
+// Test 1: Basic arithmetic
+var a = 10;
+var b = 3;
+print("add: " + toString(a + b));        // 13
+print("sub: " + toString(a - b));        // 7
+print("mul: " + toString(a * b));        // 30
+print("div: " + toString(a / b));        // 3.333...
+print("mod: " + toString(a % b));        // 1
+print("pow: " + toString(pow(a, b)));    // 1000
+
+// Test 2: String operations
+var s1 = "Hello";
+var s2 = "World";
+print("concat: " + s1 + " " + s2);       // Hello World
+print("len: " + toString(len(s1)));      // 5
+
+// Test 3: Control flow
+if (a > b) {
+    print("a > b: true");
+} else {
+    print("a > b: false");
+}
+
+for (i = 0; i < 5; i = i + 1) {
+    print("loop: " + toString(i));
+}
+
+var n = 0;
+while (n < 3) {
+    print("while: " + toString(n));
+    n = n + 1;
+}
+
+// Test 4: Function calls
+fun add(x, y) {
+    return x + y;
+}
+
+fun factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+print("add(3,4): " + toString(add(3, 4)));          // 7
+print("factorial(5): " + toString(factorial(5)));    // 120
+
+// Test 5: Arrays
+var arr = range(0, 5, 1);
+print("arr len: " + toString(len(arr)));  // 5
+for (i = 0; i < len(arr); i = i + 1) {
+    print("arr[" + toString(i) + "]: " + toString(arr[i]));
+}
+arr = push(arr, 99);
+print("after push: " + toString(len(arr)));  // 6
+
+// Test 6: Maps
+var m = jsonParse("{}");
+m["key1"] = "value1";
+m["key2"] = 42;
+print("map key1: " + m["key1"]);           // value1
+print("map key2: " + toString(m["key2"])); // 42
+print("map len: " + toString(len(mapKeys(m)))); // 2
+
+// Test 7: Boolean logic
+print("true && false: " + toString(true && false));  // false
+print("true || false: " + toString(true || false));  // true
+print("!true: " + toString(!true));                   // false
+
+// Test 8: Comparison
+print("3 == 3: " + toString(3 == 3));  // true
+print("3 != 4: " + toString(3 != 4));  // true
+print("3 < 4: " + toString(3 < 4));    // true
+print("3 >= 3: " + toString(3 >= 3));  // true
+
+// Test 9: Break and continue
+for (i = 0; i < 10; i = i + 1) {
+    if (i == 3) { continue; }
+    if (i == 7) { break; }
+    print("break/continue: " + toString(i));
+}
+
+// Test 10: Try/catch
+try {
+    throw "error message";
+    print("should not reach here");
+} catch (e) {
+    print("caught: " + toString(e));
+}
+
+// Test 11: Nested functions
+fun outer(x) {
+    fun inner(y) {
+        return y * 2;
+    }
+    return inner(x) + 1;
+}
+print("nested: " + toString(outer(5)));  // 11
+
+// Test 12: Multiple return values via array
+fun divmod(a, b) {
+    var result = range(0, 0, 1);
+    result = push(result, a / b);
+    result = push(result, a % b);
+    return result;
+}
+
+var dm = divmod(17, 5);
+print("divmod: " + toString(dm[0]) + ", " + toString(dm[1]));  // 3, 2
+
+print("=== All bytecode tests done ===");

@@ -1,0 +1,102 @@
+{
+    "name": "tzdlang",
+    "displayName": "TzdLang",
+    "description": "添加对tzd语言的支持",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.109.5"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:tzdlang",
+        "onCommand:tzdlang.runCurrentFile",
+        "onCommand:tzdlang.resetToolsPath",
+        "onCommand:tzdlang.helloWorld"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "tzdlang",
+                "aliases": [
+                    "TzdLang",
+                    "tzdlang"
+                ],
+                "extensions": [
+                    ".tzd",
+                    ".tzdlang"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "tzdlang",
+                "scopeName": "source.tzdlang",
+                "path": "./syntaxes/tzdlang.tmLanguage.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "tzdlang.runCurrentFile",
+                "title": "TzdLang: 运行当前 Tzd 脚本",
+                "icon": "$(play)"
+            },
+            {
+                "command": "tzdlang.resetToolsPath",
+                "title": "TzdLang: 重新设置 TzdTools 路径"
+            },
+            {
+                "command": "tzdlang.helloWorld",
+                "title": "Hello World"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "tzdlang.runCurrentFile",
+                    "group": "navigation",
+                    "when": "editorLangId == tzdlang"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "tzdlang.runCurrentFile",
+                "key": "f5",
+                "when": "editorLangId == tzdlang"
+            }
+        ],
+        "configuration": {
+            "title": "TzdLang",
+            "properties": {
+                "tzdlang.toolsPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "TzdTools.exe 的完整路径。留空时扩展会自动在常见位置查找。"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "lint": "eslint .",
+        "pretest": "npm run lint",
+        "test": "vscode-test"
+    },
+    "devDependencies": {
+        "@types/mocha": "^10.0.10",
+        "@types/node": "22.x",
+        "@types/vscode": "^1.109.5",
+        "@vscode/test-cli": "^0.0.12",
+        "@vscode/test-electron": "^2.5.2",
+        "eslint": "^9.39.3"
+    },
+    "dependencies": {
+        "antlr4": "^4.13.2",
+        "vscode-languageclient": "^10.0.0",
+        "vscode-languageserver": "^10.0.0",
+        "vscode-languageserver-textdocument": "^1.0.13"
+    }
+}

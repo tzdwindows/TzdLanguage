@@ -1,0 +1,7 @@
+import "torch/Layer.tzd";
+print("Starting Linear");
+var lin = new Linear(3, 2);
+print("Linear created");
+var linInput = torch_tensor(1.0, 2.0, 3.0);
+var linOutput = lin.forward(linInput);
+print("Linear output: " + torch_to_string(linOutput));

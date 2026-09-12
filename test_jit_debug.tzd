@@ -1,0 +1,11 @@
+fun add(a, b) { return a + b; }
+fun main() {
+    print("add(3,4)=" + toString(add(3, 4)));
+    print("add(100,200)=" + toString(add(100, 200)));
+    var x = 5;
+    var y = 10;
+    print("x+y=" + toString(x + y));
+    print("x=" + toString(x));
+    x = x + 1;
+    print("x after x=x+1: " + toString(x));
+}

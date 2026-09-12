@@ -1,0 +1,48 @@
+// 大数运算测试
+fun main() {
+    print("=== Big Integer Test ===");
+
+    // 0. Power test
+    var p100 = 10 ^ 100;
+    print("10^100 = " + toString(p100));
+
+    // 0b. Power test with exact check
+    var p1000 = 10 ^ 1000;
+    print("10^1000 digits = " + toString(len(toString(p1000))));
+
+    // 1. 大数加法
+    var a = 451111111111111111111111111111111111;
+    var b = 5444444444444444444444444444444444116518515151515;
+    var s = a + b;
+    print("a + b = " + toString(s));
+
+    // 2. 大数乘法
+    var x = 12345678901234567890;
+    var y = 98765432109876543210;
+    var p = x * y;
+    print("x * y = " + toString(p));
+
+    // 3. 大数幂
+    var e = 2 ^ 100;
+    print("2^100 = " + toString(e));
+
+    // 4. 大数阶乘
+    var f = bigintFactorial(50);
+    print("50! = " + toString(f));
+
+    // 5. 模幂运算
+    var m = powmod(2, 1000, 1000000007);
+    print("2^1000 mod 10^9+7 = " + toString(m));
+
+    // 6. 大数减法
+    var d = b - a;
+    print("b - a = " + toString(d));
+
+    // 7. 大数比较
+    print("a < b = " + toString(a < b));
+    print("a == a = " + toString(a == a));
+
+    // 8. 极限测试: 2^1000
+    var big = 2 ^ 1000;
+    print("2^1000 = " + toString(big));
+}

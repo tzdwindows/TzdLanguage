@@ -1083,6 +1083,7 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
 
     // GPU check (first call initializes CUDA runtime — keep out of timing)
     g_forceGPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceGPU);
+    g_forceCPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceCPU);
     g_bigTime = bigTime;
     bool useGPU = bigint_gpu_suitable(maxDigits);
 

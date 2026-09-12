@@ -1,0 +1,44 @@
+// bench_object.tzd - Object operation benchmark (working operations)
+
+class Point {
+    var float x;
+    var float y;
+    Point(x, y) { this.x = x; this.y = y; }
+}
+
+fun main() {
+    print("=== TzdLang Object Benchmark ===");
+
+    // 1. Object creation: 100k
+    var t1 = clock();
+    var s1 = 0.0;
+    var i1 = 0;
+    while (i1 < 100000) { var p = new Point(i1 * 1.0, i1 * 2.0); s1 = s1 + p.x; i1 = i1 + 1; }
+    var t2 = clock();
+    print("create(100k)=" + toString(s1) + "  time=" + toString((t2-t1)/1000.0) + "s");
+
+    // 2. Field read: 100k (CSE-able with readonly)
+    var p = new Point(3.0, 4.0);
+    var t3 = clock();
+    var s2 = 0.0;
+    var i2 = 0;
+    while (i2 < 100000) { s2 = s2 + p.x + p.y; i2 = i2 + 1; }
+    var t4 = clock();
+    print("field(100k)=" + toString(s2) + "  time=" + toString((t4-t3)/1000.0) + "s");
+
+    // 3. Create + read: 50k
+    var t5 = clock();
+    var s3 = 0.0;
+    var i3 = 0;
+    while (i3 < 50000) { var pp = new Point(i3 * 1.0, i3 * 2.0); s3 = s3 + pp.x + pp.y; i3 = i3 + 1; }
+    var t6 = clock();
+    print("createRead(50k)=" + toString(s3) + "  time=" + toString((t6-t5)/1000.0) + "s");
+
+    // 4. Many short-lived objects: 200k
+    var t7 = clock();
+    var s4 = 0.0;
+    var i4 = 0;
+    while (i4 < 200000) { var pp2 = new Point(i4, i4); s4 = s4 + pp2.x; i4 = i4 + 1; }
+    var t8 = clock();
+    print("createMany(200k)=" + toString(s4) + "  time=" + toString((t8-t7)/1000.0) + "s");
+}

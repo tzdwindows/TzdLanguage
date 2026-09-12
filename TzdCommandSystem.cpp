@@ -633,6 +633,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         else if (arg == "--forceGPU") {
             interpreter->m_forceGPU = true;
         }
+        // 4g. 强制使用CPU进行大数运算（禁用GPU）
+        else if (arg == "--forceCPU") {
+            interpreter->m_forceCPU = true;
+        }
         // 5. 调试端口/主机
         else if (arg.rfind("--debug-port=", 0) == 0) {
             size_t eqPos = arg.find('=');
@@ -746,7 +750,7 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             if (arg == "-s" || arg == "--silent" ||
                 arg == "--noJit" || arg == "--no-jit" ||
                 arg == "--interpreter" || arg == "--tree-walk" ||
-                arg == "--antlrTime" || arg == "--bigTime" || arg == "--forceGPU" ||
+                arg == "--antlrTime" || arg == "--bigTime" || arg == "--forceGPU" || arg == "--forceCPU" ||
                 arg.rfind("--debug-port=", 0) == 0 ||
                 arg.rfind("--debug-host=", 0) == 0 ||
                 arg.rfind("--debug-addr=", 0) == 0 ||

@@ -1,0 +1,17 @@
+// Simple class test
+class Box {
+    var int val;
+    Box(v) {
+        this.val = v;
+    }
+    fun get() {
+        return this.val;
+    }
+}
+
+print("creating box");
+var b = new Box(42);
+print("box created");
+print("val: " + toString(b.val));
+print("get: " + toString(b.get()));
+print("done");

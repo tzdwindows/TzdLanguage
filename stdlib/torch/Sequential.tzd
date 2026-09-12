@@ -1,0 +1,29 @@
+// Sequential.tzd
+import "torch/Module.tzd";
+
+class Sequential extends Module {
+    var int _layers;
+
+    Sequential() {
+        super("Sequential");
+        this._layers = range(0, 0, 1);
+    }
+
+    fun add(module) {
+        push(this._layers, module);
+        this.registerModule("layer_" + toString(len(this._layers)), module);
+        return this;
+    }
+
+    fun forward(x) {
+        var out = x;
+        for (i = 0; i < len(this._layers); i = i + 1) {
+            var layer = this._layers[i];
+            out = layer.forward(out);
+        }
+        return out;
+    }
+
+    fun len() { return len(this._layers); }
+    fun get(index) { return this._layers[index]; }
+}

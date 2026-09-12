@@ -1,0 +1,31 @@
+class Animal {
+    var string name;
+    Animal(name) { this.name = name; }
+    fun speak() { print(this.name + " says ..."); }
+}
+class Dog extends Animal {
+    Dog(name) { super(name); }
+    fun speak() { print(this.name + " barks! woof!"); }
+}
+
+var d = new Dog("Buddy");
+d.speak();
+if (d in Dog) print("d is a Dog");
+if (d in Animal) print("d is also an Animal");
+
+fun fib(n) {
+    if (n <= 1) ret n;
+    ret fib(n-1) + fib(n-2);
+}
+print("fib(20)=" + fib(20));
+
+var arr = [1, 2, 3, 4, 5];
+print("arr[2]=" + arr[2]);
+
+fun fact(n) {
+    if (n <= 0) ret 1;
+    ret n * fact(n-1);
+}
+print("fact(10)=" + fact(10));
+
+exit

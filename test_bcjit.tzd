@@ -1,0 +1,48 @@
+// 测试字节码 JIT 桥接是否触发
+// fib 函数会被调用超过 100 次（hot threshold），应该触发 JIT 编译
+
+func fib(n) {
+    if (n <= 1) {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+// 简单循环函数，测试 JIT 对循环的加速
+func sumLoop(n) {
+    s = 0.0
+    i = 0
+    while i < n {
+        s = s + i
+        i = i + 1
+    }
+    return s
+}
+
+print("=== 字节码 JIT 桥接测试 ===")
+
+// 测试1: sumLoop (会被调用多次触发 JIT)
+t1 = clock()
+result = 0.0
+for k = 0, 200 {
+    result = sumLoop(1000)
+}
+t2 = clock()
+print("sumLoop(1000) x200: " + (t2 - t1) + "ms result=" + result)
+
+// 测试2: fib(25) - 递归调用，大量函数调用
+t1 = clock()
+r = fib(25)
+t2 = clock()
+print("fib(25)=" + r + " time=" + (t2 - t1) + "ms")
+
+// 测试3: 大量函数调用
+t1 = clock()
+total = 0.0
+for k = 0, 500 {
+    total = total + sumLoop(500)
+}
+t2 = clock()
+print("sumLoop(500) x500: " + (t2 - t1) + "ms total=" + total)
+
+print("=== 测试完成 ===")

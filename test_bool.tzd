@@ -1,0 +1,7 @@
+print(0 < 5);
+var i = 0;
+print(i < 5);
+i = i + 1;
+print(i);
+print(i < 5);
+exit;

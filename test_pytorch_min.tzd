@@ -1,0 +1,97 @@
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+
+print("=== Minimal PyTorch Test ===");
+
+// Test 1: Basic tensor creation
+var z = torch_zeros(3);
+print("zeros: " + torch_to_string(z));
+
+var o = torch_ones(3);
+print("ones: " + torch_to_string(o));
+
+// Test 2: Element-wise ops
+var a = torch_tensor(1.0, 2.0, 3.0, 4.0);
+var b = torch_tensor(5.0, 6.0, 7.0, 8.0);
+print("a: " + torch_to_string(a));
+print("b: " + torch_to_string(b));
+
+var add = torch_add(a, b);
+print("add: " + torch_to_string(add));
+
+var sum = torch_sum(add);
+print("sum(add): " + torch_to_string(sum));
+print("scalar(sum): " + toString(torch_scalar_value(sum)));
+
+var item0 = torch_item(add, 0);
+print("item(add,0): " + toString(item0));
+
+var item1 = torch_item(add, 1);
+print("item(add,1): " + toString(item1));
+
+// Test 3: Direct value check
+print("Check: item(add,0) == 6.0 ?");
+if (torch_item(add, 0) == 6.0) {
+    print("  PASS");
+} else {
+    print("  FAIL: got " + toString(torch_item(add, 0)));
+}
+
+// Test 4: Matrix operations
+var m1 = torch_reshape(a, 2, 2);
+var m2 = torch_reshape(b, 2, 2);
+var mm = torch_matmul(m1, m2);
+print("matmul: " + torch_to_string(mm));
+
+// Test 5: Reductions
+print("sum(a): " + toString(torch_scalar_value(torch_sum(a))));
+print("mean(a): " + toString(torch_scalar_value(torch_mean(a))));
+
+// Test 6: Activations
+var inp = torch_tensor(-1.0, 0.0, 1.0);
+var relu = torch_relu(inp);
+print("relu: " + torch_to_string(relu));
+
+// Test 7: Linear layer
+var lin = new Linear(3, 2);
+var linInput = torch_tensor(1.0, 2.0, 3.0);
+var linOutput = lin.forward(linInput);
+print("Linear output: " + torch_to_string(linOutput));
+
+// Test 8: Module system
+class TestNet extends Module {
+    TestNet() {
+        super("TestNet");
+        var fc = new Linear(3, 1);
+        this.registerModule("fc", fc);
+    }
+    fun forward(x) {
+        var fc = this._modules["fc"];
+        return fc.forward(x);
+    }
+}
+
+var net = new TestNet();
+print("Net params: " + toString(net.numParams()));
+var netOut = net.forward(torch_tensor(1.0, 2.0, 3.0));
+print("Net output: " + torch_to_string(netOut));
+
+// Test 9: Conv2d
+var conv = new Conv2d(3, 16, 3, 1, 1);
+var convIn = torch_randn(1, 3, 8, 8);
+var convOut = conv.forward(convIn);
+print("Conv2d output shape: " + torch_shape(convOut));
+
+// Test 10: Memory
+var before = torch_num_tensors();
+print("Tensors before: " + toString(before));
+for (i = 0; i < 50; i = i + 1) {
+    var tmp = torch_randn(10, 10);
+}
+torch_gc();
+var after = torch_num_tensors();
+print("Tensors after: " + toString(after));
+
+print("=== Done ===");

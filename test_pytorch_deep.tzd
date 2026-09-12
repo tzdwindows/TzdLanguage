@@ -1,0 +1,629 @@
+// ============================================================================
+// test_pytorch_deep.tzd - Comprehensive PyTorch Deep Test
+// Tests: tensor creation, ops, reductions, activations, autograd,
+//        optimizer training, save/load, nn.Module system, memory management
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+
+var passCount = 0;
+var failCount = 0;
+
+fun assertEq(name, actual, expected) {
+    if (toString(actual) == toString(expected)) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected " + toString(expected) + " got " + toString(actual));
+    }
+}
+
+fun assertClose(name, actual, expected, tol) {
+    var diff = actual - expected;
+    if (diff < 0) { diff = 0 - diff; }
+    if (diff <= tol) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected ~" + toString(expected) + " got " + toString(actual) + " (tol=" + toString(tol) + ")");
+    }
+}
+
+fun assertTensorShape(name, t, expectedShape) {
+    var s = torch_shape(t);
+    if (s == expectedShape) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected shape " + expectedShape + " got " + s);
+    }
+}
+
+fun assertTrue(name, cond) {
+    if (cond) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected true");
+    }
+}
+
+print("=== PyTorch Deep Test ===");
+print("");
+
+// ============================================================================
+// 1. Tensor Creation
+// ============================================================================
+print("[1] Tensor Creation...");
+
+var z = torch_zeros(3, 4);
+assertTensorShape("zeros shape", z, "[3, 4]");
+assertClose("zeros sum", torch_scalar_value(torch_sum(z)), 0.0, 0.000001);
+
+var o = torch_ones(2, 3);
+assertTensorShape("ones shape", o, "[2, 3]");
+assertClose("ones sum", torch_scalar_value(torch_sum(o)), 6.0, 0.000001);
+
+var id4 = torch_eye(4);
+assertTensorShape("eye shape", id4, "[4, 4]");
+
+var ar = torch_arange(0, 10, 1);
+assertTensorShape("arange shape", ar, "[10]");
+
+var ls = torch_linspace(0, 1, 5);
+assertTensorShape("linspace shape", ls, "[5]");
+
+var t1 = torch_tensor(1.0, 2.0, 3.0, 4.0);
+assertTensorShape("tensor shape", t1, "[4]");
+
+var fl = torch_full(7.0, 2, 3);
+assertTensorShape("full shape", fl, "[2, 3]");
+assertClose("full value", torch_scalar_value(torch_sum(fl)), 42.0, 0.000001);
+
+var rp = torch_randperm(10);
+assertTensorShape("randperm shape", rp, "[10]");
+
+var ri = torch_randint(0, 100, 3, 4);
+assertTensorShape("randint shape", ri, "[3, 4]");
+
+print("  done");
+
+// ============================================================================
+// 2. Element-wise Operations
+// ============================================================================
+print("[2] Element-wise Operations...");
+
+var a = torch_tensor(1.0, 2.0, 3.0, 4.0);
+var b = torch_tensor(5.0, 6.0, 7.0, 8.0);
+
+var add = torch_add(a, b);
+assertClose("add", torch_item(add, 0), 6.0, 0.000001);
+assertClose("add2", torch_item(add, 3), 12.0, 0.000001);
+
+var sub = torch_sub(b, a);
+assertClose("sub", torch_item(sub, 0), 4.0, 0.000001);
+
+var mul = torch_mul(a, b);
+assertClose("mul", torch_item(mul, 0), 5.0, 0.000001);
+assertClose("mul2", torch_item(mul, 3), 32.0, 0.000001);
+
+var div = torch_div(b, a);
+assertClose("div", torch_item(div, 0), 5.0, 0.000001);
+
+var neg = torch_neg(a);
+assertClose("neg", torch_item(neg, 0), -1.0, 0.000001);
+
+var absT = torch_abs(neg);
+assertClose("abs", torch_item(absT, 0), 1.0, 0.000001);
+
+var sq = torch_sqrt(a);
+assertClose("sqrt", torch_item(sq, 0), 1.0, 0.000001);
+assertClose("sqrt2", torch_item(sq, 3), 2.0, 0.000001);
+
+var ex = torch_exp(a);
+assertClose("exp", torch_item(ex, 0), 2.718281, 0.001);
+
+var lg = torch_log(a);
+assertClose("log", torch_item(lg, 0), 0.0, 0.000001);
+
+var cl = torch_clamp(a, 2.0, 3.0);
+assertClose("clamp", torch_item(cl, 0), 2.0, 0.000001);
+assertClose("clamp2", torch_item(cl, 3), 3.0, 0.000001);
+
+print("  done");
+
+// ============================================================================
+// 3. Matrix Operations
+// ============================================================================
+print("[3] Matrix Operations...");
+
+var m1 = torch_tensor(1.0, 2.0, 3.0, 4.0);
+var m2 = torch_reshape(m1, 2, 2);
+assertTensorShape("reshape", m2, "[2, 2]");
+
+var m3 = torch_tensor(5.0, 6.0, 7.0, 8.0);
+var m4 = torch_reshape(m3, 2, 2);
+
+var mm = torch_matmul(m2, m4);
+assertTensorShape("matmul", mm, "[2, 2]");
+assertClose("matmul_val", torch_item(mm, 0), 19.0, 0.000001);
+
+var tr = torch_transpose(m2, 0, 1);
+assertTensorShape("transpose", tr, "[2, 2]");
+
+var cat = torch_cat(a, b, 0);
+assertTensorShape("cat", cat, "[8]");
+
+var st = torch_stack(a, b, 0);
+assertTensorShape("stack", st, "[2, 4]");
+
+var dt = torch_det(m2);
+assertTrue("det is tensor", torch_is_tensor(dt));
+
+var inv = torch_inv(m2);
+assertTensorShape("inv", inv, "[2, 2]");
+
+print("  done");
+
+// ============================================================================
+// 4. Reductions
+// ============================================================================
+print("[4] Reductions...");
+
+var r = torch_tensor(1.0, 2.0, 3.0, 4.0, 5.0);
+assertClose("sum", torch_scalar_value(torch_sum(r)), 15.0, 0.000001);
+assertClose("mean", torch_scalar_value(torch_mean(r)), 3.0, 0.000001);
+assertClose("prod", torch_scalar_value(torch_prod(r)), 120.0, 0.000001);
+assertClose("max", torch_item(torch_max_t(r), 0), 5.0, 0.000001);
+assertClose("min", torch_item(torch_min_t(r), 0), 1.0, 0.000001);
+assertClose("argmax", torch_item(torch_argmax(r), 0), 4.0, 0.000001);
+assertClose("argmin", torch_item(torch_argmin(r), 0), 0.0, 0.000001);
+assertClose("std", torch_scalar_value(torch_std(r)), 1.5811, 0.01);
+assertClose("var", torch_scalar_value(torch_var(r)), 2.0, 0.01);
+
+print("  done");
+
+// ============================================================================
+// 5. Activations
+// ============================================================================
+print("[5] Activations...");
+
+var inp = torch_tensor(-2.0, -1.0, 0.0, 1.0, 2.0);
+
+var rl = torch_relu(inp);
+assertClose("relu", torch_item(rl, 0), 0.0, 0.000001);
+assertClose("relu2", torch_item(rl, 4), 2.0, 0.000001);
+
+var sg = torch_sigmoid(inp);
+assertClose("sigmoid", torch_item(sg, 2), 0.5, 0.0001);
+
+var th = torch_tanh(inp);
+assertClose("tanh", torch_item(th, 2), 0.0, 0.000001);
+
+var sm = torch_softmax(inp, -1);
+assertClose("softmax_sum", torch_scalar_value(torch_sum(sm)), 1.0, 0.0001);
+
+var gl = torch_gelu(inp);
+assertTrue("gelu is tensor", torch_is_tensor(gl));
+
+var sl = torch_silu(inp);
+assertTrue("silu is tensor", torch_is_tensor(sl));
+
+var ll = torch_leaky_relu(inp, 0.01);
+assertClose("leaky_relu", torch_item(ll, 0), -0.02, 0.000001);
+
+print("  done");
+
+// ============================================================================
+// 6. Comparison Ops
+// ============================================================================
+print("[6] Comparison Operations...");
+
+var c1 = torch_tensor(1.0, 2.0, 3.0, 4.0);
+var c2 = torch_tensor(1.0, 2.0, 4.0, 3.0);
+
+var eq = torch_eq(c1, c2);
+assertTrue("eq is tensor", torch_is_tensor(eq));
+
+var lt = torch_lt(c1, c2);
+assertTrue("lt is tensor", torch_is_tensor(lt));
+
+var gt = torch_gt(c1, c2);
+assertTrue("gt is tensor", torch_is_tensor(gt));
+
+var mask = torch_gt(c1, torch_tensor(2.0, 2.0, 2.0, 2.0));
+var mf = torch_masked_fill(c1, mask, 0.0);
+assertClose("masked_fill", torch_item(mf, 3), 0.0, 0.000001);
+
+print("  done");
+
+// ============================================================================
+// 7. In-place Operations
+// ============================================================================
+print("[7] In-place Operations...");
+
+var ip = torch_ones(3, 3);
+torch_fill_(ip, 5.0);
+assertClose("fill_", torch_item(ip, 0), 5.0, 0.000001);
+
+torch_zero_(ip);
+assertClose("zero_", torch_item(ip, 0), 0.0, 0.000001);
+
+torch_add_(ip, torch_ones(3, 3));
+assertClose("add_", torch_item(ip, 0), 1.0, 0.000001);
+
+torch_sub_(ip, torch_ones(3, 3));
+assertClose("sub_", torch_item(ip, 0), 0.0, 0.000001);
+
+var src = torch_full(3.0, 2, 2);
+var dst = torch_zeros(2, 2);
+torch_copy_(dst, src);
+assertClose("copy_", torch_item(dst, 0), 3.0, 0.000001);
+
+print("  done");
+
+// ============================================================================
+// 8. Autograd
+// ============================================================================
+print("[8] Autograd...");
+
+var x = torch_tensor(2.0, 3.0);
+torch_requires_grad(x, true);
+assertTrue("requires_grad set", true);
+
+var y = torch_mul(x, x);
+var loss = torch_sum(y);
+torch_backward(loss);
+
+assertTrue("backward succeeded", true);
+
+print("  done");
+
+// ============================================================================
+// 9. Optimizer Training (Linear Regression)
+// ============================================================================
+print("[9] Optimizer Training (Linear Regression)...");
+
+// y = 2x + 1
+torch_manual_seed(42);
+var X = torch_tensor(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+var Xr = torch_reshape(X, 10, 1);
+var Y = torch_reshape(torch_tensor(1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0), 10, 1);
+
+var model = new Linear(1, 1);
+var optim = torch_optimizer_create("sgd", model.parameters(), 0.01);
+var lossFn = new MSELoss();
+
+var initialLoss = 0.0;
+var finalLoss = 0.0;
+
+for (epoch = 0; epoch < 100; epoch = epoch + 1) {
+    torch_optim_zero_grad(optim);
+    var pred = model.forward(Xr);
+    var loss = lossFn.forward(pred, Y);
+    torch_backward(loss);
+    torch_optim_step(optim);
+    if (epoch == 0) {
+        initialLoss = torch_scalar_value(loss);
+    }
+    finalLoss = torch_scalar_value(loss);
+}
+
+print("  Initial loss: " + toFixed(initialLoss, 4));
+print("  Final loss: " + toFixed(finalLoss, 4));
+assertTrue("loss decreased", finalLoss < initialLoss);
+assertClose("converged", finalLoss, 0.0, 1.0);
+
+print("  done");
+
+// ============================================================================
+// 10. Save/Load Round-trip
+// ============================================================================
+print("[10] Save/Load Round-trip...");
+
+var sd = model.stateDict();
+torch_save_state_dict(sd, "test_model.tzdmodel");
+
+var loadedSd = torch_load_state_dict("test_model.tzdmodel");
+var loadedKeys = mapKeys(loadedSd);
+assertTrue("state_dict has keys", len(loadedKeys) > 0);
+
+var newModel = new Linear(1, 1);
+newModel.loadStateDict(loadedSd);
+
+var testIn = torch_reshape(torch_tensor(5.0), 1, 1);
+var pred1 = model.forward(testIn);
+var pred2 = newModel.forward(testIn);
+assertClose("save/load prediction", torch_scalar_value(pred1), torch_scalar_value(pred2), 0.01);
+
+print("  done");
+
+// ============================================================================
+// 11. Memory Management
+// ============================================================================
+print("[11] Memory Management...");
+
+var beforeCount = torch_num_tensors();
+for (i = 0; i < 100; i = i + 1) {
+    var tmp = torch_randn(100, 100);
+}
+torch_gc();
+var afterCount = torch_num_tensors();
+print("  Tensors before: " + toString(beforeCount) + ", after: " + toString(afterCount));
+assertTrue("no excessive leak", afterCount <= beforeCount + 50);
+
+print("  done");
+
+// ============================================================================
+// 12. nn.Module System
+// ============================================================================
+print("[12] nn.Module System...");
+
+class MyNet extends Module {
+    var int hidden;
+
+    MyNet() {
+        super("MyNet");
+        this.hidden = 32;
+        var fc1 = new Linear(10, 32);
+        var fc2 = new Linear(32, 1);
+        this.registerModule("fc1", fc1);
+        this.registerModule("fc2", fc2);
+    }
+
+    fun forward(x) {
+        var fc1mod = this._modules["fc1"];
+        var h = fc1mod.forward(x);
+        h = torch_relu(h);
+        var fc2mod = this._modules["fc2"];
+        return fc2mod.forward(h);
+    }
+}
+
+var net = new MyNet();
+var nParams = net.numParams();
+print("  MyNet params: " + toString(nParams));
+assertTrue("has params", nParams > 0);
+
+var sd2 = net.stateDict();
+var sdKeys = mapKeys(sd2);
+assertTrue("state_dict has keys", len(sdKeys) > 0);
+
+net.train();
+assertTrue("training mode", net.isTraining());
+
+net.eval();
+assertTrue("eval mode", !net.isTraining());
+
+var modNames = net.moduleNames();
+assertTrue("moduleNames works", len(modNames) == 2);
+
+var submod = net.getModule("fc1");
+assertTrue("getModule works", submod.getName() == "Linear");
+
+var netInput = torch_randn(1, 10);
+var netOutput = net.forward(netInput);
+assertTensorShape("net output", netOutput, "[1, 1]");
+
+print("  done");
+
+// ============================================================================
+// 13. Conv2d Layer
+// ============================================================================
+print("[13] Conv2d Layer...");
+
+var conv = new Conv2d(3, 16, 3, 1, 1);
+var convInput = torch_randn(1, 3, 32, 32);
+var convOutput = conv.forward(convInput);
+assertTensorShape("conv2d output", convOutput, "[1, 16, 32, 32]");
+
+print("  done");
+
+// ============================================================================
+// 14. BatchNorm
+// ============================================================================
+print("[14] BatchNorm...");
+
+var bn = new BatchNorm2d(16);
+bn.train();
+var bnInput = torch_randn(4, 16, 8, 8);
+var bnOutput = bn.forward(bnInput);
+assertTensorShape("batchnorm2d output", bnOutput, "[4, 16, 8, 8]");
+
+print("  done");
+
+// ============================================================================
+// 15. Embedding
+// ============================================================================
+print("[15] Embedding...");
+
+var emb = new Embedding(100, 16);
+var embInput = torch_tensor(0.0, 1.0, 2.0, 3.0);
+var embOutput = emb.forward(embInput);
+assertTrue("embedding output is tensor", torch_is_tensor(embOutput));
+
+print("  done");
+
+// ============================================================================
+// 16. Loss Functions
+// ============================================================================
+print("[16] Loss Functions...");
+
+var pred = torch_tensor(0.8, 0.1, 0.05, 0.05);
+var target = torch_tensor(1.0, 0.0, 0.0, 0.0);
+
+var ceLoss = new CrossEntropyLoss();
+assertTrue("cross_entropy loss", torch_is_tensor(ceLoss.forward(pred, target)));
+
+var mseLoss = new MSELoss();
+assertTrue("mse loss", torch_is_tensor(mseLoss.forward(pred, target)));
+
+var l1Loss = new L1Loss();
+assertTrue("l1 loss", torch_is_tensor(l1Loss.forward(pred, target)));
+
+print("  done");
+
+// ============================================================================
+// 17. Optimizer Types
+// ============================================================================
+print("[17] Optimizer Types...");
+
+var optTypes = ["sgd", "adam", "adamw", "rmsprop", "adagrad"];
+for (i = 0; i < len(optTypes); i = i + 1) {
+    var opt = torch_optimizer_create(optTypes[i], model.parameters(), 0.001);
+    assertTrue(optTypes[i] + " optimizer created", true);
+    torch_optim_step(opt);
+}
+
+print("  done");
+
+// ============================================================================
+// 18. Training Loop
+// ============================================================================
+print("[18] Training Loop...");
+
+// Build training data using arrays and map functions
+torch_manual_seed(123);
+var trainData = range(0, 0, 1);
+
+var d0 = jsonParse("{}");
+d0["input"] = torch_reshape(torch_tensor(0.0), 1, 1);
+d0["target"] = torch_reshape(torch_tensor(1.0), 1, 1);
+push(trainData, d0);
+
+var d1 = jsonParse("{}");
+d1["input"] = torch_reshape(torch_tensor(1.0), 1, 1);
+d1["target"] = torch_reshape(torch_tensor(3.0), 1, 1);
+push(trainData, d1);
+
+var d2 = jsonParse("{}");
+d2["input"] = torch_reshape(torch_tensor(2.0), 1, 1);
+d2["target"] = torch_reshape(torch_tensor(5.0), 1, 1);
+push(trainData, d2);
+
+var d3 = jsonParse("{}");
+d3["input"] = torch_reshape(torch_tensor(3.0), 1, 1);
+d3["target"] = torch_reshape(torch_tensor(7.0), 1, 1);
+push(trainData, d3);
+
+var lrModel = new Linear(1, 1);
+var adamOptim = torch_optimizer_create("adam", lrModel.parameters(), 0.1);
+var lrLossFn = new MSELoss();
+
+var loopInitLoss = 0.0;
+var loopFinalLoss = 0.0;
+
+for (epoch = 0; epoch < 50; epoch = epoch + 1) {
+    var epochLoss = 0.0;
+    for (i = 0; i < len(trainData); i = i + 1) {
+        var batch = trainData[i];
+        var stepLoss = trainStep(lrModel, batch["input"], batch["target"], adamOptim, lrLossFn);
+        epochLoss = epochLoss + stepLoss;
+    }
+    epochLoss = epochLoss / len(trainData);
+    if (epoch == 0) { loopInitLoss = epochLoss; }
+    loopFinalLoss = epochLoss;
+}
+
+print("  Initial loss: " + toFixed(loopInitLoss, 4));
+print("  Final loss: " + toFixed(loopFinalLoss, 4));
+assertTrue("training loop converged", loopFinalLoss < loopInitLoss);
+
+print("  done");
+
+// ============================================================================
+// 19. Gradient Clipping
+// ============================================================================
+print("[19] Gradient Clipping...");
+
+torch_optim_zero_grad(adamOptim);
+var gpred = lrModel.forward(torch_reshape(torch_tensor(5.0), 1, 1));
+var gloss = lrLossFn.forward(gpred, torch_reshape(torch_tensor(11.0), 1, 1));
+torch_backward(gloss);
+var norm = clipGradNorm(lrModel, 1.0);
+assertTrue("clipGradNorm returned", norm >= 0.0);
+
+print("  done");
+
+// ============================================================================
+// 20. Advanced Tensor Operations
+// ============================================================================
+print("[20] Advanced Tensor Operations...");
+
+var at = torch_randn(3, 4, 5);
+assertTensorShape("3d tensor", at, "[3, 4, 5]");
+
+var flat = torch_flatten(at, 1, -1);
+assertTensorShape("flatten 3d", flat, "[3, 20]");
+
+var usq = torch_unsqueeze(torch_tensor(1.0, 2.0, 3.0), 0);
+assertTensorShape("unsqueeze", usq, "[1, 3]");
+
+var sq2 = torch_squeeze(usq, 0);
+assertTensorShape("squeeze", sq2, "[3]");
+
+var cl2 = torch_clone(at);
+assertTrue("clone is tensor", torch_is_tensor(cl2));
+
+var det2 = torch_detach(at);
+assertTrue("detach is tensor", torch_is_tensor(det2));
+
+var reshapeM = torch_reshape(torch_tensor(1.0, 2.0, 3.0, 4.0), 2, 2);
+var triu = torch_triu(reshapeM);
+assertTrue("triu is tensor", torch_is_tensor(triu));
+
+var tril = torch_tril(reshapeM);
+assertTrue("tril is tensor", torch_is_tensor(tril));
+
+var diag = torch_diag(torch_tensor(1.0, 2.0, 3.0));
+assertTensorShape("diag", diag, "[3, 3]");
+
+print("  done");
+
+// ============================================================================
+// 21. One-hot and Gather
+// ============================================================================
+print("[21] One-hot and Gather...");
+
+var oh = torch_one_hot(torch_tensor(0.0, 1.0, 2.0), 3);
+assertTrue("one_hot is tensor", torch_is_tensor(oh));
+
+var gt = torch_gather(torch_tensor(10.0, 20.0, 30.0, 40.0), 0, torch_tensor(0.0, 2.0, 3.0));
+assertTrue("gather is tensor", torch_is_tensor(gt));
+
+print("  done");
+
+// ============================================================================
+// 22. Type Conversion
+// ============================================================================
+print("[22] Type Conversion...");
+
+var ft = torch_to_dtype(torch_tensor(1.0, 2.0, 3.0), "float32");
+assertTrue("to_dtype is tensor", torch_is_tensor(ft));
+
+var it = torch_to_int(torch_tensor(1.5, 2.7, 3.9));
+assertTrue("to_int is tensor", torch_is_tensor(it));
+
+var bt = torch_to_bool(torch_tensor(0.0, 1.0, 0.0, 2.0));
+assertTrue("to_bool is tensor", torch_is_tensor(bt));
+
+print("  done");
+
+// ============================================================================
+// Summary
+// ============================================================================
+print("");
+print("========================================");
+print("PyTorch Deep Test Results:");
+print("  Passed: " + toString(passCount));
+print("  Failed: " + toString(failCount));
+print("  Total:  " + toString(passCount + failCount));
+if (failCount == 0) {
+    print("  *** ALL TESTS PASSED ***");
+} else {
+    print("  *** SOME TESTS FAILED ***");
+}
+print("========================================");

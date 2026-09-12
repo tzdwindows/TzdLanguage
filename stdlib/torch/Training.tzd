@@ -1,0 +1,271 @@
+// ============================================================================
+// Training.tzd - Training loop utilities and helpers
+// Provides a simple training loop, learning rate scheduling,
+// gradient clipping, and model evaluation utilities.
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+
+// Create an optimizer for a model's parameters
+// typeStr: "adam", "sgd", "adamw", "rmsprop", "adagrad"
+fun createOptimizer(model, typeStr, lr) {
+    var params = model.parameters();
+    return torch_optimizer_create(typeStr, params, lr);
+}
+
+// Create SGD optimizer
+fun sgd(model, lr, momentum, weightDecay) {
+    var params = model.parameters();
+    var m = 0.0;
+    var wd = 0.0;
+    if (momentum != null) { m = momentum; }
+    if (weightDecay != null) { wd = weightDecay; }
+    return torch_optimizer_create("sgd", params, lr, m, wd);
+}
+
+// Create Adam optimizer
+fun adam(model, lr, beta1, beta2, weightDecay) {
+    var params = model.parameters();
+    var b1 = 0.9;
+    var b2 = 0.999;
+    var wd = 0.0;
+    if (beta1 != null) { b1 = beta1; }
+    if (beta2 != null) { b2 = beta2; }
+    if (weightDecay != null) { wd = weightDecay; }
+    return torch_optimizer_create("adam", params, lr, b1, b2, wd);
+}
+
+// Create AdamW optimizer
+fun adamW(model, lr, weightDecay) {
+    var params = model.parameters();
+    var wd = 0.01;
+    if (weightDecay != null) { wd = weightDecay; }
+    return torch_optimizer_create("adamw", params, lr, wd);
+}
+
+// Create RMSprop optimizer
+fun rmsprop(model, lr, alpha, eps) {
+    var params = model.parameters();
+    var a = 0.99;
+    var e = 0.00000001;
+    if (alpha != null) { a = alpha; }
+    if (eps != null) { e = eps; }
+    return torch_optimizer_create("rmsprop", params, lr, a, e);
+}
+
+// Simple learning rate scheduler: reduce LR by factor every step_size epochs
+class StepLR {
+    var ptr optimizer;
+    var int step_size;
+    var float gamma;
+    var int epoch;
+    var float base_lr;
+
+    StepLR(optimizer, step_size, gamma) {
+        this.optimizer = optimizer;
+        this.step_size = step_size;
+        this.gamma = gamma;
+        this.epoch = 0;
+        this.base_lr = 0.001;
+    }
+
+    StepLR(optimizer, step_size, gamma, base_lr) {
+        this.optimizer = optimizer;
+        this.step_size = step_size;
+        this.gamma = gamma;
+        this.epoch = 0;
+        this.base_lr = base_lr;
+    }
+
+    fun step() {
+        this.epoch = this.epoch + 1;
+        // Note: actual LR adjustment requires access to optimizer param groups
+        // This is a placeholder for the scheduling logic
+    }
+
+    fun getLR() {
+        var num_steps = this.epoch / this.step_size;
+        return this.base_lr * pow(this.gamma, num_steps);
+    }
+}
+
+// Exponential LR scheduler: LR = base_lr * gamma^epoch
+class ExponentialLR {
+    var ptr optimizer;
+    var float gamma;
+    var int epoch;
+    var float base_lr;
+
+    ExponentialLR(optimizer, gamma, base_lr) {
+        this.optimizer = optimizer;
+        this.gamma = gamma;
+        this.base_lr = base_lr;
+        this.epoch = 0;
+    }
+
+    fun step() {
+        this.epoch = this.epoch + 1;
+    }
+
+    fun getLR() {
+        return this.base_lr * pow(this.gamma, this.epoch);
+    }
+}
+
+// Cosine annealing LR scheduler
+class CosineAnnealingLR {
+    var ptr optimizer;
+    var int T_max;
+    var float eta_min;
+    var int epoch;
+    var float base_lr;
+
+    CosineAnnealingLR(optimizer, T_max, eta_min, base_lr) {
+        this.optimizer = optimizer;
+        this.T_max = T_max;
+        this.eta_min = eta_min;
+        this.base_lr = base_lr;
+        this.epoch = 0;
+    }
+
+    fun step() {
+        this.epoch = this.epoch + 1;
+    }
+
+    fun getLR() {
+        if (this.epoch >= this.T_max) {
+            return this.eta_min;
+        }
+        var cos_factor = cos(PI * this.epoch / this.T_max);
+        return this.eta_min + (this.base_lr - this.eta_min) * (1.0 + cos_factor) / 2.0;
+    }
+}
+
+// Gradient clipping by norm
+fun clipGradNorm(model, maxNorm) {
+    var params = model.parameters();
+    return torch_clip_grad_norm(params, maxNorm);
+}
+
+// Gradient clipping by value
+fun clipGradValue(model, clipValue) {
+    var params = model.parameters();
+    torch_clip_grad_value(params, clipValue);
+}
+
+// Training step: forward, loss, backward, step
+// Returns the loss value
+fun trainStep(model, input, target, optimizer, lossFn) {
+    torch_optim_zero_grad(optimizer);
+    var output = model.forward(input);
+    var loss = lossFn.forward(output, target);
+    torch_backward(loss);
+    torch_optim_step(optimizer);
+    return torch_scalar_value(loss);
+}
+
+// Evaluate model on data (no gradient computation)
+fun evaluate(model, input, target, lossFn) {
+    var oldGrad = torch_is_grad_enabled();
+    torch_set_grad_enabled(false);
+    var output = model.forward(input);
+    var loss = lossFn.forward(output, target);
+    torch_set_grad_enabled(oldGrad);
+    return torch_scalar_value(loss);
+}
+
+// Full training loop
+// model: the Module to train
+// data: array of {input, target} pairs
+// optimizer: optimizer handle
+// lossFn: loss Module
+// epochs: number of epochs
+// verbose: print progress (default true)
+fun trainLoop(model, data, optimizer, lossFn, epochs) {
+    var verbose = true;
+    var n = len(data);
+    var totalSteps = epochs * n;
+
+    for (epoch = 0; epoch < epochs; epoch = epoch + 1) {
+        var epochLoss = 0.0;
+        var correct = 0;
+
+        for (i = 0; i < n; i = i + 1) {
+            var batch = data[i];
+            var input = batch["input"];
+            var target = batch["target"];
+
+            torch_optim_zero_grad(optimizer);
+            var output = model.forward(input);
+            var loss = lossFn.forward(output, target);
+            torch_backward(loss);
+            torch_optim_step(optimizer);
+
+            epochLoss = epochLoss + torch_scalar_value(loss);
+        }
+
+        var avgLoss = epochLoss / n;
+        if (verbose) {
+            print("Epoch " + toString(epoch + 1) + "/" + toString(epochs) + " - loss: " + toFixed(avgLoss, 4));
+        }
+    }
+}
+
+// Early stopping utility
+class EarlyStopping {
+    var int patience;
+    var float min_delta;
+    var float best_loss;
+    var int counter;
+    var bool should_stop;
+
+    EarlyStopping(patience) {
+        this.patience = patience;
+        this.best_loss = INF;
+        this.counter = 0;
+        this.should_stop = false;
+    }
+
+    EarlyStopping(patience, min_delta) {
+        this.patience = patience;
+        this.min_delta = min_delta;
+        this.best_loss = INF;
+        this.counter = 0;
+        this.should_stop = false;
+    }
+
+    fun step(loss) {
+        if (loss < this.best_loss - this.min_delta) {
+            this.best_loss = loss;
+            this.counter = 0;
+        } else {
+            this.counter = this.counter + 1;
+            if (this.counter >= this.patience) {
+                this.should_stop = true;
+            }
+        }
+        return this.should_stop;
+    }
+
+    fun shouldStop() {
+        return this.should_stop;
+    }
+}
+
+// Model summary: print parameter count and layer info
+fun modelSummary(model) {
+    var params = model.parameters();
+    var numParams = torch_count_params(params);
+    print("Model: " + model.getName());
+    print("Total parameters: " + toString(numParams));
+    print("Trainable parameters: " + toString(numParams));
+    var modNames = model.moduleNames();
+    print("Sub-modules:");
+    for (i = 0; i < len(modNames); i = i + 1) {
+        var submod = model.getModule(modNames[i]);
+        print("  " + modNames[i] + ": " + submod.getName() + " (" + toString(submod.numParams()) + " params)");
+    }
+    return numParams;
+}

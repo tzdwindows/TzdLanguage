@@ -378,7 +378,9 @@ extern "C" void tzdTensorRelease(void* ptr) {
 #include <omp.h>
 
 // ---- CUDA kernel source (compiled at runtime by NVRTC) ----
-static const char* s_nttKernelSrc = R"CUDA(
+static std::string getNttKernelSrc() {
+    std::string s;
+    s += R"CUDA(
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
@@ -705,7 +707,8 @@ void stockham_row_ntt_2048(u32* dst, const u32* src, const u32* twiddles,
     row_out[tid + 1024] = out2;
     row_out[tid + 1536] = out3;
 }
-
+)CUDA";
+    s += R"CUDA(
 // General Radix-2 fallback for other sizes
 extern "C" __global__
 void stockham_row_ntt(u32* dst, const u32* src, const u32* twiddles,
@@ -782,6 +785,7 @@ void transpose_twiddle(u32* dst, const u32* src,
 
     if (x < Cols && y < Rows) {
         u32 val = __ldg(&src[(size_t)y * Cols + x]);
+        if (val >= P) val -= P;
         if (twiddles) {
             int lane = threadIdx.x;
             u32 k0 = (u32)(((size_t)y * (blockIdx.x * 32)) & (N - 1));
@@ -802,8 +806,8 @@ void transpose_twiddle(u32* dst, const u32* src,
             tw_base = __shfl_sync(0xffffffff, tw_base, 0);
             tw_step = __shfl_sync(0xffffffff, tw_step, 0);
 
-            u32 p = tw_step;
-            u32 my_pow = (lane == 0) ? (u32)(((u64)1 << 32) % P) : p;
+            u32 step_tw = tw_step;
+            u32 my_pow = (lane == 0) ? (u32)(((u64)1 << 32) % P) : step_tw;
             #pragma unroll
             for (int offset = 1; offset < 32; offset <<= 1) {
                 u32 left = __shfl_up_sync(0xffffffff, my_pow, offset);
@@ -903,9 +907,40 @@ void crt_decompose(u32* d_d0, u32* d_d1, u32* d_d2,
 }
 
 extern "C" __global__
+void carry_round1(u32* d_rem1, u32* d_c1,
+                  const u32* d_d0, const u32* d_d1, const u32* d_d2,
+                  int n) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < n;
+         i += gridDim.x * blockDim.x) {
+        u32 v0 = d_d0[i];
+        u32 v1 = (i >= 1) ? d_d1[i - 1] : 0;
+        u32 v2 = (i >= 2) ? d_d2[i - 2] : 0;
+        u32 V = v0 + v1 + v2;
+        d_rem1[i] = V % 1000000000U;
+        d_c1[i] = V / 1000000000U;
+    }
+}
+
+extern "C" __global__
+void carry_round2(u32* d_rem2, u32* d_c2,
+                  const u32* d_rem1, const u32* d_c1,
+                  int n) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < n;
+         i += gridDim.x * blockDim.x) {
+        u32 rem = d_rem1[i];
+        u32 cin = (i >= 1) ? d_c1[i - 1] : 0;
+        u32 V = rem + cin;
+        d_rem2[i] = V % 1000000000U;
+        d_c2[i] = V / 1000000000U;
+    }
+}
+
+extern "C" __global__
 void carry_scan_phase1(u32* d_local_g, u32* d_local_p,
                        u32* d_block_g, u32* d_block_p,
-                       const u32* d_d0, const u32* d_d1, const u32* d_d2,
+                       const u32* d_rem2, const u32* d_c2,
                        int n) {
     int b = blockIdx.x;
     int tid = threadIdx.x;
@@ -913,12 +948,8 @@ void carry_scan_phase1(u32* d_local_g, u32* d_local_p,
 
     u32 g = 0, p = 0;
     if (i < n) {
-        u32 d0 = d_d0[i];
-        u32 d1 = (i >= 1) ? d_d1[i - 1] : 0;
-        u32 d2 = (i >= 2) ? d_d2[i - 2] : 0;
-        u32 v = d0 + d1 + d2;
-        g = (v >= 1000000000U) ? 1 : 0;
-        p = (v == 999999999U) ? 1 : 0;
+        g = (i > 0) ? d_c2[i - 1] : 0;
+        p = (i > 0) ? (d_rem2[i - 1] == 999999999U ? 1 : 0) : 0;
     }
 
     int lane = tid & 31;
@@ -978,74 +1009,21 @@ void carry_scan_phase1(u32* d_local_g, u32* d_local_p,
 
 extern "C" __global__
 void carry_scan_phase2(u32* d_block_carry, const u32* d_block_g, const u32* d_block_p, int num_blocks) {
-    int tid = threadIdx.x;
-    int lane = tid & 31;
-    int warp_id = tid >> 5;
-
-    u32 g_th = 0, p_th = 1;
-    int base = tid * 8;
-    #pragma unroll
-    for (int k = 0; k < 8; k++) {
-        int idx = base + k;
-        if (idx < num_blocks) {
-            u32 bg = d_block_g[idx];
-            u32 bp = d_block_p[idx];
-            g_th = bg | (bp & g_th);
-            p_th = bp & p_th;
-        }
-    }
-
-    #pragma unroll
-    for (int offset = 1; offset < 32; offset <<= 1) {
-        u32 g_left = __shfl_up_sync(0xffffffff, g_th, offset);
-        u32 p_left = __shfl_up_sync(0xffffffff, p_th, offset);
-        if (lane >= offset) {
-            g_th = g_th | (p_th & g_left);
-            p_th = p_th & p_left;
-        }
-    }
-
-    __shared__ u32 s_wg[16];
-    if (lane == 31) {
-        s_wg[warp_id] = g_th;
-    }
-    __syncthreads();
-
-    if (warp_id == 0 && lane < 16) {
-        u32 wg = s_wg[lane];
-        #pragma unroll
-        for (int offset = 1; offset < 16; offset <<= 1) {
-            u32 wg_left = __shfl_up_sync(0x0000ffff, wg, offset);
-            if (lane >= offset) {
-                wg = wg | wg_left;
-            }
-        }
-        s_wg[lane] = wg;
-    }
-    __syncthreads();
-
-    u32 warp_cin = (warp_id > 0) ? s_wg[warp_id - 1] : 0;
-    u32 lane_g = (lane > 0) ? __shfl_up_sync(0xffffffff, g_th, 1) : 0;
-    u32 lane_p = (lane > 0) ? __shfl_up_sync(0xffffffff, p_th, 1) : 1;
-    u32 C_tid = lane_g | (lane_p & warp_cin);
-    if (tid == 0) C_tid = 0;
-
-    u32 cin = C_tid;
-    #pragma unroll
-    for (int k = 0; k < 8; k++) {
-        int idx = base + k;
-        if (idx < num_blocks) {
-            d_block_carry[idx] = cin;
-            u32 bg = d_block_g[idx];
-            u32 bp = d_block_p[idx];
-            cin = bg | (bp & cin);
+    if (threadIdx.x == 0) {
+        u32 running_g = 0;
+        d_block_carry[0] = 0;
+        for (int b = 0; b < num_blocks - 1; b++) {
+            u32 bg = d_block_g[b];
+            u32 bp = d_block_p[b];
+            running_g = bg | (bp & running_g);
+            d_block_carry[b + 1] = running_g;
         }
     }
 }
 
 extern "C" __global__
 void carry_scan_phase3(u32* d_result,
-                       const u32* d_d0, const u32* d_d1, const u32* d_d2,
+                       const u32* d_rem2,
                        const u32* d_local_g, const u32* d_local_p,
                        const u32* d_block_carry,
                        int n) {
@@ -1054,19 +1032,15 @@ void carry_scan_phase3(u32* d_result,
     int i = b * 512 + tid;
     if (i >= n) return;
 
-    u32 d0 = d_d0[i];
-    u32 d1 = (i >= 1) ? d_d1[i - 1] : 0;
-    u32 d2 = (i >= 2) ? d_d2[i - 2] : 0;
-    u32 v = d0 + d1 + d2;
-
     u32 cin = d_block_carry[b];
-    u32 carry_in = (tid == 0) ? cin : (d_local_g[i - 1] | (d_local_p[i - 1] & cin));
-
-    u32 val = v + carry_in;
-    while (val >= 1000000000U) val -= 1000000000U;
+    u32 C_i = d_local_g[i] | (d_local_p[i] & cin);
+    u32 val = d_rem2[i] + C_i;
+    if (val >= 1000000000U) val -= 1000000000U;
     d_result[i] = val;
 }
 )CUDA";
+    return s;
+}
 
 struct NvrtcNttCtx {
     CUmodule mod = nullptr;
@@ -1077,6 +1051,8 @@ struct NvrtcNttCtx {
     CUfunction fn_pointwise_mul = nullptr;
     CUfunction fn_init_twiddles = nullptr;
     CUfunction fn_crt = nullptr;
+    CUfunction fn_carry_round1 = nullptr;
+    CUfunction fn_carry_round2 = nullptr;
     CUfunction fn_carry_scan_phase1 = nullptr;
     CUfunction fn_carry_scan_phase2 = nullptr;
     CUfunction fn_carry_scan_phase3 = nullptr;
@@ -1127,7 +1103,8 @@ static bool init_nvrtc_ntt() {
     snprintf(arch, sizeof(arch), "--gpu-architecture=compute_%d%d", maj, minn);
 
     nvrtcProgram prog;
-    nvrtcResult nres = nvrtcCreateProgram(&prog, s_nttKernelSrc, "ntt_stockham.cu", 0, nullptr, nullptr);
+    std::string kSrc = getNttKernelSrc();
+    nvrtcResult nres = nvrtcCreateProgram(&prog, kSrc.c_str(), "ntt_stockham.cu", 0, nullptr, nullptr);
     if (nres != NVRTC_SUCCESS) {
         fprintf(stderr, "[NVRTC Init] nvrtcCreateProgram failed: %d\n", (int)nres);
         return false;
@@ -1167,6 +1144,8 @@ static bool init_nvrtc_ntt() {
     cuModuleGetFunction(&g_nvrtcNtt.fn_pointwise_mul, g_nvrtcNtt.mod, "pointwise_mul");
     cuModuleGetFunction(&g_nvrtcNtt.fn_init_twiddles, g_nvrtcNtt.mod, "init_twiddles");
     cuModuleGetFunction(&g_nvrtcNtt.fn_crt, g_nvrtcNtt.mod, "crt_decompose");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_round1, g_nvrtcNtt.mod, "carry_round1");
+    cuModuleGetFunction(&g_nvrtcNtt.fn_carry_round2, g_nvrtcNtt.mod, "carry_round2");
     cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase1, g_nvrtcNtt.mod, "carry_scan_phase1");
     cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase2, g_nvrtcNtt.mod, "carry_scan_phase2");
     cuModuleGetFunction(&g_nvrtcNtt.fn_carry_scan_phase3, g_nvrtcNtt.mod, "carry_scan_phase3");
@@ -1178,6 +1157,8 @@ static bool init_nvrtc_ntt() {
                     g_nvrtcNtt.fn_pointwise_mul &&
                     g_nvrtcNtt.fn_init_twiddles &&
                     g_nvrtcNtt.fn_crt &&
+                    g_nvrtcNtt.fn_carry_round1 &&
+                    g_nvrtcNtt.fn_carry_round2 &&
                     g_nvrtcNtt.fn_carry_scan_phase1 &&
                     g_nvrtcNtt.fn_carry_scan_phase2 &&
                     g_nvrtcNtt.fn_carry_scan_phase3;
@@ -1209,6 +1190,10 @@ static uint32_t* d_tw_N2[3] = {nullptr, nullptr, nullptr};
 static uint32_t* d_d0 = nullptr;
 static uint32_t* d_d1 = nullptr;
 static uint32_t* d_d2 = nullptr;
+static uint32_t* d_rem1 = nullptr;
+static uint32_t* d_c1 = nullptr;
+static uint32_t* d_rem2 = nullptr;
+static uint32_t* d_c2 = nullptr;
 static uint32_t* d_local_g = nullptr;
 static uint32_t* d_local_p = nullptr;
 static uint32_t* d_block_g = nullptr;
@@ -1248,6 +1233,10 @@ static void ensure_device_buffers(int n) {
     if (d_d0) cudaFree(d_d0);
     if (d_d1) cudaFree(d_d1);
     if (d_d2) cudaFree(d_d2);
+    if (d_rem1) cudaFree(d_rem1);
+    if (d_c1) cudaFree(d_c1);
+    if (d_rem2) cudaFree(d_rem2);
+    if (d_c2) cudaFree(d_c2);
     if (d_local_g) cudaFree(d_local_g);
     if (d_local_p) cudaFree(d_local_p);
     if (d_block_g) cudaFree(d_block_g);
@@ -1258,6 +1247,10 @@ static void ensure_device_buffers(int n) {
     cudaMalloc(&d_d0, n * sizeof(uint32_t));
     cudaMalloc(&d_d1, n * sizeof(uint32_t));
     cudaMalloc(&d_d2, n * sizeof(uint32_t));
+    cudaMalloc(&d_rem1, n * sizeof(uint32_t));
+    cudaMalloc(&d_c1, n * sizeof(uint32_t));
+    cudaMalloc(&d_rem2, n * sizeof(uint32_t));
+    cudaMalloc(&d_c2, n * sizeof(uint32_t));
     cudaMalloc(&d_local_g, n * sizeof(uint32_t));
     cudaMalloc(&d_local_p, n * sizeof(uint32_t));
 
@@ -1349,35 +1342,50 @@ static void run_ntt_stream(int pi, uint32_t* d_in_out, uint32_t* d_sc,
         launch_row_ntt(d_in_out, d_in_out, d_tw_N[pi], n, log2N, num_rows, inv_flag, scale, p, p_inv, st);
     } else {
         if (!inv) {
-            // Forward NTT: 3 passes (no redundant transposes)
-            // Pass 1: Row NTT of length N2 on all N1 rows
-            launch_row_ntt(d_sc, d_in_out, d_tw_N2[pi], N2, k2, N1, 0, 0, p, p_inv, st);
-
-            // Pass 2: Transpose (N1 x N2 -> N2 x N1) with twiddle factor omega_N^(j1 * k2)
+            // Forward NTT: 4 passes (Bailey's 4-step FFT algorithm)
+            // Pass 1: Transpose (N1 x N2 -> N2 x N1) from d_in_out to d_sc (no twiddles)
             int inv0 = 0;
             uint32_t scale0 = 0;
-            void* args2[] = { &d_in_out, &d_sc, &N1, &N2, &n, &d_tw_N[pi], &inv0, &scale0, &p, &p_inv };
+            void* null_tw = nullptr;
+            void* args1[] = { &d_sc, &d_in_out, &N1, &N2, &n, &null_tw, &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N2 + 31) / 32, (N1 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args1, nullptr);
+
+            // Pass 2: Row NTT of length N1 on all N2 rows in d_sc
+            launch_row_ntt(d_sc, d_sc, d_tw_N1[pi], N1, k1, N2, 0, 0, p, p_inv, st);
+
+            // Pass 3: Transpose (N2 x N1 -> N1 x N2) with twiddle factor omega_N^(r * c) from d_sc to d_in_out
+            void* args3[] = { &d_in_out, &d_sc, &N2, &N1, &n, &d_tw_N[pi], &inv0, &scale0, &p, &p_inv };
+            cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
+                           (N1 + 31) / 32, (N2 + 31) / 32, 1,
+                           32, 32, 1, 0, st, args3, nullptr);
+
+            // Pass 4: Row NTT of length N2 on all N1 rows in d_in_out
+            launch_row_ntt(d_in_out, d_in_out, d_tw_N2[pi], N2, k2, N1, 0, 0, p, p_inv, st);
+        } else {
+            // Inverse NTT: 4 passes
+            // Pass 1: Inverse Row NTT of length N2 on all N1 rows in d_in_out (scale = 0)
+            launch_row_ntt(d_in_out, d_in_out, d_tw_N2[pi], N2, k2, N1, 1, 0, p, p_inv, st);
+
+            // Pass 2: Transpose (N1 x N2 -> N2 x N1) with inverse twiddle omega_N^(-r * c) from d_in_out to d_sc
+            int inv1 = 1;
+            uint32_t scale0 = 0;
+            void* args2[] = { &d_sc, &d_in_out, &N1, &N2, &n, &d_tw_N[pi], &inv1, &scale0, &p, &p_inv };
             cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
                            (N2 + 31) / 32, (N1 + 31) / 32, 1,
                            32, 32, 1, 0, st, args2, nullptr);
 
-            // Pass 3: Row NTT of length N1 on all N2 rows
-            launch_row_ntt(d_in_out, d_in_out, d_tw_N1[pi], N1, k1, N2, 0, 0, p, p_inv, st);
-        } else {
-            // Inverse NTT: 3 passes
-            // Pass 1: Inverse Row NTT of length N1 on all N2 rows
-            launch_row_ntt(d_in_out, d_in_out, d_tw_N1[pi], N1, k1, N2, 1, 0, p, p_inv, st);
+            // Pass 3: Inverse Row NTT of length N1 on all N2 rows in d_sc (scale = 0)
+            launch_row_ntt(d_sc, d_sc, d_tw_N1[pi], N1, k1, N2, 1, 0, p, p_inv, st);
 
-            // Pass 2: Inverse Transpose (N2 x N1 -> N1 x N2) with inverse twiddle factor omega_N^(-j1 * k2)
-            int inv1 = 1;
-            uint32_t scale0 = 0;
-            void* args2[] = { &d_sc, &d_in_out, &N2, &N1, &n, &d_tw_N[pi], &inv1, &scale0, &p, &p_inv };
+            // Pass 4: Transpose (N2 x N1 -> N1 x N2) with scale = inv_n_mont (no twiddles) from d_sc to d_in_out
+            int inv0 = 0;
+            void* null_tw = nullptr;
+            void* args4[] = { &d_in_out, &d_sc, &N2, &N1, &n, &null_tw, &inv0, &scale, &p, &p_inv };
             cuLaunchKernel(g_nvrtcNtt.fn_transpose_twiddle,
                            (N1 + 31) / 32, (N2 + 31) / 32, 1,
-                           32, 32, 1, 0, st, args2, nullptr);
-
-            // Pass 3: Inverse Row NTT of length N2 on all N1 rows, with scale 1/N
-            launch_row_ntt(d_in_out, d_sc, d_tw_N2[pi], N2, k2, N1, 1, scale, p, p_inv, st);
+                           32, 32, 1, 0, st, args4, nullptr);
         }
     }
 }
@@ -1521,27 +1529,26 @@ std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, 
                          (void*)&inv12, (void*)&inv123,
                          (void*)&p1_mod_p3,
                          (void*)&q_P1P2, (void*)&rem_P1P2 };
-    auto tc0 = std::chrono::steady_clock::now();
     cuLaunchKernel(g_nvrtcNtt.fn_crt, grid, 1, 1, blk, 1, 1, 0, st0, args_crt, nullptr);
-    if (g_bigTime) cudaStreamSynchronize((cudaStream_t)st0);
-    auto tc1 = std::chrono::steady_clock::now();
+
+    // Carry Reduction Round 1
+    void* args_cr1[] = { &d_rem1, &d_c1, &d_d0, &d_d1, &d_d2, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_round1, grid, 1, 1, blk, 1, 1, 0, st0, args_cr1, nullptr);
+
+    // Carry Reduction Round 2
+    void* args_cr2[] = { &d_rem2, &d_c2, &d_rem1, &d_c1, &n };
+    cuLaunchKernel(g_nvrtcNtt.fn_carry_round2, grid, 1, 1, blk, 1, 1, 0, st0, args_cr2, nullptr);
 
     // Kogge-Stone Parallel Carry Scan
     int num_blocks = (n + 511) / 512;
-    void* args_p1[] = { &d_local_g, &d_local_p, &d_block_g, &d_block_p, &d_d0, &d_d1, &d_d2, &n };
+    void* args_p1[] = { &d_local_g, &d_local_p, &d_block_g, &d_block_p, &d_rem2, &d_c2, &n };
     cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase1, num_blocks, 1, 1, 512, 1, 1, 0, st0, args_p1, nullptr);
-    if (g_bigTime) cudaStreamSynchronize((cudaStream_t)st0);
-    auto tc2 = std::chrono::steady_clock::now();
 
     void* args_p2[] = { &d_block_carry, &d_block_g, &d_block_p, &num_blocks };
     cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase2, 1, 1, 1, 512, 1, 1, 0, st0, args_p2, nullptr);
-    if (g_bigTime) cudaStreamSynchronize((cudaStream_t)st0);
-    auto tc3 = std::chrono::steady_clock::now();
 
-    void* args_p3[] = { &d_result, &d_d0, &d_d1, &d_d2, &d_local_g, &d_local_p, &d_block_carry, &n };
+    void* args_p3[] = { &d_result, &d_rem2, &d_local_g, &d_local_p, &d_block_carry, &n };
     cuLaunchKernel(g_nvrtcNtt.fn_carry_scan_phase3, num_blocks, 1, 1, 512, 1, 1, 0, st0, args_p3, nullptr);
-    if (g_bigTime) cudaStreamSynchronize((cudaStream_t)st0);
-    auto tc4 = std::chrono::steady_clock::now();
 
     // Transfer result back to host via pinned memory (transfer only necessary limbs)
     int max_possible_rl = (int)(la.size() + lb.size()) + 2;
@@ -1563,18 +1570,13 @@ std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, 
     auto t_end = std::chrono::steady_clock::now();
 
     if (g_bigTime) {
-        fprintf(stderr, "[GPU Detail] alloc=%.2fms twiddle=%.2fms pin=%.2fms launch=%.2fms ntt_wait=%.2fms crt_carry=%.2fms (crt=%.2f p1=%.2f p2=%.2f p3=%.2f d2h=%.2f) copy=%.2fms\n",
+        fprintf(stderr, "[GPU Detail] alloc=%.2fms twiddle=%.2fms pin=%.2fms launch=%.2fms ntt_wait=%.2fms crt_carry=%.2fms copy=%.2fms\n",
             std::chrono::duration<double, std::milli>(t_alloc - t_start).count(),
             std::chrono::duration<double, std::milli>(t_twiddle - t_alloc).count(),
             std::chrono::duration<double, std::milli>(t_pin - t_twiddle).count(),
             std::chrono::duration<double, std::milli>(t_launch - t_pin).count(),
             std::chrono::duration<double, std::milli>(t_ntt_wait - t_launch).count(),
             std::chrono::duration<double, std::milli>(t_crt_carry - t_ntt_wait).count(),
-            std::chrono::duration<double, std::milli>(tc1 - tc0).count(),
-            std::chrono::duration<double, std::milli>(tc2 - tc1).count(),
-            std::chrono::duration<double, std::milli>(tc3 - tc2).count(),
-            std::chrono::duration<double, std::milli>(tc4 - tc3).count(),
-            std::chrono::duration<double, std::milli>(t_crt_carry - tc4).count(),
             std::chrono::duration<double, std::milli>(t_end - t_crt_carry).count());
     }
 
@@ -1584,10 +1586,13 @@ std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, 
 
 // ---- GPU model detection: universal compatibility for all CC >= 6.0 GPUs ----
 bool g_forceGPU = false;
+bool g_forceCPU = false;
 bool g_bigTime = false;
 
 bool bigint_gpu_suitable(size_t digitCount) {
 #ifdef WITH_CUDA
+    // --forceCPU: never use GPU
+    if (g_forceCPU) return false;
     if (g_forceGPU) {
         if (!torch::cuda::is_available()) return false;
         init_nvrtc_ntt();

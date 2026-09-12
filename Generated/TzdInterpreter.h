@@ -233,6 +233,7 @@ bool bigint_fft_available();
 bool bigint_gpu_suitable(size_t digitCount = 0);
 void bigint_gpu_warmup(int target_n = 2097152);
 extern bool g_forceGPU;
+extern bool g_forceCPU;
 extern bool g_bigTime;
 
 // --- Rational (exact fraction) functions ---
@@ -559,6 +560,7 @@ public:
     bool m_antlrTiming = false; // --antlrTime: print ANTLR4 parse timings per script
     bool m_bigTime = false;     // --bigTime: print BIGINT operation phase timings
     bool m_forceGPU = false;    // --forceGPU: force GPU usage for BIGINT ops
+    bool m_forceCPU = false;    // --forceCPU: force CPU-only BIGINT ops (no GPU)
 
     // Bytecode VM integration: when set, script functions are executed
     // via the bytecode VM instead of tree-walking interpretation.

@@ -1,0 +1,14 @@
+fun main() {
+  var a = 10 ^ 32768;
+  var b = 10 ^ 32768;
+  var t1 = clock();
+  var c = a * b;
+  var t2 = clock();
+  print("mul 32768: " + toString((t2-t1)*1000) + "us");
+  var x = 10 ^ 65536;
+  var y = 10 ^ 65536;
+  var t3 = clock();
+  var z = x * y;
+  var t4 = clock();
+  print("mul 65536: " + toString((t4-t3)*1000) + "us");
+}

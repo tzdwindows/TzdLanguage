@@ -1,0 +1,6 @@
+print("hello");
+fun foo(a) {
+    return a + 1;
+}
+print(foo(5));
+print("done");

@@ -21,6 +21,13 @@ extern "C" __declspec(dllimport) int __stdcall SetConsoleCP(unsigned int);
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
 
+#if defined(_MSC_VER)
+#include <cstdlib>
+extern "C" {
+    double (*__imp_atof)(const char*) = atof;
+}
+#endif
+
 typedef void(__cdecl* TRASH_FREE)(void*);
 TRASH_FREE pStaticFree = nullptr;
 

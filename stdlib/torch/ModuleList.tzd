@@ -1,0 +1,39 @@
+// ============================================================================
+// ModuleList.tzd - ModuleList container holding an ordered list of sub-modules
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class ModuleList extends Module {
+    var ptr _items;
+
+    ModuleList() {
+        super("ModuleList");
+        this._items = range(0, 0, 1);
+    }
+
+    fun add(module) {
+        push(this._items, module);
+        this.registerModule("item_" + toString(len(this._items)), module);
+        return this;
+    }
+
+    fun get(index) { return this._items[index]; }
+    fun len() { return len(this._items); }
+
+    fun forward(x) {
+        var out = x;
+        for (i = 0; i < len(this._items); i = i + 1) {
+            var item = this._items[i];
+            out = item.forward(out);
+        }
+        return out;
+    }
+
+    fun forEach(fn) {
+        for (i = 0; i < len(this._items); i = i + 1) {
+            var item = this._items[i];
+            fn(item, i);
+        }
+    }
+}

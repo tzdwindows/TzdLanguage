@@ -1,0 +1,8 @@
+class Box {
+    var int val;
+    Box(v) { this.val = v; }
+}
+fun main() {
+    var b = new Box(42);
+    print("val = " + toString(b.val));
+}

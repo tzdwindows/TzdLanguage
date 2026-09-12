@@ -1,0 +1,23 @@
+print("=== Map Test ===");
+
+print("1. jsonParse...");
+var m = jsonParse("{}");
+print("   len: " + toString(len(mapKeys(m))));
+
+print("2. Map assign...");
+m["key"] = 42;
+print("   value: " + toString(m["key"]));
+
+print("3. torch_zeros...");
+var t = torch_zeros(1, 1);
+print("   shape: " + torch_shape(t));
+
+print("4. Map assign tensor...");
+m["tensor"] = t;
+print("   is tensor: " + toString(torch_is_tensor(m["tensor"])));
+
+print("5. torch_requires_grad...");
+torch_requires_grad(t, true);
+print("   OK");
+
+print("=== Done ===");

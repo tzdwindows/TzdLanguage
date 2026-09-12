@@ -1,0 +1,48 @@
+class Point {
+    var float x;
+    var float y;
+
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    fun distSq(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        return dx * dx + dy * dy;
+    }
+
+    fun move(dx, dy) {
+        this.x = this.x + dx;
+        this.y = this.y + dy;
+        return this;
+    }
+}
+
+print("=== Class Method Test ===");
+var p1 = new Point(0.0, 0.0);
+var p2 = new Point(3.0, 4.0);
+print("distSq = " + toString(p1.distSq(p2)));
+
+p1.move(1.0, 1.0);
+print("After move x=" + toString(p1.x) + " y=" + toString(p1.y));
+print("distSq2 = " + toString(p1.distSq(p2)));
+
+// Recursive class method
+class Counter {
+    var int count;
+    Counter() { this.count = 0; }
+    fun recurse(n) {
+        if (n <= 0) { return this.count; }
+        this.count = this.count + 1;
+        return this.recurse(n - 1);
+    }
+}
+
+var c = new Counter();
+print("Counter recurse(100) = " + toString(c.recurse(100)));
+print("Counter recurse(1000) = " + toString(c.recurse(1000)));
+
+print("=== Class tests passed! ===");
+exit;
