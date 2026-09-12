@@ -714,6 +714,9 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             if (!interpreter->scopes.empty() && interpreter->scopes[0].count("main")) {
                 TzdValue mainFunc = interpreter->scopes[0]["main"];
                 if (mainFunc.type == TzdValue::FUNCTION) {
+                    if (bigint_gpu_suitable(0)) {
+                        bigint_gpu_warmup(2097152);
+                    }
                     interpreter->callFunction(mainFunc, {});
                 }
             }

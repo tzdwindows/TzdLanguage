@@ -230,7 +230,8 @@ std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, 
 std::vector<uint64_t> limbs_from_str(const std::string& s);
 std::string limbs_to_str(const std::vector<uint64_t>& limbs);
 bool bigint_fft_available();
-bool bigint_gpu_suitable(size_t digitCount);
+bool bigint_gpu_suitable(size_t digitCount = 0);
+void bigint_gpu_warmup(int target_n = 2097152);
 extern bool g_forceGPU;
 extern bool g_bigTime;
 

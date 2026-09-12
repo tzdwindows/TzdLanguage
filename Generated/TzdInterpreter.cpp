@@ -1075,10 +1075,11 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
     bool bigTime = g_CurrentInterpreter && g_CurrentInterpreter->m_bigTime;
 
     bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
-    std::string aa = bigint_abs(a), bb = bigint_abs(b);
-    if (bigint_too_large(aa.size() + bb.size())) return "inf";
+    size_t a_digits = (a.empty() || a[0] != '-') ? a.size() : a.size() - 1;
+    size_t b_digits = (b.empty() || b[0] != '-') ? b.size() : b.size() - 1;
+    if (bigint_too_large(a_digits + b_digits)) return "inf";
     std::string r;
-    size_t maxDigits = aa.size() > bb.size() ? aa.size() : bb.size();
+    size_t maxDigits = a_digits > b_digits ? a_digits : b_digits;
 
     // GPU check (first call initializes CUDA runtime — keep out of timing)
     g_forceGPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceGPU);
@@ -1086,7 +1087,7 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
     bool useGPU = bigint_gpu_suitable(maxDigits);
 
     auto bt0 = std::chrono::steady_clock::now();
-    auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
+    auto la = limbs_from_str(a), lb = limbs_from_str(b);
     auto bt1 = std::chrono::steady_clock::now();
 
     std::vector<uint64_t> lr;
@@ -2474,6 +2475,10 @@ void TzdInterpreter::loadScriptFromFile(const std::string& filePath) {
 
     m_scriptPathStack.push_back(fs::absolute(filePath));
 
+    if (code.size() > 50000 && bigint_gpu_suitable(0)) {
+        bigint_gpu_warmup(2097152);
+    }
+
     try {
         this->loadScript(code);
     }
@@ -3694,7 +3699,9 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
 
     // --- BIGINT arithmetic ---
     if (needs_bigint(left, right)) {
-        std::string a = to_bigint_str(left), b = to_bigint_str(right);
+        std::string tmpA, tmpB;
+        const std::string& a = (left.type == TzdValue::BIGINT || left.type == TzdValue::STRING) ? left.sVal : (tmpA = to_bigint_str(left));
+        const std::string& b = (right.type == TzdValue::BIGINT || right.type == TzdValue::STRING) ? right.sVal : (tmpB = to_bigint_str(right));
         if (ctx->MUL()) {
             std::string r = bigint_mul(a, b);
             if (r == "inf") return TzdValue(std::numeric_limits<double>::infinity());
