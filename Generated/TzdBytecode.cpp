@@ -806,6 +806,21 @@ std::any TzdBytecodeCompiler::visitTryCatchStmt(TzdLangParser::TryCatchStmtConte
 // ============================================================================
 std::any TzdBytecodeCompiler::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
     std::string raw = ctx->getText();
+    // Fast path: skip stoll for >19 digit numbers (stoll reads the WHOLE string before throwing)
+    size_t digitStart = (raw.size() > 0 && (raw[0] == '-' || raw[0] == '+')) ? 1 : 0;
+    bool isHex = (raw.size() > 2 + digitStart && raw[digitStart] == '0' &&
+                  (raw[digitStart+1] == 'x' || raw[digitStart+1] == 'X'));
+    if (!isHex && raw.size() - digitStart > 19) {
+        // Directly store as BIGINT constant — no stoll, no validation loop
+        ConstEntry ce;
+        ce.type = ConstEntry::BIGINT;
+        ce.sVal = std::move(raw);
+        ce.iVal = 0;
+        ce.dVal = 0;
+        ce.bVal = false;
+        emit(OpCode::PUSH_INT, addConstant(ce));
+        return std::any();
+    }
     int64_t val = 0;
     try {
         val = std::stoll(raw, nullptr, 0);
@@ -818,7 +833,6 @@ std::any TzdBytecodeCompiler::visitIntExpr(TzdLangParser::IntExprContext* ctx) {
             if (raw[i] < '0' || raw[i] > '9') { valid = false; break; }
         }
         if (valid && raw.size() > start + 1) {
-            // Store as BIGINT constant (raw digit string)
             ConstEntry ce;
             ce.type = ConstEntry::BIGINT;
             ce.sVal = raw;

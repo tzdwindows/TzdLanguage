@@ -161,6 +161,8 @@ void tzdPoolSlotReleaseInstance(TzdValue* v) {
 #include <unordered_map>
 #include <stdint.h>
 #include <intrin.h>  // _umul128, _udiv128 for 128-bit carry handling
+#include <mutex>
+#include <thread>
 
 // ============================================================================
 // uint64_t[] limb-based BIGINT arithmetic (base 10^9, LSB-first)
@@ -195,17 +197,34 @@ static std::vector<uint64_t> limbs_from_str(const std::string& s) {
 
 static std::string limbs_to_str(const std::vector<uint64_t>& limbs) {
     if (limbs.empty()) return "0";
-    // Build from MSB (last limb) to LSB (first limb)
+    size_t sz = limbs.size();
+    // Pre-allocate exact size, write directly into buffer (avoids snprintf overhead)
     std::string r;
-    r.reserve(limbs.size() * LIMB_DIGITS + 1);
-    // First (most significant) limb — no leading zeros
-    r += std::to_string(limbs.back());
-    // Remaining limbs — zero-padded to 9 digits
-    char buf[16];
-    for (int i = (int)limbs.size() - 2; i >= 0; i--) {
-        snprintf(buf, sizeof(buf), "%09llu", (unsigned long long)limbs[i]);
-        r += buf;
+    r.resize(sz * LIMB_DIGITS);
+    char* p = &r[0];
+    // First limb (MSB) -- variable length, no leading zeros
+    uint64_t top = limbs.back();
+    if (top == 0) { *p++ = '0'; }
+    else {
+        char tmp[12]; int tl = 0;
+        while (top > 0) { tmp[tl++] = '0' + (int)(top % 10); top /= 10; }
+        while (tl > 0) *p++ = tmp[--tl];  // reverse into output
     }
+    // Remaining limbs -- fixed 9 digits, zero-padded, direct write
+    for (int i = (int)sz - 2; i >= 0; i--) {
+        uint64_t v = limbs[i];
+        p[8] = '0' + (int)(v % 10); v /= 10;
+        p[7] = '0' + (int)(v % 10); v /= 10;
+        p[6] = '0' + (int)(v % 10); v /= 10;
+        p[5] = '0' + (int)(v % 10); v /= 10;
+        p[4] = '0' + (int)(v % 10); v /= 10;
+        p[3] = '0' + (int)(v % 10); v /= 10;
+        p[2] = '0' + (int)(v % 10); v /= 10;
+        p[1] = '0' + (int)(v % 10); v /= 10;
+        p[0] = '0' + (int)(v);
+        p += 9;
+    }
+    r.resize(p - &r[0]);
     return r;
 }
 
@@ -302,25 +321,41 @@ static std::vector<uint64_t> limbs_mul_karatsuba(const std::vector<uint64_t>& a,
 
 // --- 3-prime NTT for base 10^9 multiplication ---
 static const uint64_t NTT_P1 = 998244353, NTT_P2 = 985661441, NTT_P3 = 754974721;
-template<uint64_t P> static inline uint64_t nmul(uint64_t a, uint64_t b) { return (a*b)%P; }
+
+// Barrett reduction: replaces (a*b)%P with __umulh + subtract (~5 cycles vs ~30 cycles for div)
+// M = floor(2^64 / P). q = __umulh(prod, M) approximates prod/P. r = prod - q*P in [0, 2P).
+static inline uint64_t compute_barrett_m(uint64_t p) {
+    uint64_t d = UINT64_MAX / p, r = UINT64_MAX % p;
+    return (r == p - 1) ? (d + 1) : d;
+}
+template<uint64_t P>
+static inline uint64_t nmul(uint64_t a, uint64_t b) {
+    static const uint64_t M = compute_barrett_m(P);
+    uint64_t prod = a * b;
+    uint64_t q = __umulh(prod, M);
+    uint64_t r = prod - q * P;
+    if (r >= P) r -= P;
+    if (r >= P) r -= P;
+    return r;
+}
 template<uint64_t P> static inline uint64_t nadd(uint64_t a, uint64_t b) { uint64_t r=a+b; return r>=P?r-P:r; }
 template<uint64_t P> static inline uint64_t nsub(uint64_t a, uint64_t b) { return a>=b?a-b:a+P-b; }
 template<uint64_t P> static uint64_t npow(uint64_t b, uint64_t e) { uint64_t r=1;b%=P;while(e){if(e&1)r=nmul<P>(r,b);b=nmul<P>(b,b);e>>=1;}return r; }
 
 struct NR { std::vector<uint64_t> f, i; };
-static thread_local NR g_nr[3][24];
-static thread_local bool g_nr_ok[3][24] = {};
+static NR g_nr[3][24];
+static std::once_flag g_nr_once[3][24];
 
 template<uint64_t P, uint64_t G>
 static void ntt_init(int pi, int ln) {
-    if (g_nr_ok[pi][ln]) return;
-    size_t n = (size_t)1 << ln;
-    uint64_t w = npow<P>(G, (P-1)/n), wi = npow<P>(w, P-2);
-    auto& r = g_nr[pi][ln];
-    r.f.resize(n/2); r.i.resize(n/2);
-    uint64_t a=1, ai=1;
-    for (size_t j=0; j<n/2; j++) { r.f[j]=a; r.i[j]=ai; a=nmul<P>(a,w); ai=nmul<P>(ai,wi); }
-    g_nr_ok[pi][ln] = true;
+    std::call_once(g_nr_once[pi][ln], [&]() {
+        size_t n = (size_t)1 << ln;
+        uint64_t w = npow<P>(G, (P-1)/n), wi = npow<P>(w, P-2);
+        auto& r = g_nr[pi][ln];
+        r.f.resize(n/2); r.i.resize(n/2);
+        uint64_t a=1, ai=1;
+        for (size_t j=0; j<n/2; j++) { r.f[j]=a; r.i[j]=ai; a=nmul<P>(a,w); ai=nmul<P>(ai,wi); }
+    });
 }
 
 template<uint64_t P, uint64_t G>
@@ -330,123 +365,198 @@ static void ntt_xform(uint64_t* a, size_t n, bool inv, int pi) {
     ntt_init<P,G>(pi, ln);
     const uint64_t* rt = inv ? g_nr[pi][ln].i.data() : g_nr[pi][ln].f.data();
     for (size_t i=1,j=0; i<n; ++i) { size_t b=n>>1; for(;j&b;b>>=1)j^=b; j^=b; if(i<j)std::swap(a[i],a[j]); }
-
-    // Butterfly stages -- parallelized with OpenMP for n >= 4096.
-    // Flattened loop: each k in [0, n/2) maps to butterfly (group=k/h, idx=k%h).
-    // Since h is always a power of 2, k%h = k&(h-1) and k/h = k>>log2(h).
-    size_t half = n >> 1;
-    #pragma omp parallel if(n >= 4096)
-    {
-        for (size_t len=2; len<=n; len<<=1) {
-            size_t h=len/2, s=n/len;
-            size_t hmask=h-1, hshift=0; { size_t t=h; while(t>1){t>>=1;hshift++;} }
-            #pragma omp for schedule(static)
-            for (int k=0; k<(int)half; ++k) {
-                size_t j=(size_t)k & hmask;
-                size_t i=((size_t)k >> hshift) * len;
+    for (size_t len=2; len<=n; len<<=1) {
+        size_t h=len/2, s=n/len;
+        for (size_t i=0; i<n; i+=len)
+            for (size_t j=0; j<h; ++j) {
                 uint64_t w=rt[j*s], u=a[i+j], v=nmul<P>(a[i+j+h],w);
                 a[i+j]=nadd<P>(u,v); a[i+j+h]=nsub<P>(u,v);
             }
-        }
     }
     if (inv) { uint64_t ni=npow<P>(n,P-2); for(size_t i=0;i<n;i++)a[i]=nmul<P>(a[i],ni); }
 }
 
-// 3-prime NTT multiplication for base 10^9 limbs
+// ---- 4-step (cache-blocked) NTT for large transforms ----
+// When N exceeds L2/L3 cache, the standard NTT suffers from cache misses on
+// every butterfly. The 4-step Cooley-Tukey decomposition breaks N = N1*N2
+// into sub-transforms that fit in L1 cache (8KB each for N1=N2=1024).
+//
+// Steps: (1) row NTT of size N2, (2) twiddle multiply w^(i*j),
+//        (3) blocked transpose, (4) row NTT of size N1, (5) transpose back.
+
+// Blocked transpose: src is N1 x N2 (row-major), dst is N2 x N1 (row-major)
+// Block size 64x64 = 32KB (fits in L2 256KB), reduces block count vs 32x32
+static void blocked_transpose(uint64_t* dst, const uint64_t* src, size_t N1, size_t N2) {
+    const size_t B = 64;  // 64x64 block = 32KB, fits in L2
+    #pragma omp parallel for schedule(static) if(N1 > 256)
+    for (int bi = 0; bi < (int)N1; bi += (int)B) {
+        size_t bi_end = bi + B; if (bi_end > N1) bi_end = N1;
+        for (size_t bj = 0; bj < N2; bj += B) {
+            size_t bj_end = bj + B; if (bj_end > N2) bj_end = N2;
+            for (size_t i = bi; i < bi_end; i++) {
+                const uint64_t* src_row = src + i * N2;
+                for (size_t j = bj; j < bj_end; j++) {
+                    dst[j * N1 + i] = src_row[j];
+                }
+            }
+        }
+    }
+}
+
+template<uint64_t P, uint64_t G>
+static void ntt_xform_4step(uint64_t* a, size_t n, bool inv, int pi) {
+    if (n <= 1) return;
+    // Split n = N1 * N2, both powers of 2, roughly equal
+    int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
+    int k1 = (k + 1) / 2;
+    size_t N1 = (size_t)1 << k1;
+    size_t N2 = n / N1;
+
+    // N-th root of unity
+    uint64_t w = npow<P>(G, (P - 1) / n);
+    if (inv) w = npow<P>(w, P - 2);
+
+    // Step 1: N2-point NTT on each row (N1 rows, each 8KB for N2=1024)
+    for (size_t i = 0; i < N1; i++) {
+        ntt_xform<P, G>(a + i * N2, N2, inv, pi);
+    }
+
+    // Step 2: Twiddle multiplication: a[i*N2+j] *= w^(i*j)
+    // w^(i*j) = (w^i)^j. Precompute w^i for each row.
+    std::vector<uint64_t> wi(N1);
+    wi[0] = 1;
+    for (size_t i = 1; i < N1; i++) wi[i] = nmul<P>(wi[i - 1], w);
+    for (size_t i = 0; i < N1; i++) {
+        uint64_t wij = 1;  // w^(i*0)
+        const uint64_t wi_i = wi[i];
+        uint64_t* row = a + i * N2;
+        for (size_t j = 0; j < N2; j++) {
+            row[j] = nmul<P>(row[j], wij);
+            wij = nmul<P>(wij, wi_i);  // w^(i*(j+1))
+        }
+    }
+
+    // Step 3: Transpose N1 x N2 -> N2 x N1 (blocked for cache)
+    // Use thread_local buffer to avoid repeated 8MB allocations
+    static thread_local std::vector<uint64_t> tmp_buf;
+    if (tmp_buf.size() < n) tmp_buf.resize(n);
+    blocked_transpose(tmp_buf.data(), a, N1, N2);
+
+    // Step 4: N1-point NTT on each row of transposed matrix (N2 rows)
+    for (size_t j = 0; j < N2; j++) {
+        ntt_xform<P, G>(tmp_buf.data() + j * N1, N1, inv, pi);
+    }
+
+    // Step 5: Transpose back N2 x N1 -> N1 x N2
+    blocked_transpose(a, tmp_buf.data(), N2, N1);
+
+    // Inverse normalization (multiply by n^(-1) mod P)
+    if (inv) {
+        uint64_t ni = npow<P>(n, P - 2);
+        for (size_t i = 0; i < n; i++) a[i] = nmul<P>(a[i], ni);
+    }
+}
+
+// Unified NTT entry point: uses 4-step for large n, standard for small
+template<uint64_t P, uint64_t G>
+static void ntt_xform_auto(uint64_t* a, size_t n, bool inv, int pi) {
+    if (n <= 1) return;
+    if (n >= (1u << 18)) {  // 262K+ elements, 2MB+ — exceeds L2, use 4-step
+        ntt_xform_4step<P, G>(a, n, inv, pi);
+    } else {
+        ntt_xform<P, G>(a, n, inv, pi);
+    }
+}
 // Primes: P1=998244353 (gen 3), P2=985661441 (gen 5), P3=754974721 (gen 11)
 // CRT: x = r1 + P1*t1 + P1*P2*t2, carry handled with _umul128/_udiv128
 
-// Helper: modular multiply for runtime prime (not template)
-static inline uint64_t nmul_p(uint64_t p, uint64_t a, uint64_t b) { return (a * b) % p; }
+// Helper: modular multiply for runtime prime with Barrett reduction
+static inline uint64_t nmul_p(uint64_t p, uint64_t a, uint64_t b, uint64_t M) {
+    uint64_t prod = a * b;
+    uint64_t q = __umulh(prod, M);
+    uint64_t r = prod - q * p;
+    if (r >= p) r -= p;
+    if (r >= p) r -= p;
+    return r;
+}
 
 static std::vector<uint64_t> limbs_mul_ntt(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
     if (a.empty() || b.empty()) return {};
     size_t tot = a.size() + b.size(), n = 1;
     while (n < tot) n <<= 1;
-    // P3 supports NTT up to 2^24 (p-1 = 45*2^24), so n <= 2^24
     if (n > (1u << 24)) return limbs_mul_karatsuba(a, b); // fallback for extremely large
 
     uint64_t P1P2 = NTT_P1 * NTT_P2;
     uint64_t inv12 = npow<NTT_P2>(NTT_P1, NTT_P2 - 2);
     uint64_t inv123 = npow<NTT_P3>(P1P2 % NTT_P3, NTT_P3 - 2);
 
-    std::vector<uint64_t> result(n, 0);
-    // Process 3 primes -- each gives the convolution mod P_i
-    for (int pi = 0; pi < 3; pi++) {
+    // Lambda: runs the full NTT pipeline for one prime, returns the inverse-transformed array
+    auto run_prime = [&](int pi) -> std::vector<uint64_t> {
         uint64_t p = (pi == 0) ? NTT_P1 : (pi == 1) ? NTT_P2 : NTT_P3;
-        // Copy a and b into arrays mod p
+        uint64_t barrettM = compute_barrett_m(p);
         std::vector<uint64_t> ta(n, 0), tb(n, 0);
-        #pragma omp parallel for schedule(static) if(n >= 4096)
-        for (int i = 0; i < (int)a.size(); i++) ta[i] = a[i] % p;
-        #pragma omp parallel for schedule(static) if(n >= 4096)
-        for (int i = 0; i < (int)b.size(); i++) tb[i] = b[i] % p;
-        // Forward NTT
-        if (pi == 0) { ntt_xform<NTT_P1, 3>(ta.data(), n, false, 0); ntt_xform<NTT_P1, 3>(tb.data(), n, false, 0); }
-        else if (pi == 1) { ntt_xform<NTT_P2, 3>(ta.data(), n, false, 1); ntt_xform<NTT_P2, 3>(tb.data(), n, false, 1); }
-        else { ntt_xform<NTT_P3, 11>(ta.data(), n, false, 2); ntt_xform<NTT_P3, 11>(tb.data(), n, false, 2); }
-        // Pointwise multiply
-        #pragma omp parallel for schedule(static) if(n >= 4096)
-        for (int i = 0; i < (int)n; i++) ta[i] = nmul_p(p, ta[i], tb[i]);
-        // Inverse NTT
-        if (pi == 0) ntt_xform<NTT_P1, 3>(ta.data(), n, true, 0);
-        else if (pi == 1) ntt_xform<NTT_P2, 3>(ta.data(), n, true, 1);
-        else ntt_xform<NTT_P3, 11>(ta.data(), n, true, 2);
-        // CRT accumulation
-        if (pi == 0) {
-            #pragma omp parallel for schedule(static) if(n >= 4096)
-            for (int i = 0; i < (int)n; i++) result[i] = ta[i];  // store r1
-        } else if (pi == 1) {
-            // Combine with P1: x12 = r1 + P1 * ((r2 - r1) * inv12 mod P2)
-            #pragma omp parallel for schedule(static) if(n >= 4096)
-            for (int i = 0; i < (int)n; i++) {
-                uint64_t r1 = result[i], r2 = ta[i] % NTT_P2;
-                uint64_t t1 = nmul<NTT_P2>(nsub<NTT_P2>(r2, r1 % NTT_P2), inv12);
-                result[i] = r1 + NTT_P1 * t1;  // x12 < P1*P2
-            }
-        } else {
-            // Combine with P3 using 128-bit arithmetic for carry
-            // Split into parallel compute + sequential carry propagation
-            std::vector<uint64_t> partial_rem(n), partial_q(n);
-            #pragma omp parallel for schedule(static) if(n >= 4096)
-            for (int i = 0; i < (int)n; i++) {
-                uint64_t x12 = result[i];  // < P1*P2
-                uint64_t r3 = ta[i] % NTT_P3;
-                uint64_t t2 = nmul<NTT_P3>(nsub<NTT_P3>(r3, x12 % NTT_P3), inv123);
-                // total = x12 + P1P2 * t2 (128-bit)
-                uint64_t prod_hi, prod_lo;
-                prod_lo = _umul128(P1P2, t2, &prod_hi);
-                // Add x12 to (prod_hi, prod_lo)
-                uint64_t low = x12 + prod_lo;
-                if (low < x12) prod_hi++;  // carry from x12+prod_lo
-                // Divide 128-bit (prod_hi, low) by LIMB_BASE
-                uint64_t rem;
-                uint64_t q = _udiv128(prod_hi, low, LIMB_BASE, &rem);
-                partial_rem[i] = rem;
-                partial_q[i] = q;
-            }
-            // Sequential carry propagation (O(n) but very fast -- just add+div)
-            uint64_t carry = 0;
-            for (size_t i = 0; i < n; i++) {
-                uint64_t v = partial_rem[i] + carry;
-                result[i] = v % LIMB_BASE;
-                carry = partial_q[i] + (v / LIMB_BASE);
-            }
-            // Propagate remaining carry
-            size_t pos = n;
-            while (carry > 0) {
-                if (pos >= result.size()) result.push_back(0);
-                uint64_t v = result[pos] + carry;
-                result[pos] = v % LIMB_BASE;
-                carry = v / LIMB_BASE;
-                pos++;
-            }
-        }
+        for (size_t i = 0; i < a.size(); i++) ta[i] = a[i] % p;
+        for (size_t i = 0; i < b.size(); i++) tb[i] = b[i] % p;
+        if (pi == 0) { ntt_xform_auto<NTT_P1, 3>(ta.data(), n, false, 0); ntt_xform_auto<NTT_P1, 3>(tb.data(), n, false, 0); }
+        else if (pi == 1) { ntt_xform_auto<NTT_P2, 3>(ta.data(), n, false, 1); ntt_xform_auto<NTT_P2, 3>(tb.data(), n, false, 1); }
+        else { ntt_xform_auto<NTT_P3, 11>(ta.data(), n, false, 2); ntt_xform_auto<NTT_P3, 11>(tb.data(), n, false, 2); }
+        for (size_t i = 0; i < n; i++) ta[i] = nmul_p(p, ta[i], tb[i], barrettM);
+        if (pi == 0) ntt_xform_auto<NTT_P1, 3>(ta.data(), n, true, 0);
+        else if (pi == 1) ntt_xform_auto<NTT_P2, 3>(ta.data(), n, true, 1);
+        else ntt_xform_auto<NTT_P3, 11>(ta.data(), n, true, 2);
+        return ta;
+    };
+
+    // Run 3 primes in parallel using std::thread (3x speedup on multi-core)
+    std::vector<uint64_t> r0, r1, r2;
+    std::thread t0([&]() { r0 = run_prime(0); });
+    std::thread t1([&]() { r1 = run_prime(1); });
+    r2 = run_prime(2);  // current thread does prime 3
+    t0.join();
+    t1.join();
+
+    // CRT: combine r0 (mod P1), r1 (mod P2), r2 (mod P3) into result
+    // 3-loop approach: better ILP than merged loop (carry chain is isolated)
+    std::vector<uint64_t> result(n, 0);
+    // Step 1: x12 = r0 + P1 * ((r1 - r0) * inv12 mod P2)
+    for (size_t i = 0; i < n; i++) {
+        uint64_t rv1 = r0[i], rv2 = r1[i] % NTT_P2;
+        uint64_t t1v = nmul<NTT_P2>(nsub<NTT_P2>(rv2, rv1 % NTT_P2), inv12);
+        result[i] = rv1 + NTT_P1 * t1v;
+    }
+    // Step 2: compute partial remainder and quotient for each element
+    std::vector<uint64_t> partial_rem(n), partial_q(n);
+    for (size_t i = 0; i < n; i++) {
+        uint64_t x12 = result[i];
+        uint64_t r3 = r2[i] % NTT_P3;
+        uint64_t t2 = nmul<NTT_P3>(nsub<NTT_P3>(r3, x12 % NTT_P3), inv123);
+        uint64_t prod_hi, prod_lo;
+        prod_lo = _umul128(P1P2, t2, &prod_hi);
+        uint64_t low = x12 + prod_lo;
+        if (low < x12) prod_hi++;
+        uint64_t rem;
+        uint64_t q = _udiv128(prod_hi, low, LIMB_BASE, &rem);
+        partial_rem[i] = rem;
+        partial_q[i] = q;
+    }
+    // Step 3: sequential carry propagation (isolated dependency chain)
+    uint64_t carry = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t v = partial_rem[i] + carry;
+        result[i] = v % LIMB_BASE;
+        carry = partial_q[i] + (v / LIMB_BASE);
+    }
+    size_t pos = n;
+    while (carry > 0) {
+        if (pos >= result.size()) result.push_back(0);
+        uint64_t v = result[pos] + carry;
+        result[pos] = v % LIMB_BASE;
+        carry = v / LIMB_BASE;
+        pos++;
     }
     while (!result.empty() && result.back() == 0) result.pop_back();
     return result;
 }
-
-// limbs_mul dispatcher: school for small, NTT for large
 static std::vector<uint64_t> limbs_mul(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
     if (a.empty() || b.empty()) return {};
     size_t tot = a.size() + b.size();
@@ -956,29 +1066,44 @@ static std::string bigint_mul_school(const std::string& a, const std::string& b)
 }
 
 std::string bigint_mul(const std::string& a, const std::string& b) {
+    extern TzdInterpreter* g_CurrentInterpreter;
+    bool bigTime = g_CurrentInterpreter && g_CurrentInterpreter->m_bigTime;
+
     bool an = bigint_is_neg(a), bn = bigint_is_neg(b);
     std::string aa = bigint_abs(a), bb = bigint_abs(b);
     if (bigint_too_large(aa.size() + bb.size())) return "inf";
     std::string r;
-    // Dispatch: GPU NVRTC for very large on capable GPUs, else base 10^9 NTT for all sizes.
-    // Base 10^9 NTT has 2.25x fewer limbs than base 10^4 FFT, and with OpenMP it
-    // outperforms the old FFT path for sizes up to ~1M digits.
     size_t maxDigits = aa.size() > bb.size() ? aa.size() : bb.size();
-    if (maxDigits > 50000 && bigint_gpu_suitable(maxDigits)) {
-        // GPU NVRTC NTT — only for capable GPUs with sufficiently large numbers
+
+    // GPU check (first call initializes CUDA runtime — keep out of timing)
+    bool useGPU = bigint_gpu_suitable(maxDigits);
+
+    auto bt0 = std::chrono::steady_clock::now();
+
+    if (useGPU) {
         try { r = bigint_mul_fft(aa, bb); }
         catch (...) {
-            // GPU failed, fall back to base 10^9 NTT
             auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
             auto lr = limbs_mul(la, lb);
             r = limbs_to_str(lr);
         }
     } else {
-        // All sizes: use uint64_t[] limbs (base 10^9) with OpenMP NTT
         auto la = limbs_from_str(aa), lb = limbs_from_str(bb);
+        auto bt1 = std::chrono::steady_clock::now();
         auto lr = limbs_mul(la, lb);
+        auto bt2 = std::chrono::steady_clock::now();
         r = limbs_to_str(lr);
+        auto bt3 = std::chrono::steady_clock::now();
+        if (bigTime) {
+            fprintf(stderr, "[BigTime] digits=%zu  str2limb=%.2fms  ntt=%.2fms  limb2str=%.2fms  total=%.2fms\n",
+                    maxDigits,
+                    std::chrono::duration<double, std::milli>(bt1 - bt0).count(),
+                    std::chrono::duration<double, std::milli>(bt2 - bt1).count(),
+                    std::chrono::duration<double, std::milli>(bt3 - bt2).count(),
+                    std::chrono::duration<double, std::milli>(bt3 - bt0).count());
+        }
     }
+
     bool neg = an != bn;
     return (neg && r != "0") ? "-" + r : r;
 }

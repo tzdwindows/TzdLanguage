@@ -551,6 +551,8 @@ public:
     bool m_silentMode = false;
     bool m_noJit = false; // When true, disable all JIT compilation (interpreter-only mode)
     bool m_antlrTiming = false; // --antlrTime: print ANTLR4 parse timings per script
+    bool m_bigTime = false;     // --bigTime: print BIGINT operation phase timings
+    bool m_forceGPU = false;    // --forceGPU: force GPU usage for BIGINT ops
 
     // Bytecode VM integration: when set, script functions are executed
     // via the bytecode VM instead of tree-walking interpretation.

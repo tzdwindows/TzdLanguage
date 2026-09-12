@@ -625,6 +625,14 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         else if (arg == "--antlrTime") {
             interpreter->m_antlrTiming = true;
         }
+        // 4e. BIGINT 运算各阶段耗时输出
+        else if (arg == "--bigTime") {
+            interpreter->m_bigTime = true;
+        }
+        // 4f. 强制使用GPU进行大数运算
+        else if (arg == "--forceGPU") {
+            interpreter->m_forceGPU = true;
+        }
         // 5. 调试端口/主机
         else if (arg.rfind("--debug-port=", 0) == 0) {
             size_t eqPos = arg.find('=');
@@ -735,6 +743,7 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             if (arg == "-s" || arg == "--silent" ||
                 arg == "--noJit" || arg == "--no-jit" ||
                 arg == "--interpreter" || arg == "--tree-walk" ||
+                arg == "--antlrTime" || arg == "--bigTime" ||
                 arg.rfind("--debug-port=", 0) == 0 ||
                 arg.rfind("--debug-host=", 0) == 0 ||
                 arg.rfind("--debug-addr=", 0) == 0 ||
