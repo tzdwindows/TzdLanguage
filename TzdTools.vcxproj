@@ -175,6 +175,7 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClCompile Include="Generated\TzdNativeModule.cpp" />
     <ClCompile Include="Generated\TzdOop.cpp" />
     <ClCompile Include="Generated\TzdPyTorch.cpp" />
+    <ClCompile Include="Generated\TzdExperimentalCompute.cpp" />
     <ClCompile Include="Plots\pbPlots.cpp" />
     <ClCompile Include="Plots\supportLib.cpp" />
     <ClCompile Include="PdbReader.cpp" />
@@ -231,6 +232,7 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClInclude Include="Generated\TzdNativeModule.h" />
     <ClInclude Include="Generated\TzdOop.h" />
     <ClInclude Include="Generated\TzdPyTorch.h" />
+    <ClInclude Include="Generated\TzdExperimentalCompute.h" />
     <ClInclude Include="Plots\pbPlots.hpp" />
     <ClInclude Include="Plots\supportLib.hpp" />
     <ClInclude Include="PdbReader.h" />

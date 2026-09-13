@@ -637,6 +637,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         else if (arg == "--forceCPU") {
             interpreter->m_forceCPU = true;
         }
+        // 4h. 实验性运算（CPU自研极限NTT大数算法）
+        else if (arg == "--experimental-compute" || arg == "--experimentalCompute") {
+            interpreter->m_experimentalCompute = true;
+        }
         // 5. 调试端口/主机
         else if (arg.rfind("--debug-port=", 0) == 0) {
             size_t eqPos = arg.find('=');
@@ -751,6 +755,7 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
                 arg == "--noJit" || arg == "--no-jit" ||
                 arg == "--interpreter" || arg == "--tree-walk" ||
                 arg == "--antlrTime" || arg == "--bigTime" || arg == "--forceGPU" || arg == "--forceCPU" ||
+                arg == "--experimental-compute" || arg == "--experimentalCompute" ||
                 arg.rfind("--debug-port=", 0) == 0 ||
                 arg.rfind("--debug-host=", 0) == 0 ||
                 arg.rfind("--debug-addr=", 0) == 0 ||

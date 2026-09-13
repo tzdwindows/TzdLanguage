@@ -609,6 +609,9 @@ static std::vector<uint64_t> limbs_mul_ntt(const std::vector<uint64_t>& a, const
 }
 static std::vector<uint64_t> limbs_mul(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
     if (a.empty() || b.empty()) return {};
+    if (g_experimentalCompute) {
+        return bigint_mul_experimental_cpu_limbs(a, b);
+    }
     size_t tot = a.size() + b.size();
     // NTT threshold: 128 limbs (~1152 digits) -- with OpenMP, NTT is faster than
     // Karatsuba for these sizes
@@ -1130,6 +1133,13 @@ std::string bigint_mul(const std::string& a, const std::string& b) {
     g_forceGPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceGPU);
     g_forceCPU = (g_CurrentInterpreter && g_CurrentInterpreter->m_forceCPU);
     g_bigTime = bigTime;
+    g_experimentalCompute = (g_CurrentInterpreter && g_CurrentInterpreter->m_experimentalCompute);
+
+    // --experimental-compute: ultra-fast CPU Montgomery NTT engine
+    if (g_experimentalCompute) {
+        return bigint_mul_experimental_cpu_str(a, b);
+    }
+
     bool useGPU = bigint_gpu_suitable(maxDigits);
 
     auto bt0 = std::chrono::steady_clock::now();

@@ -236,6 +236,9 @@ void bigint_gpu_warmup(int target_n = 2097152);
 extern bool g_forceGPU;
 extern bool g_forceCPU;
 extern bool g_bigTime;
+extern bool g_experimentalCompute;
+std::string bigint_mul_experimental_cpu_str(const std::string& a, const std::string& b);
+std::vector<uint64_t> bigint_mul_experimental_cpu_limbs(const std::vector<uint64_t>& la, const std::vector<uint64_t>& lb);
 
 // --- Rational (exact fraction) functions ---
 // Stored as "num/den" in sVal. Uses BIGINT arithmetic for numerator/denominator.
@@ -562,6 +565,7 @@ public:
     bool m_bigTime = false;     // --bigTime: print BIGINT operation phase timings
     bool m_forceGPU = false;    // --forceGPU: force GPU usage for BIGINT ops
     bool m_forceCPU = false;    // --forceCPU: force CPU-only BIGINT ops (no GPU)
+    bool m_experimentalCompute = false; // --experimental-compute: use ultra-fast CPU Montgomery NTT engine
 
     // Bytecode VM integration: when set, script functions are executed
     // via the bytecode VM instead of tree-walking interpretation.
