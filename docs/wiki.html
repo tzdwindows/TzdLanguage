@@ -146,6 +146,12 @@
             <span>综合工程实战项目演练</span>
           </a>
         </li>
+        <li>
+          <a href="#ch13" class="sidebar-link">
+            <span class="sidebar-link-num">13</span>
+            <span>AOT 独立原生机器码编译器</span>
+          </a>
+        </li>
       </ul>
     </aside>
 
@@ -1155,6 +1161,152 @@ t2.<span class="fn">join</span>();
             <span class="pager-label">上一章</span>
             <span class="pager-title">← 11 虚拟机底层、JIT 与 GC 调优</span>
           </a>
+          <a href="#ch13" class="pager-btn next">
+            <span class="pager-label">下一章</span>
+            <span class="pager-title">13 AOT 独立原生机器码编译器 →</span>
+          </a>
+        </div>
+      </article>
+
+      <!-- CHAPTER 13 -->
+      <article id="ch13" class="wiki-article">
+        <div class="article-header">
+          <div class="article-badge">第十三篇 · 独立机器码编译</div>
+          <h1 class="article-title">AOT 独立原生机器码编译器 (零 DLL 外部依赖)</h1>
+          <p class="article-desc">彻底摆脱 Python/PyTorch/CUDA 运行时依赖！TzdLang AOT 独立原生编译器将 TzdLang 源码直接编译为静态链接纯净机器码 Windows x64 独立可执行程序（.exe），文件体积低至 ~300KB，零外部动态库依赖，支持 -O0 至 -O3 全链路性能优化。</p>
+        </div>
+
+        <div class="callout callout-tip">
+          <div class="callout-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+            <span>零外部 DLL 依赖设计架构</span>
+          </div>
+          <p>传统虚拟机分发方案通常携带数百兆乃至数吉字节的庞大依赖（如 LibTorch、CUDA 运行时）。TzdLang 原生 AOT 编译器采用<strong>轻量原生运行时 (TzdNativeRuntime.hpp)</strong> 与 <strong>C++20 静态链接 (/MT)</strong> 架构，生成的 .exe 仅依赖 Windows 内核自带的 <code>KERNEL32.dll</code>，可在任意同架构 Windows 系统直接双击运行！</p>
+        </div>
+
+        <h2>13.1 编译器核心架构原理</h2>
+        <p>AOT 编译管线由前端语法解析、原生代码生成器 (<code>TzdNativeCodegen</code>) 与 MSVC 后端编译驱动 (<code>TzdExeCompiler</code>) 协同构成：</p>
+        <div class="code-block-wrapper">
+          <pre class="code-pre"><code>[TzdLang 源码 .tzd]
+       │
+       ▼ (ANTLR4 词法分析与 AST 构建)
+[抽象语法树 (AST)]
+       │
+       ▼ (TzdNativeCodegen 原生翻译器)
+[纯净 C++20 机器码胶水源文件 (temp.cpp)]
+       │  + 头文件内联原生运行时 (TzdNativeRuntime.hpp)
+       │  + 静态 CRT 运行时库 (/MT /O2 /std:c++20)
+       ▼ (MSVC cl.exe + link.exe 静态编译)
+[独立原生二进制可执行程序 (.exe)] -> 仅依赖 KERNEL32.dll (约 300 KB)</code></pre>
+        </div>
+
+        <h2>13.2 命令行编译指令</h2>
+        <p>在安装了 MSVC 编译环境的机器上，使用 <code>tzd --build</code> 或简写 <code>tzd -b</code> 即可快速编译：</p>
+        <div class="code-block-wrapper">
+          <div class="code-block-header">
+            <span class="code-lang">Bash</span>
+            <button class="btn-copy-code" data-clipboard-text="tzd --build app.tzd -o myapp.exe -O3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>复制代码</span>
+            </button>
+          </div>
+          <pre class="code-pre"><code><span class="cm"># 1. 默认一键编译 (自动生成同名 app.exe)</span>
+tzd --build app.tzd
+
+<span class="cm"># 2. 自定义输出文件名与激进优化级别 (-O3 开启全程序链接期代码生成 LTCG)</span>
+tzd --build app.tzd -o release_app.exe -O3
+
+<span class="cm"># 3. 调试模式构建 (保留调试符号与快速编译)</span>
+tzd --build app.tzd -o debug_app.exe -O0</code></pre>
+        </div>
+
+        <h2>13.3 优化级别说明</h2>
+        <div class="table-responsive">
+          <table class="wiki-table">
+            <thead>
+              <tr>
+                <th>参数</th>
+                <th>优化策略</th>
+                <th>MSVC 编译器参数</th>
+                <th>适用场景</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>-O0</code></td>
+                <td>关闭优化</td>
+                <td><code>/Od /Ob0</code></td>
+                <td>快速构建验证、开发调试与单步排错</td>
+              </tr>
+              <tr>
+                <td><code>-O1</code></td>
+                <td>空间优先</td>
+                <td><code>/O1 /Os</code></td>
+                <td>追求极致微小二进制体积</td>
+              </tr>
+              <tr>
+                <td><code>-O2</code></td>
+                <td>速度优先 (默认)</td>
+                <td><code>/O2 /Oi /Ot /fp:fast</code></td>
+                <td>生产环境常规发布，最大化吞吐性能</td>
+              </tr>
+              <tr>
+                <td><code>-O3</code></td>
+                <td>激进全程序链接优化</td>
+                <td><code>/O2 /GL /LTCG /fp:fast</code></td>
+                <td>高负载密集计算，开启跨模块内联与链接期死码消除</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>13.4 性能基准测试与对比</h2>
+        <div class="table-responsive">
+          <table class="wiki-table">
+            <thead>
+              <tr>
+                <th>基准测试用例</th>
+                <th>TzdLang AOT 原生机器码</th>
+                <th>Python 3.12 解释器</th>
+                <th>体积对比</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>100 万次函数递归与调用</strong></td>
+                <td><strong>1.50 秒</strong></td>
+                <td>5.76 秒 (原生快 <strong>3.84x</strong>)</td>
+                <td>319 KB vs 几十MB环境</td>
+              </tr>
+              <tr>
+                <td><strong>100 万次累加算术循环</strong></td>
+                <td><strong>0.047 秒</strong></td>
+                <td>0.082 秒 (原生快 <strong>1.74x</strong>)</td>
+                <td>309 KB vs 独立环境</td>
+              </tr>
+              <tr>
+                <td><strong>斐波那契数列计算 (Fib 30)</strong></td>
+                <td><strong>0.012 秒</strong></td>
+                <td>0.155 秒 (原生快 <strong>12.9x</strong>)</td>
+                <td>299 KB vs 零 DLL</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-important">
+          <div class="callout-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+            <span>完整官方文档</span>
+          </div>
+          <p>更多关于 AOT 编译器的语法树映射、OOP 虚表与实例内存布局原理，请查阅完整 Wiki 文档：<a href="https://github.com/tzdwindows/TzdLanguage/wiki/AOT-Compiler-zh" target="_blank" style="color:var(--apple-blue); font-weight:600;">AOT 原生机器码编译器深度架构指南</a>。</p>
+        </div>
+
+        <div class="chapter-pager">
+          <a href="#ch12" class="pager-btn">
+            <span class="pager-label">上一章</span>
+            <span class="pager-title">← 12 综合工程实战项目演练</span>
+          </a>
           <a href="index.html#download" class="pager-btn next" style="background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.15);">
             <span class="pager-label" style="color:var(--apple-blue);">立即下载使用</span>
             <span class="pager-title" style="color:#fff;">获取 TzdTools v0.2.4 安装包</span>
@@ -1186,6 +1338,7 @@ t2.<span class="fn">join</span>();
           <li class="toc-item"><a href="#ch10">10. C/C++ 原生互操作 FFI</a></li>
           <li class="toc-item"><a href="#ch11">11. 虚拟机底层机理与调优</a></li>
           <li class="toc-item"><a href="#ch12">12. 综合工程实战项目演练</a></li>
+          <li class="toc-item"><a href="#ch13">13. AOT 原生机器码编译器</a></li>
         </ul>
       </div>
     </aside>
