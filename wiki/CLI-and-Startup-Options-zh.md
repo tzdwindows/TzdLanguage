@@ -113,6 +113,40 @@ flowchart LR
 TzdTools.exe --jit --runMainTzd="bench.tzd"
 ```
 
+#### `-O0` / `-O1` / `-O2` / `-O3` (默认 `-O3`)
+指定 JIT 编译器的全局优化等级：
+- `-O0`: 禁用优化通道与激进内联，极速生成机器码，适用于快速调试。
+- `-O1`: 启用局部表达式消除、常量折叠与基础简化。
+- `-O2`: 启用标准内联（阈值 250）、标量重组（SROA）与公共子表达式消除。
+- `-O3`: 默认等级。启用前端 AST 深度函数内联、LLVM 过程间 IPO 内联（阈值 500）、数学函数指令特化与循环展开。
+
+```cmd
+TzdTools.exe --jit -O3 --runMainTzd="bench.tzd"
+```
+
+#### `--inline-threshold=<N>` (默认 500)
+手动指定 LLVM 过程间内联的成本预算阈值。数值越大，允许内联的函数规模越大；反之则减小内联倾向。
+
+```cmd
+TzdTools.exe --jit --inline-threshold=800 --runMainTzd="heavy.tzd"
+```
+
+#### `--no-inline`
+禁用前端 AST 树级函数内联。
+
+#### `--no-jit-intrinsics`
+禁用数学函数（`sqrt`, `sin`, `cos` 等）的 FPU 硬件指令直接特化，使其退回标准运行时包装调用。
+
+#### `--no-unroll`
+禁用 LLVM 循环展开优化通道。
+
+#### `--jit-debug`
+启用 JIT 调试支持。在开启 JIT 硬件级性能的同时，配合调试器自动激活**函数级选择性回退（Selective Deoptimization）**：对设有断点的函数自动以解释器模式运行以触发断点，对其余无断点函数维持极限机器码速度。
+
+```cmd
+TzdTools.exe --jit --jit-debug -O3 --debug-port=54321 --runMainTzd="app.tzd"
+```
+
 #### `--noJit` 或 `--no-jit`
 强制关闭 JIT 实时编译优化，所有代码均在轻量级堆栈式字节码虚拟机（Bytecode VM）中执行。适合：
 - 内存受限的微型设备环境；

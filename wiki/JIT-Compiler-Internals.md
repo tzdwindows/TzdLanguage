@@ -79,3 +79,67 @@ Tested on Windows 11 x64 (AMD Ryzen / Intel Core):
 | Newton Square Root `sqrt(100k)` | **0.000006 s** | 0.000008 s | **TzdLang 1.3x faster** |
 | Field Read Loop `field(100k)` | 0.002 s | 0.0005 s | HotSpot C2 faster |
 | Recursive Fibonacci `fib(35)` | 0.197 s | 0.061 s | HotSpot C2 faster |
+
+---
+
+## 4. Optimization Levels & Enhanced Multi-Stage Inlining Pipeline
+
+Starting with v0.2.3, TzdLang introduces fine-grained JIT optimization levels (`-O0` to `-O3`) and a hybrid multi-stage inlining pipeline:
+
+```mermaid
+flowchart LR
+    Source[".tzd Function Source"] --> ASTInline["Stage 1: AST Inliner (Parameter substitution & scope merging)"]
+    ASTInline --> IRGen["Stage 2: LLVM IR Generation (SSA form)"]
+    IRGen --> OptPipeline["Stage 3: LLVM Pass Pipeline (-O0 ~ -O3)"]
+    OptPipeline --> LLVMInline["Stage 4: LLVM IPO Inliner (Threshold: --inline-threshold)"]
+    LLVMInline --> Unroll["Stage 5: Full/Partial Loop Unrolling (LoopUnrollPass)"]
+    Unroll --> MachineCode["Ultra-fast Native Machine Code (.obj)"]
+```
+
+### 4.1 Optimization Levels Overview
+
+- **`-O0` (No Optimization)**: Basic register mapping only. Aggressive inlining and loop unrolling are disabled for instant compilation and low-level debugging.
+- **`-O1` (Lightweight Optimization)**: Enables local expression elimination, constant folding, and instruction simplification.
+- **`-O2` (Standard Optimization)**: Enables standard inlining (LLVM threshold 250), scalar replacement (SROA), loop vectorization, and common subexpression elimination.
+- **`-O3` (Extreme Optimization, Default)**:
+  - **AST-Level Inlining**: For pure functions under the statement threshold (max 60 AST statements), directly substitutes the call node with inlined function bodies during AST processing.
+  - **Aggressive LLVM IPO Inlining**: Increases LLVM inlining threshold to 500.
+  - **Math Intrinsics Specialization**: `abs`, `sqrt`, `sin`, `cos`, `floor`, and `ceil` are directly lowered into native x86_64 FPU/AVX instructions, completely eliminating external CRT calls.
+  - **Loop Unrolling**: Fully or partially unrolls tight or bounded loops, eliminating loop counter checks and branch mispredictions.
+
+### 4.2 Fine-Tuning CLI Flags
+- `--inline-threshold=<N>`: Dynamically sets the LLVM inlining threshold (default 500).
+- `--no-inline`: Disables AST-level inlining.
+- `--no-jit-intrinsics`: Disables math intrinsic instructions specialization.
+- `--no-unroll`: Disables LLVM loop unrolling pass.
+
+---
+
+## 5. Zero-Overhead JIT Debugging & Selective Deoptimization
+
+Running pure native machine code typically bypasses debugger checkpoints. TzdLang implements an innovative **Zero-Overhead JIT Debugging Interface with Selective Deoptimization**:
+
+1. **Zero Runtime Overhead**: In normal execution or when no breakpoints are placed inside a function, machine code executes directly on CPU hardware without check branches or guards.
+2. **Selective Deoptimization**:
+   - When `--jit-debug` is passed and a debugger connects, the engine inspects each function for active breakpoints.
+   - **Functions without breakpoints**: Continue running as native JIT machine code at full hardware speed (e.g. 1 million helper calls execute in ~1ms).
+   - **Functions with breakpoints or when stepping**: Seamlessly execute via the AST interpreter, reliably triggering breakpoints (`checkBreakpointAndSuspend`), allowing local variable inspection, call stack navigation, and step-into/step-over.
+3. **Instant Re-optimization**: As soon as breakpoints are deleted or stepped out of, subsequent executions return to native JIT code.
+
+---
+
+## 6. Interactive JIT Debug & Diagnostics Commands
+
+Inside the REPL or VS Code Debug Console, developers can inspect and tune the JIT engine dynamically using `:jit` commands:
+
+| Command | Description |
+|---|---|
+| `:jit status` | Prints JIT engine status, optimization level, inlining metrics, and compiled function count |
+| `:jit list` | Lists all JIT-compiled functions, internal symbols, and native virtual addresses |
+| `:jit ir <func_name>` | Dumps and inspects the live LLVM IR representation of a specific function |
+| `:jit opt <0-3>` | Dynamically adjusts the optimization level for subsequent compilations |
+| `:jit inlining <on\|off>` | Dynamically enables/disables AST-level inlining |
+| `:jit threshold <N>` | Adjusts the LLVM inlining cost threshold |
+| `:jit unroll <on\|off>` | Enables/disables loop unrolling |
+| `:jit intrinsics <on\|off>` | Enables/disables math intrinsics specialization |
+

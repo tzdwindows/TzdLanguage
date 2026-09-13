@@ -208,10 +208,10 @@ t.join();
 - 📐 [**语言标准语法规范手册**](wiki/Language-Specification-zh.md) - 类型系统、控制流、函数、面向对象与异常体系。
 - 🚀 [**GPU NTT 大数乘法底层深度剖析**](wiki/GPU-NTT-BigInt-zh.md) - 数学原理、CRT、二维 Stockham 核函数与并行进位链。
 - 🏎️ [**CPU NTT 极限计算引擎底层剖析 (--experimental-compute)**](wiki/CPU-NTT-BigInt-zh.md) - 三素数 Montgomery AVX2 向量化、4-Step 缓存分块转置、Direct Garner CRT、Kogge-Stone 进位链。
-- ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals-zh.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、函数特化与各阶段优化 Pass。
+- ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals-zh.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、-O0~-O3 优化等级、混合多级内联流水线与零开销调试选择性回退。
 - 🧠 [**LibTorch 深度学习引擎集成**](wiki/Deep-Learning-and-PyTorch-zh.md) - 原生 Tensor 抽象、自动微分、神经网络层与 CUDA 后端。
 - 🔨 [**构建指南与工具链环境搭建**](wiki/Building-and-Toolchain-zh.md) - MSBuild 与 CMake 构建配置指南。
-- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 语言服务器（LSP）与 DAP 调试协议实现。
+- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 官方插件 v0.2.3、JIT 调试支持、选择性回退断点、JIT Engine 变量面板与 LLVM IR 导出。
 - 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
 - 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
 - 🎛️ [**启动参数与命令行体系完整参考手册**](wiki/CLI-and-Startup-Options-zh.md) - 全量命令行参数、执行引擎选项与底层系统指令详解。

@@ -208,10 +208,10 @@ Comprehensive technical documentation and deep-dive design guides are available 
 - 📐 [**Language Specification & Syntax Guide**](wiki/Language-Specification.md) - Types, control flow, functions, OOP, and exceptions.
 - 🚀 [**GPU NTT BigInt Multiplication Deep-Dive**](wiki/GPU-NTT-BigInt.md) - Mathematical formulation, CRT, 2D Stockham kernels, Kogge-Stone carry scan.
 - 🏎️ [**CPU NTT High-Performance Engine (--experimental-compute)**](wiki/CPU-NTT-BigInt.md) - 3-Prime Montgomery AVX2 SIMD, 4-step cache-blocked matrix transpose, Garner CRT, Kogge-Stone carry chain.
-- ⚡ [**JIT Compiler Internals**](wiki/JIT-Compiler-Internals.md) - Tier 0 VM, Tier 1 LLVM ORC JIT, specialization passes, and optimizations.
+- ⚡ [**JIT Compiler Internals**](wiki/JIT-Compiler-Internals.md) - Tier 0 VM, Tier 1 LLVM ORC JIT, -O0~-O3 optimization levels, hybrid inlining pipeline & zero-overhead selective deoptimization.
 - 🧠 [**Deep Learning with LibTorch**](wiki/Deep-Learning-and-PyTorch.md) - Tensor APIs, autograd, neural networks, CUDA acceleration.
 - 🔨 [**Build & Toolchain Guide**](wiki/Building-and-Toolchain.md) - Detailed build instructions for MSBuild and CMake.
-- 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Language Server and Debug Adapter Protocol integration.
+- 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Official v0.2.3 extension, native JIT debugging, selective deoptimization, JIT Engine variable scope & LLVM IR dumping.
 - 📚 [**Standard Library Reference**](wiki/Standard-Library-Reference.md) - Core, Math, Thread, and Torch libraries.
 - 📖 [**Built-in Functions Reference**](wiki/Builtin-Functions-Reference.md) - Comprehensive 350+ function reference manual.
 - 🎛️ [**CLI Flags & Startup Parameters Reference**](wiki/CLI-and-Startup-Options.md) - Complete documentation for all command-line options and system commands.

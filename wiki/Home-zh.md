@@ -34,8 +34,9 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
 5. [**JIT 编译器核心技术与实现**](JIT-Compiler-Internals-zh.md)
    - Tier 0：紧凑型堆栈式字节码虚拟机
    - Tier 1：异步 LLVM ORC JIT 实时编译引擎
-   - 函数特化（原生 double worker）与部分求值（Partial Evaluation）
-   - 深度优化 Pass（mem2reg、CSE、DCE、侵略性内联）
+   - 细粒度优化等级（`-O0` 到 `-O3`）与混合 AST/LLVM 多级内联流水线
+   - 函数特化（原生 double worker）、循环展开与数学指令特化
+   - 零开销 JIT 调试接口与函数级选择性回退（Selective Deoptimization）
    - 循环与调用开销基准（超越 JDK 20 HotSpot C2）
 6. [**LibTorch 深度学习引擎集成**](Deep-Learning-and-PyTorch-zh.md)
    - 一等公民 Tensor 抽象与无锁引用计数生命周期（`c10::intrusive_ptr`）
@@ -47,8 +48,10 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
    - Visual Studio 2022 / 2026 MSBuild 编译步骤
    - 外部依赖配置（CUDA, LibTorch, LLVM, vcpkg）
 8. [**VS Code 扩展与 DAP 调试器**](VSCode-Extension-and-Debugger-zh.md)
-   - Debug Adapter Protocol (DAP) 调试协议对接
+   - 官方插件 v0.2.3 原生 JIT 调试支持与选择性回退（Selective Deoptimization）
+   - 调试变量面板独创 `JIT 引擎 (JIT Engine)` 状态实时监视作用域
    - 断点控制、单步执行、变量监视与调用栈查看
+   - 动态导出与查看指定函数的底层 LLVM IR 汇编
 9. [**标准库开发与参考手册**](Standard-Library-Reference-zh.md)
    - `core/`：错误处理、I/O 与反射
    - `thread/`：操作系统多线程与同步机制

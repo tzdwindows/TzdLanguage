@@ -34,8 +34,9 @@ TzdLang is an independently developed, high-performance object-oriented programm
 5. [**JIT Compiler Internals & Execution Tiers**](JIT-Compiler-Internals.md)
    - Tier 0: Compact Bytecode Virtual Machine
    - Tier 1: Asynchronous LLVM ORC JIT Engine
-   - Native double worker specialization & Partial Evaluation
-   - Optimization passes (mem2reg, CSE, DCE, inlining)
+   - Fine-grained optimization levels (`-O0` to `-O3`) & multi-stage inlining pipeline
+   - Native double worker specialization, loop unrolling & math intrinsics
+   - Zero-overhead JIT debugging interface with Selective Deoptimization
    - Benchmark comparisons against JDK 20 HotSpot
 6. [**Deep Learning Engine (LibTorch Integration)**](Deep-Learning-and-PyTorch.md)
    - First-class Tensor types & zero-lock memory lifecycle
@@ -47,8 +48,10 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - Visual Studio 2022 / 2026 MSBuild setup
    - Dependency management (CUDA, LibTorch, LLVM, vcpkg)
 8. [**VS Code Extension & DAP Debugger**](VSCode-Extension-and-Debugger.md)
-   - Debug Adapter Protocol (DAP) architecture
+   - Official extension v0.2.3 with native JIT debugging & Selective Deoptimization
+   - Dedicated `JIT Engine` Scope in Variables panel for real-time status inspection
    - Setting breakpoints, stepping, variable inspection, stack traces
+   - Dynamic LLVM IR dumping and syntax-highlighted inspection
 9. [**Standard Library Reference**](Standard-Library-Reference.md)
    - `core/`: Error handling, reflection, I/O
    - `thread/`: OS thread primitives, synchronization

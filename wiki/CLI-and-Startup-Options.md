@@ -113,6 +113,40 @@ Enables the Tier 1 LLVM ORC JIT compiler:
 TzdTools.exe --jit --runMainTzd="bench.tzd"
 ```
 
+#### `-O0` / `-O1` / `-O2` / `-O3` (Default: `-O3`)
+Configures the global JIT optimization level:
+- `-O0`: Disables optimization passes and aggressive inlining for instant compilation and low-level debugging.
+- `-O1`: Enables local expression elimination, constant folding, and instruction simplification.
+- `-O2`: Enables standard inlining (threshold 250), scalar replacement (SROA), and common subexpression elimination.
+- `-O3`: Default level. Enables frontend AST inlining, aggressive LLVM IPO inlining (threshold 500), math intrinsics specialization, and loop unrolling.
+
+```cmd
+TzdTools.exe --jit -O3 --runMainTzd="bench.tzd"
+```
+
+#### `--inline-threshold=<N>` (Default: 500)
+Manually specifies the LLVM interprocedural inlining cost budget. Higher numbers allow larger functions to be inlined into callers.
+
+```cmd
+TzdTools.exe --jit --inline-threshold=800 --runMainTzd="heavy.tzd"
+```
+
+#### `--no-inline`
+Disables frontend AST-level function inlining.
+
+#### `--no-jit-intrinsics`
+Disables math intrinsics (`sqrt`, `sin`, `cos`, etc.) machine code specialization.
+
+#### `--no-unroll`
+Disables LLVM loop unrolling optimization pass.
+
+#### `--jit-debug`
+Enables the JIT debugging interface. Combines native hardware performance with **Selective Deoptimization**: functions containing breakpoints automatically execute in interpreter mode so breakpoints are triggered, while all other functions run at peak JIT machine code speed.
+
+```cmd
+TzdTools.exe --jit --jit-debug -O3 --debug-port=54321 --runMainTzd="app.tzd"
+```
+
 #### `--noJit` or `--no-jit`
 Disables JIT compilation, running everything in the compact stack-based Bytecode VM. Ideal for:
 - Memory-constrained embedded environments;

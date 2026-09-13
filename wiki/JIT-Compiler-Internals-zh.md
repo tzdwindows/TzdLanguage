@@ -77,5 +77,69 @@ graph TD
 | 累加循环 `sumLoop(1M)` | **0.002 s** | 0.003 s | **TzdLang 快 1.5 倍** |
 | 阿克曼函数 `Ackermann(3, 6)` | **0.001 s** | 0.001 s | **TzdLang 快 1.2 倍** |
 | 牛顿迭代开方 `sqrt(100k)` | **0.000006 s** | 0.000008 s | **TzdLang 快 1.3 倍** |
-| 字段循环读取 `field(100k)` | 0.002 s | 0.0005 s | HotSpot C2 更优 |
+| 字段循环读取 `field(100k)` | 0.002 s | 0.005 s | HotSpot C2 更优 |
 | 递归斐波那契 `fib(35)` | 0.197 s | 0.061 s | HotSpot C2 更优 |
+
+---
+
+## 4. 优化等级与增强多级内联流水线
+
+从 v0.2.3 起，TzdLang 引入了细粒度的 JIT 优化等级体系（`-O0` 到 `-O3`）与混合多阶段内联流水线：
+
+```mermaid
+flowchart LR
+    Source[".tzd 函数源码"] --> ASTInline["Stage 1: AST 前端内联 (参数替换 + 局部作用域重整)"]
+    ASTInline --> IRGen["Stage 2: LLVM IR 生成 (SSA 表征)"]
+    IRGen --> OptPipeline["Stage 3: LLVM 优化流水线 (-O0 ~ -O3)"]
+    OptPipeline --> LLVMInline["Stage 4: LLVM IPO Inliner (阈值控制: --inline-threshold)"]
+    LLVMInline --> Unroll["Stage 5: 循环完全/部分展开 (LoopUnrollPass)"]
+    Unroll --> MachineCode["极速原生机器指令 (.obj)"]
+```
+
+### 4.1 优化等级说明
+
+- **`-O0` (无优化)**: 仅保留基础寄存器映射，禁用任何激进内联与循环展开，保证编译最快，适合调试底层逻辑。
+- **`-O1` (轻量优化)**: 启用局部表达式消除、常量折叠与基础指令简化。
+- **`-O2` (标准优化)**: 启用标准内联（LLVM 阈值 250）、标量重组（SROA）、循环向量化与公共子表达式消除。
+- **`-O3` (极限优化，默认)**:
+  - **AST 树级内联**：对于满足大小限制（最大 60 个语句节点）的短小纯函数，直接在前端 AST 阶段将调用节点替换为内联函数体。
+  - **激进 LLVM IPO 内联**：LLVM 内联阈值提升至 500。
+  - **数学内建函数特化**：`abs`, `sqrt`, `sin`, `cos`, `floor`, `ceil` 直接替换为 x86_64 原生 FPU/AVX 机器指令，杜绝外部 C 运行时调用。
+  - **循环展开 (Loop Unrolling)**：对于固定次数或小边界循环执行完全或部分展开，消灭循环分支预测开销。
+
+### 4.2 细粒度微调参数
+- `--inline-threshold=<N>`: 动态指定 LLVM 内联阈值（默认 500）。
+- `--no-inline`: 禁用 AST 树级函数内联。
+- `--no-jit-intrinsics`: 禁用数学内建函数机器码内联。
+- `--no-unroll`: 禁用 LLVM 循环展开优化通道。
+
+---
+
+## 5. 零开销 JIT 调试接口与函数级选择性回退 (Selective Deoptimization)
+
+在工业级 JIT 引擎中，直接执行原生机器码会导致调试断点被跳过。TzdLang 设计了独创的 **零开销 JIT 调试接口与混合执行机制**：
+
+1. **零运行时开销**：当未设置任何断点或未激活调试时，JIT 生成的机器码全速在 CPU 硬件上运行，没有任何探测分支损耗。
+2. **函数级选择性回退（Selective Deoptimization）**：
+   - 当启动参数指定 `--jit-debug` 且调试器连接时，调试引擎动态监测每个函数内部是否存在有效断点。
+   - **无断点函数**：继续以 JIT 原生机器码极速执行（例如执行一百万次计算的辅助函数依然只需 1ms）。
+   - **含有断点或处于单步调试的函数**：自动平滑回退至 AST 解释器模式，精准触发断点（`checkBreakpointAndSuspend`），并完整支持变量查看、堆栈回溯与单步跳入/跳出。
+3. **断点清除即时恢复**：当断点被删除或跳出后，后续调用重新无缝切回 JIT 机器码执行。
+
+---
+
+## 6. JIT 交互式调试与诊断指令集
+
+在 REPL 或 VS Code 调试控制台中，开发者可通过 `:jit` 系列指令对 JIT 状态进行动态检测与微调：
+
+| 指令格式 | 说明 |
+|---|---|
+| `:jit status` | 打印当前 JIT 引擎状态、优化等级、内联参数及已编译函数统计 |
+| `:jit list` | 列出所有已编译的 JIT 原生函数名称、版本号及内存虚拟地址 |
+| `:jit ir <func_name>` | 实时导出并查看指定函数的完整 LLVM IR 中间表征 |
+| `:jit opt <0-3>` | 动态调整后续编译函数的优化等级（-O0 到 -O3） |
+| `:jit inlining <on\|off>` | 动态开关 AST 树级内联 |
+| `:jit threshold <N>` | 动态调节 LLVM 内联代价阈值 |
+| `:jit unroll <on\|off>` | 动态开关循环展开通道 |
+| `:jit intrinsics <on\|off>` | 动态开关数学内建函数指令特化 |
+
