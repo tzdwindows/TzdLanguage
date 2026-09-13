@@ -85,3 +85,13 @@ Upon successful compilation, the build system automatically deploys runtime prer
 ### 5.3 Stack Overflow During Deep JIT Recursion
 - **Cause**: Deeply recursive functions require expanded stack reservation.
 - **Fix**: Both MSBuild and CMake enforce `/STACK:268435456,268435456` (256 MB reserve & commit).
+
+---
+
+## 6. Startup Parameters & Execution Modes
+
+The built executable `TzdTools.exe` provides a comprehensive command-line interface (e.g. `--runMainTzd`, `--compile`, `--runbc`, `--jit`, `--noJit`, `--forceGPU`, `--experimental-compute`, `--debug-port`).
+
+For the complete CLI manual and scenario templates, refer to:  
+👉 [**CLI Flags & Startup Parameters Reference Manual**](CLI-and-Startup-Options.md)
+

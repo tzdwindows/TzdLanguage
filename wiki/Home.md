@@ -55,6 +55,8 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - `torch/`: Neural network layers and deep learning utilities
 10. [**Built-in Functions Reference Manual**](Builtin-Functions-Reference.md)
     - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
+11. [**CLI Flags & Startup Parameters Reference Manual**](CLI-and-Startup-Options.md)
+    - Complete guide to CLI options: `--runMainTzd`, `--compile`, `--runbc`, `--setpd`, `--jit`, `--noJit`, `--interpreter`, `--forceGPU`, `--forceCPU`, `--experimental-compute`, `--bigTime`, `--silent`, `--antlrTime`, `--debug-port` and REPL system commands
 
 ---
 

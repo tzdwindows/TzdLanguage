@@ -85,3 +85,13 @@ cmake -B build -G "Visual Studio 18 2026" -A x64 ^
 ### 5.3 深度 JIT 递归执行导致 Stack Overflow（栈溢出）
 - **产生原因**：多层深递归算法执行需要充足的系统调用栈空间。
 - **解决方案**：MSBuild 与 CMake 工程配置中均强制指定了链接器参数 `/STACK:268435456,268435456`（提供高达 256 MB 的调用栈保留与提交空间）。
+
+---
+
+## 6. 启动参数与运行模式
+
+构建完成后生成的 `TzdTools.exe` 支持丰富的命令行启动参数（如 `--runMainTzd`, `--compile`, `--runbc`, `--jit`, `--noJit`, `--forceGPU`, `--experimental-compute`, `--debug-port` 等）。
+
+完整启动参数体系与典型场景请参阅专文：  
+👉 [**启动参数与命令行体系完整参考手册**](CLI-and-Startup-Options-zh.md)
+

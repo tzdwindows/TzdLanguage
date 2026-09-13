@@ -55,6 +55,8 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
    - `torch/`：深度学习高层算子与神经网络模块
 10. [**自带内置函数自查大全**](Builtin-Functions-Reference-zh.md)
     - 涵盖 350+ 个核心系统、初等数学、方程求解、大数数论、矩阵、字符串正则、数组高阶、容器与 LibTorch 算子全量速查
+11. [**启动参数与命令行体系完整参考手册**](CLI-and-Startup-Options-zh.md)
+    - 详尽解析全量启动参数：`--runMainTzd`, `--compile`, `--runbc`, `--setpd`, `--jit`, `--noJit`, `--interpreter`, `--forceGPU`, `--forceCPU`, `--experimental-compute`, `--bigTime`, `--silent`, `--antlrTime`, `--debug-port` 及内置交互式系统指令
 
 ---
 

@@ -214,6 +214,7 @@ t.join();
 - 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 语言服务器（LSP）与 DAP 调试协议实现。
 - 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
 - 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
+- 🎛️ [**启动参数与命令行体系完整参考手册**](wiki/CLI-and-Startup-Options-zh.md) - 全量命令行参数、执行引擎选项与底层系统指令详解。
 
 ---
 

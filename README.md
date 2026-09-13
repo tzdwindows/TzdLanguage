@@ -214,6 +214,7 @@ Comprehensive technical documentation and deep-dive design guides are available 
 - 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Language Server and Debug Adapter Protocol integration.
 - 📚 [**Standard Library Reference**](wiki/Standard-Library-Reference.md) - Core, Math, Thread, and Torch libraries.
 - 📖 [**Built-in Functions Reference**](wiki/Builtin-Functions-Reference.md) - Comprehensive 350+ function reference manual.
+- 🎛️ [**CLI Flags & Startup Parameters Reference**](wiki/CLI-and-Startup-Options.md) - Complete documentation for all command-line options and system commands.
 
 ---
 

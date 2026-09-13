@@ -611,7 +611,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         else if (arg == "--silent" || arg == "-s") {
             silentMode = true;
         }
-        // 4b. 禁用 JIT 模式 (仅使用解释器)
+        // 4b. JIT 控制模式
+        else if (arg == "--jit") {
+            interpreter->m_noJit = false;
+        }
         else if (arg == "--noJit" || arg == "--no-jit") {
             interpreter->m_noJit = true;
         }
@@ -752,6 +755,7 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
 
             // 过滤配置标志
             if (arg == "-s" || arg == "--silent" ||
+                arg == "--jit" ||
                 arg == "--noJit" || arg == "--no-jit" ||
                 arg == "--interpreter" || arg == "--tree-walk" ||
                 arg == "--antlrTime" || arg == "--bigTime" || arg == "--forceGPU" || arg == "--forceCPU" ||
