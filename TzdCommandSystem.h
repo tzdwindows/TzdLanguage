@@ -7,31 +7,31 @@
 #include <map>
 #include <functional>
 
-// 3. ANTLR ÔËĞĞÊ±£¨±ØĞëÔÚÉú³É´úÂëÖ®Ç°£©
+// 3. ANTLR è¿è¡Œæ—¶ï¼ˆå¿…é¡»åœ¨ç”Ÿæˆä»£ç ä¹‹å‰ï¼‰
 #include "antlr4-runtime.h"
 
-// 4. ¡¾ºËĞÄĞŞ¸´¡¿ÏÈ°üº¬ Parser £¡£¡£¡
-// Ö»ÓĞÕâÑù£¬ºóĞøµÄ Interpreter ²ÅÄÜÕıÈ·Ê¶±ğ Context ÀàµÄ¼Ì³Ğ¹ØÏµ
+// 4. ã€æ ¸å¿ƒä¿®å¤ã€‘å…ˆåŒ…å« Parser ï¼ï¼ï¼
+// åªæœ‰è¿™æ ·ï¼Œåç»­çš„ Interpreter æ‰èƒ½æ­£ç¡®è¯†åˆ« Context ç±»çš„ç»§æ‰¿å…³ç³»
 #include "Generated/TzdLangParser.h" 
 
-// 5. ÔÙ°üº¬ Interpreter ºÍÆäËû
+// 5. å†åŒ…å« Interpreter å’Œå…¶ä»–
 #include "Generated/TzdInterpreter.h"
 #include "Generated/TzdLangLexer.h"
 
-// 6. ÆäËûÏîÄ¿Ä£¿é
+// 6. å…¶ä»–é¡¹ç›®æ¨¡å—
 #include "TzdFuncScanner.h"
 #include "TzdMemoryAsm.h"
 #include "TzdStackTrace.h"
 #include "SymbolDemangler.h"
 #include "PdbReader.h"
 
-// ´æ´¢ÃüÁîµÄÏêÏ¸ĞÅÏ¢£¨°ïÖúÏûÏ¢£©
+// å­˜å‚¨å‘½ä»¤çš„è¯¦ç»†ä¿¡æ¯ï¼ˆå¸®åŠ©æ¶ˆæ¯ï¼‰
 struct CommandMeta {
-    std::string name;           // ÃüÁîÃû: Hello
-    std::string chineseName;    // ÃüÁîÖĞÎÄÃû: ´òÕĞºô
-    std::string format;         // ¸ñÊ½: Hello <int> <string> <float> <double>
-    std::string description;    // ½éÉÜ: ÕâÊÇÒ»¸ö²âÊÔÃüÁî
-    std::string subOptions;     // ×ÓÑ¡Ïî: -f, No, XXX µÈ
+    std::string name;           // å‘½ä»¤å: Hello
+    std::string chineseName;    // å‘½ä»¤ä¸­æ–‡å: æ‰“æ‹›å‘¼
+    std::string format;         // æ ¼å¼: Hello <int> <string> <float> <double>
+    std::string description;    // ä»‹ç»: è¿™æ˜¯ä¸€ä¸ªæµ‹è¯•å‘½ä»¤
+    std::string subOptions;     // å­é€‰é¡¹: -f, No, XXX ç­‰
     std::function<void(const std::vector<std::string>&)> handler;
 };
 
@@ -39,12 +39,12 @@ class TzdCommandSystem {
 public:
     TzdCommandSystem();
 
-    // ³õÊ¼»¯×¢²áÃüÁî
+    // åˆå§‹åŒ–æ³¨å†Œå‘½ä»¤
     void init();
 
   
 
-    // Æô¶¯ÏµÍ³ (Ö§³ÖÃüÁîĞĞ²ÎÊıÆô¶¯ºÍ½»»¥Ê½Æô¶¯)
+    // å¯åŠ¨ç³»ç»Ÿ (æ”¯æŒå‘½ä»¤è¡Œå‚æ•°å¯åŠ¨å’Œäº¤äº’å¼å¯åŠ¨)
     void start(int argc, char* argv[]);
 
 private:
@@ -55,7 +55,7 @@ private:
 
     static TzdInterpreter* interpreter;
 
-    // ÄÚ²¿ºËĞÄ·½·¨
+    // å†…éƒ¨æ ¸å¿ƒæ–¹æ³•
     void registerCmd(std::string name, std::string cn, std::string fmt, std::string desc, std::string opts, std::function<void(const std::vector<std::string>&)> func);
     void process(std::string input);
     void printHelp(std::string cmdName = "");
@@ -67,6 +67,7 @@ private:
     static void handleScanFunc(const std::vector<std::string>& args);
     static void handleDemangle(const std::vector<std::string>& args);
     static void handleRunScript(const std::vector<std::string>& args);
+    static void handleBuildExe(const std::vector<std::string>& args);
 };
 
 #endif

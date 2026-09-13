@@ -8,7 +8,7 @@ Unicode True
 !include "x64.nsh"
 
 !define PRODUCT_NAME "TzdTools"
-!define PRODUCT_VERSION "0.2.3"
+!define PRODUCT_VERSION "0.2.4"
 !define PRODUCT_PUBLISHER "tzdwindows7"
 !define PRODUCT_WEB_SITE "https://github.com/tzdwindows/TzdLanguage"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\TzdTools.exe"
@@ -16,7 +16,7 @@ Unicode True
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 
 Name "${PRODUCT_NAME} v${PRODUCT_VERSION}"
-OutFile "..\dist\TzdTools_Setup_v0.2.3.exe"
+OutFile "..\dist\TzdTools_Setup_v0.2.4.exe"
 InstallDir "$PROGRAMFILES64\TzdTools"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" ""
 RequestExecutionLevel admin

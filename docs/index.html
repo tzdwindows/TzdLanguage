@@ -40,7 +40,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
         </div>
         <span class="brand-name">TzdLang</span>
-        <span class="version-badge">v0.2.3 稳定版</span>
+        <span class="version-badge">v0.2.4 稳定版</span>
       </a>
 
       <nav class="header-nav">
@@ -57,7 +57,7 @@
       <div class="header-actions">
         <a href="#download" class="btn-primary-header">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          <span>下载 v0.2.3</span>
+          <span>下载 v0.2.4</span>
         </a>
         <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" rel="noopener noreferrer" class="btn-github">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -87,7 +87,7 @@
     <div class="hero-container">
       <div class="hero-pill-announcement">
         <span class="indicator-dot"></span>
-        <span>TzdTools v0.2.3 正式发布 · 提供 GPU 与 CPU 双架构原生安装程序</span>
+        <span>TzdTools v0.2.4 正式发布 · 全新 AOT 独立原生机器码编译器 (零 DLL / ~300KB)</span>
       </div>
 
       <h1 class="hero-title">
@@ -96,20 +96,17 @@
       </h1>
 
       <p class="hero-description">
-        融合静态强类型、JIT 原生机器码编译、无锁多线程与 LibTorch 深度学习原生内核。零装箱开销，纳秒级冷启动。
+        融合静态强类型、JIT 与 AOT 原生机器码编译、无锁多线程与 LibTorch 深度学习原生内核。零装箱开销，纳秒级冷启动。
       </p>
 
       <div class="hero-cta-group">
         <a href="#download" class="btn-primary">
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          <span>立即下载 TzdTools v0.2.3</span>
+          <span>立即下载 TzdTools v0.2.4</span>
         </a>
         <a href="wiki.html" class="btn-secondary">
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
           <span>Wiki 开发者知识库</span>
-        </a>
-        <a href="#workbench" class="btn-secondary">
-          <span>探索语法手册</span>
         </a>
       </div>
 
@@ -135,116 +132,112 @@
     </div>
   </section>
 
-  <!-- Dedicated Download Center Section (Apple Scroll-Driven Pinning 300vh Runway) -->
-  <section class="scroll-container pin-download-runway" id="download">
-    <div class="pin-viewport-stage">
-      <div class="stage-container">
-        
-        <!-- Header (scales to 0.92, opacity 0.4 on scroll progress 0% -> 40%) -->
-        <div class="pin-stage-header">
-          <div class="download-pill-badge">
-            <span class="pulse-dot"></span>
-            <span>Official Release v0.2.3 · 官方安装程序与工具链下载</span>
-          </div>
-          <h2 class="section-title">获取 TzdTools 运行环境与开发工具</h2>
-          <p class="section-desc">提供 GPU 完整版 与 CPU 轻量版 双架构独立安装向导，支持 Windows 10/11 64位操作系统，开箱即用。</p>
-        </div>
+  <!-- Download Center Section -->
+  <section class="download-section" id="download">
+    <div class="download-container">
+      <div class="section-badge-center">
+        <span class="indicator-dot"></span>
+        <span>Official Release v0.2.4 · 官方安装程序与工具链下载</span>
+      </div>
+      <h2 class="section-title text-center">轻触即达，全速起航</h2>
+      <p class="section-desc text-center">
+        为 Windows 64-bit 深度打造的原生发行版。GPU 版内置 CUDA 12.6 与 LibTorch 算子直通，CPU 版极致轻量便携。
+      </p>
 
-        <!-- 3D Perspective Cards Container (perspective: 1000px) -->
-        <div class="cards-perspective-container">
-          <div class="cards-grid download-cards-grid">
+      <!-- 3-Column Download Cards with Apple HIG Aesthetics -->
+      <div class="cards-interactive-canvas">
+        <div class="dl-grid-three">
+          <!-- Card 1: CPU Edition (Left) -->
+          <div class="card-motion-wrapper card-motion-left">
+            <div class="card-tilt-inner dl-card" data-card="cpu">
+              <div class="card-spotlight-shine"></div>
+              <div class="dl-badge-neutral">CPU 纯净版 · 超轻便携</div>
 
-            <!-- Card 1: CPU Edition (Left) -->
-            <div class="card-motion-wrapper card-motion-left">
-              <div class="card-tilt-inner dl-card" data-card="cpu">
-                <div class="card-spotlight-shine"></div>
-                <div class="dl-badge-neutral">CPU 架构 · 55MB 极简便携</div>
-
-                <div class="dl-icon-minimal">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h4M18 14h4M2 10h4M2 14h4M14 18v4M10 18v4M14 2v4M10 2v4"></path><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
-                </div>
-
-                <div class="dl-title-wrap">
-                  <h3 class="dl-card-title">TzdTools CPU 轻量版</h3>
-                  <p class="dl-card-subtitle">纯 CPU 运行库 · 秒级极速下载</p>
-                </div>
-
-                <div class="dl-meta-row">
-                  <span class="dl-file-size">55.0 MB</span>
-                  <span class="dl-file-badge">Windows x64 (.exe)</span>
-                </div>
-
-                <ul class="dl-feature-list">
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>体积缩减 95.5%</strong>：安装包仅 55MB（解压后 293MB），数秒完成下载</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>零 GPU 依赖设计</strong>：轻薄本、开发机、CI/CD 持续集成服务器首选</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>核心执行流水线完整</strong>：JIT 原生编译、Tier 0 VM、SATB GC、OOP 全保留</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>标准库开箱即用 (stdlib/)</strong>：内置 core、thread、torch 等全套标准模块</span>
-                  </li>
-                </ul>
-
-                <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.3/TzdTools_Setup_v0.2.3_CPU.exe" class="dl-btn dl-btn-white magnetic-btn" data-file="TzdTools CPU 轻量版">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  <span>下载 CPU 安装包 (55.0 MB)</span>
-                </a>
-                <div class="dl-hint-row">适用于任何 64 位 Windows PC，无需独立显卡支持</div>
+              <div class="dl-icon-minimal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
               </div>
+
+              <div class="dl-title-wrap">
+                <h3 class="dl-card-title">TzdTools CPU 轻量版</h3>
+                <p class="dl-card-subtitle">零 GPU 依赖 · 极速冷启动 · 极限 AVX2 NTT</p>
+              </div>
+
+              <div class="dl-meta-row">
+                <span class="dl-file-size">55.0 MB</span>
+                <span class="dl-file-badge">Windows x64 (.exe)</span>
+              </div>
+
+              <ul class="dl-feature-list">
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>体积缩减 95.5%</strong>：安装包仅 55MB（解压后 293MB），数秒完成下载</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>零 GPU 依赖设计</strong>：轻薄本、开发机、CI/CD 持续集成服务器首选</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>核心执行流水线完整</strong>：JIT 原生编译、Tier 0 VM、SATB GC、OOP 全保留</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>标准库开箱即用 (stdlib/)</strong>：内置 core、thread、torch 等全套标准模块</span>
+                </li>
+              </ul>
+
+              <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.4/TzdTools_Setup_v0.2.4_CPU.exe" class="dl-btn dl-btn-white magnetic-btn" data-file="TzdTools CPU 轻量版">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span>下载 CPU 安装包 (55.0 MB)</span>
+              </a>
+              <div class="dl-hint-row">适用于任何 64 位 Windows PC，无需独立显卡支持</div>
             </div>
+          </div>
 
-            <!-- Card 2: GPU Full Edition (Center Flagship) -->
-            <div class="card-motion-wrapper card-motion-center featured-wrapper">
-              <div class="card-tilt-inner dl-card dl-card-featured" data-card="gpu">
-                <div class="card-spotlight-shine"></div>
-                <div class="dl-badge-neutral">GPU 架构 · 深度学习与科学计算旗舰</div>
+          <!-- Card 2: GPU Full Edition (Center Flagship) -->
+          <div class="card-motion-wrapper card-motion-center featured-wrapper">
+            <div class="card-tilt-inner dl-card dl-card-featured" data-card="gpu">
+              <div class="card-spotlight-shine"></div>
+              <div class="dl-badge-neutral">GPU 架构 · 深度学习与科学计算旗舰</div>
 
-                <div class="dl-icon-minimal">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-                </div>
+              <div class="dl-icon-minimal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+              </div>
 
-                <div class="dl-title-wrap">
-                  <h3 class="dl-card-title">TzdTools GPU 完整版</h3>
-                  <p class="dl-card-subtitle">CUDA 12.6 NVRTC · LibTorch GPU 硬件直通</p>
-                </div>
+              <div class="dl-title-wrap">
+                <h3 class="dl-card-title">TzdTools GPU 完整版</h3>
+                <p class="dl-card-subtitle">CUDA 12.6 NVRTC · LibTorch GPU 硬件直通</p>
+              </div>
 
-                <div class="dl-meta-row">
-                  <span class="dl-file-size">1.20 GB</span>
-                  <span class="dl-file-badge">Windows x64 (.exe)</span>
-                </div>
+              <div class="dl-meta-row">
+                <span class="dl-file-size">1.20 GB</span>
+                <span class="dl-file-badge">Windows x64 (.exe)</span>
+              </div>
 
-                <ul class="dl-feature-list">
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>CUDA 12.6 运行时集成</strong>：内置 <code>nvrtc-builtins64_126.dll</code> 等关键依赖</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>LibTorch GPU 深度学习加速</strong>：cuBLAS、cuDNN 原生硬件直通算子</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>Stockham 4-Step GPU NTT</strong>：百万位高精度大数极速乘法架构</span>
-                  </li>
-                  <li class="dl-feature-item">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    <span><strong>NSIS 现代安装向导</strong>：自动配置系统 PATH 环境变量与 CLI 注册</span>
-                  </li>
-                </ul>
+              <ul class="dl-feature-list">
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>CUDA 12.6 运行时集成</strong>：内置 <code>nvrtc-builtins64_126.dll</code> 等关键依赖</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>LibTorch GPU 深度学习加速</strong>：cuBLAS、cuDNN 原生硬件直通算子</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>Stockham 4-Step GPU NTT</strong>：百万位高精度大数极速乘法架构</span>
+                </li>
+                <li class="dl-feature-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  <span><strong>NSIS 现代安装向导</strong>：自动配置系统 PATH 环境变量与 CLI 注册</span>
+                </li>
+              </ul>
 
-                <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.3/TzdTools_Setup_v0.2.3.exe" class="dl-btn dl-btn-white magnetic-btn" data-file="TzdTools GPU 完整版">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  <span>下载 GPU 安装包 (1.20 GB)</span>
-                </a>
-                <div class="dl-hint-row">适用于配备 NVIDIA Compute Capability ≥ 6.0 独立显卡平台</div>
+              <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.4/TzdTools_Setup_v0.2.4.exe" class="dl-btn dl-btn-white magnetic-btn" data-file="TzdTools GPU 完整版">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span>下载 GPU 安装包 (1.20 GB)</span>
+              </a>
+              <div class="dl-hint-row">适用于配备 NVIDIA Compute Capability ≥ 6.0 独立显卡平台</div>
               </div>
             </div>
 

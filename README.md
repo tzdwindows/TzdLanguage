@@ -215,6 +215,7 @@ Comprehensive technical documentation and deep-dive design guides are available 
 - 📚 [**Standard Library Reference**](wiki/Standard-Library-Reference.md) - Core, Math, Thread, and Torch libraries.
 - 📖 [**Built-in Functions Reference**](wiki/Builtin-Functions-Reference.md) - Comprehensive 350+ function reference manual.
 - 🎛️ [**CLI Flags & Startup Parameters Reference**](wiki/CLI-and-Startup-Options.md) - Complete documentation for all command-line options and system commands.
+- 🛡️ [**AOT Standalone Native Compiler**](wiki/AOT-Compiler.md) - True Ahead-Of-Time native compilation, zero-DLL guarantee (only KERNEL32), ~300KB compact binary footprint, terminal progress bar & multi-level optimization.
 
 ---
 

@@ -15,6 +15,7 @@ TzdTools provides an extensive, production-grade set of command-line flags and s
 | `--runMainTzd="<path>"` | None | Path string | Empty | Runs specified `.tzd` script and calls `main()` entrypoint |
 | `--compile="<path.tzd>"` | None | Path string | Empty | AOT compiles `.tzd` into `.tzdc` binary bytecode and exits |
 | `--runbc="<path.tzdc>"` | None | Path string | Empty | Directly loads and executes `.tzdc` binary bytecode file |
+| `build <file>` / `--build="<file>"` | `-b` / `--build-exe` | Path & Options | Empty | Compiles & bundles `.tzd` or `.tzdc` directly into standalone Windows `.exe` |
 | `--setProjectDirectory="<path>"` | `--setpd="<path>"` | Path string | Current directory | Sets working directory and adds it to module import search paths |
 | `--addLibraryDirectory="<paths>"` | None | Path list (comma-separated) | Empty | Extends library search paths (supports quotes and multi-paths) |
 | `--jit` | None | Flag | **Enabled** (default) | Explicitly enables Tier 1 LLVM ORC JIT execution engine |
@@ -68,6 +69,26 @@ Directly executes precompiled `.tzdc` bytecode files. Bypasses ANTLR4 lexing, AS
 ```cmd
 :: Execute bytecode directly
 TzdTools.exe --runbc="bench.tzdc"
+```
+
+#### `build <file>` / `--build="<file>"` (Direct Native Executable Compiler)
+Compiles, packages, and embeds a `.tzd` script or `.tzdc` bytecode file into a standalone, runnable Windows PE executable (`.exe`).
+- **Recursive Dependency Bundling**: Automatically traces and embeds all imported `stdlib/*` modules into an internal in-memory virtual filesystem (`EmbeddedVFS`);
+- **Full Native API Integration**: Embeds and initializes all native capabilities (`TzdNativeModule`, system calls, LibTorch / CUDA, FFI dynamic loader, etc.);
+- **Standalone Execution & CLI Arguments**: The generated `.exe` can run without Tzd development tools installed, accepts command-line arguments, and exposes them in the script via `ARGV` and `args`.
+
+```cmd
+:: Basic compilation: generates main.exe
+TzdTools.exe build main.tzd
+
+:: Custom output filename with silent execution
+TzdTools.exe build main.tzd -o MyApp.exe --silent
+
+:: Bundle bytecode with JIT disabled
+TzdTools.exe build main.tzdc -o MyApp.exe --no-jit
+
+:: Generate standalone C++ project wrapper
+TzdTools.exe build main.tzd --codegen
 ```
 
 ---
@@ -345,4 +366,19 @@ TzdTools.exe -s --runbc="server.tzdc"
 ### Scenario D: Local Development & VS Code Breakpoint Debugging
 ```cmd
 TzdTools.exe --setpd="D:/Projects/MyGame" --debug-port=54321 --jit --runMainTzd="D:/Projects/MyGame/src/main.tzd"
+```
+
+### Scenario E: Standalone AOT Native Machine Code Compilation (Zero-DLL, ~300KB)
+```cmd
+:: 1. Compile into standalone native machine code (.exe with -O2, progress bar, ~300KB)
+TzdTools.exe build "app.tzd" -o "app.exe" -O2
+
+:: 2. CPU-Only clean build (completely eliminates PyTorch / CUDA / c10.dll dependencies)
+TzdTools.exe build "app.tzd" --buildCpu -o "app_cpu.exe"
+
+:: 3. Export standalone C++ source package only (no MSVC invocation)
+TzdTools.exe build "app.tzd" --codegen -o "app.cpp"
+
+:: 4. Compile while retaining generated intermediate C++ code for review
+TzdTools.exe build "app.tzd" --keep-cpp -o "app.exe"
 ```

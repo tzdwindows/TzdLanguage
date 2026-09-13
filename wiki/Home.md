@@ -60,6 +60,11 @@ TzdLang is an independently developed, high-performance object-oriented programm
     - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
 11. [**CLI Flags & Startup Parameters Reference Manual**](CLI-and-Startup-Options.md)
     - Complete guide to CLI options: `--runMainTzd`, `--compile`, `--runbc`, `--setpd`, `--jit`, `--noJit`, `--interpreter`, `--forceGPU`, `--forceCPU`, `--experimental-compute`, `--bigTime`, `--silent`, `--antlrTime`, `--debug-port` and REPL system commands
+12. [**AOT Native Machine Code Compiler Architecture & Reference**](AOT-Compiler.md)
+    - True standalone Ahead-Of-Time compilation (Source/Bytecode -> Native x86_64 Machine Code)
+    - Zero third-party DLL guarantee (links only against OS `KERNEL32.dll`, completely eliminates `c10.dll` missing errors)
+    - Compact binary footprint (99.1% size reduction from 35MB fat stub down to ~300KB)
+    - Terminal progress bar, optimization levels (`-O0` to `-O3`), `--buildCpu` clean mode, and `--codegen` export
 
 ---
 
@@ -79,6 +84,11 @@ graph TD
     LLVMIR --> OptPasses["LLVM Optimization Pipeline (CSE, mem2reg, Inlining)"]
     OptPasses --> ObjectCache["Native Machine Code (.obj)"]
     ObjectCache --> LLJIT["LLVM ORC JIT Execution Engine"]
+
+    AST --> AOT["AOT: Standalone Native Compiler"]
+    AOT --> NativeCodegen["TzdNativeCodegen C++20 IR Gen"]
+    NativeCodegen --> MSVC["MSVC cl.exe /MT Static Link"]
+    MSVC --> StandaloneExe["Zero-DLL Native Executable (.exe, ~300KB)"]
     
     VM <--> Runtime["Tzd Runtime System"]
     LLJIT <--> Runtime

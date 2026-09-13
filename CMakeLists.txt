@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 # TzdTools & TzdLang - Modern Portable CMake Configuration
 # ===========================================================================
 project(TzdTools
-    VERSION 0.2.3
+    VERSION 0.2.4
     DESCRIPTION "TzdLang Compiler & Execution Runtime"
     LANGUAGES C CXX
 )
@@ -216,6 +216,8 @@ set(TZD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/TzdDebugger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TzdStackTrace.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TzdCommandSystem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TzdExeCompiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TzdNativeCodegen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TzdFuncScanner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TzdMemoryAsm.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PdbReader.cpp

@@ -60,6 +60,11 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
     - 涵盖 350+ 个核心系统、初等数学、方程求解、大数数论、矩阵、字符串正则、数组高阶、容器与 LibTorch 算子全量速查
 11. [**启动参数与命令行体系完整参考手册**](CLI-and-Startup-Options-zh.md)
     - 详尽解析全量启动参数：`--runMainTzd`, `--compile`, `--runbc`, `--setpd`, `--jit`, `--noJit`, `--interpreter`, `--forceGPU`, `--forceCPU`, `--experimental-compute`, `--bigTime`, `--silent`, `--antlrTime`, `--debug-port` 及内置交互式系统指令
+12. [**AOT 独立原生机器码编译器架构与参考手册**](AOT-Compiler-zh.md)
+    - 真正独立 AOT 编译（代码/字节码 -> 原生 x86_64 机器码）
+    - 零第三方 DLL 依赖保证（仅依赖操作系统的 `KERNEL32.dll`，完全根除 `c10.dll` 丢失问题）
+    - 极致体积控制（从 35MB 胖存根骤降 99.1% 至仅约 300KB）
+    - 动态终端字符进度条、优化级别（`-O0` 到 `-O3`）、`--buildCpu` 纯净模式与 `--codegen` 源码导出
 
 ---
 
@@ -79,6 +84,11 @@ graph TD
     LLVMIR --> OptPasses["LLVM 优化管线 (CSE, mem2reg, Inlining)"]
     OptPasses --> ObjectCache["本地机器代码 (.obj)"]
     ObjectCache --> LLJIT["LLVM ORC JIT 执行引擎"]
+
+    AST --> AOT["AOT: 独立原生机器码编译器"]
+    AOT --> NativeCodegen["TzdNativeCodegen C++20 IR 生成"]
+    NativeCodegen --> MSVC["MSVC cl.exe /MT 纯静态编译"]
+    MSVC --> StandaloneExe["零 DLL 独立原生可执行文件 (.exe, ~300KB)"]
     
     VM <--> Runtime["Tzd 语言运行时"]
     LLJIT <--> Runtime

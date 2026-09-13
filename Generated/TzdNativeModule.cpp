@@ -53,7 +53,9 @@ namespace std { namespace experimental {
 
 #include "TzdInterpreter.h"
 #include "TzdOop.h"
+#ifdef WITH_LIBTORCH
 #include "TzdPyTorch.h"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -255,7 +257,9 @@ void TzdNativeModule::init(TzdInterpreter* interp) {
     regConv(interp);
     regExtraMath(interp);
     regExtended(interp);
+#ifdef WITH_LIBTORCH
     TzdPyTorch::init(interp);
+#endif
     interp->addIncludePath("stdlib");
 }
 

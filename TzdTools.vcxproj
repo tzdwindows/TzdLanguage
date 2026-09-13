@@ -182,6 +182,8 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClCompile Include="PdbReader.cpp" />
     <ClCompile Include="SymbolDemangler.cpp" />
     <ClCompile Include="TzdCommandSystem.cpp" />
+    <ClCompile Include="TzdExeCompiler.cpp" />
+    <ClCompile Include="TzdNativeCodegen.cpp" />
     <ClCompile Include="TzdFuncScanner.cpp" />
     <ClCompile Include="TzdMemoryAsm.cpp" />
     <ClCompile Include="TzdDebugger.cpp" />
@@ -240,6 +242,9 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClInclude Include="Res\TzdStrings.h" />
     <ClInclude Include="SymbolDemangler.h" />
     <ClInclude Include="TzdCommandSystem.h" />
+    <ClInclude Include="TzdExeCompiler.h" />
+    <ClInclude Include="TzdNativeCodegen.h" />
+    <ClInclude Include="TzdNativeRuntime.hpp" />
     <ClInclude Include="TzdFuncScanner.h" />
     <ClInclude Include="TzdMemoryAsm.h" />
     <ClInclude Include="TzdDebugger.h" />

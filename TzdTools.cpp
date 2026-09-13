@@ -16,6 +16,7 @@ extern "C" __declspec(dllimport) int __stdcall SetConsoleCP(unsigned int);
 #pragma comment(lib, "kernel32.lib")
 
 #include "TzdCommandSystem.h"
+#include "TzdExeCompiler.h"
 
 #include <MinHook.h>
 #include <dbghelp.h>
@@ -209,6 +210,13 @@ int main(int argc, char* argv[]) {
     // Fix console encoding for UTF-8 Chinese display
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+
+    // Check if running as a standalone compiled executable
+    int embeddedExitCode = 0;
+    if (tzd::TzdExeCompiler::tryRunEmbeddedExecutable(argc, argv, &embeddedExitCode)) {
+        return embeddedExitCode;
+    }
+
     // InitHook();  // Temporarily disabled for testing
     TzdCommandSystem system;
     system.start(argc, argv);

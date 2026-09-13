@@ -215,6 +215,7 @@ t.join();
 - 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
 - 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
 - 🎛️ [**启动参数与命令行体系完整参考手册**](wiki/CLI-and-Startup-Options-zh.md) - 全量命令行参数、执行引擎选项与底层系统指令详解。
+- 🛡️ [**AOT 原生独立机器码编译器**](wiki/AOT-Compiler-zh.md) - 真正 AOT 独立机器码编译、零外部 DLL 依赖（仅依赖 KERNEL32）、~300KB 极致受控体积、动态字符进度条与多级优化支持。
 
 ---
 

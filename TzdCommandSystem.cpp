@@ -5,6 +5,7 @@
 #include "Res/TzdStrings.h"
 #include "TzdDebugger.h"
 #include "TzdCommandSystem.h"
+#include "TzdExeCompiler.h"
 
 // 包含标准库
 #include <algorithm>
@@ -154,6 +155,22 @@ void TzdCommandSystem::init() {
         "解析并运行 TzdLang 脚本代码。",
         "示例: Run \"a = gxxx 100; b = a ^ 2;\"",
         TzdCommandSystem::handleRunScript);
+
+    // ============================================================
+    //  Build (编译为独立可执行文件)
+    // ============================================================
+    registerCmd("Build",
+        "编译为独立可执行文件",
+        "Build <File.tzd|File.tzdc> [-o Out.exe] [--silent] [--no-jit] [--all-stdlib] [--codegen]",
+        "将 Tzd 源代码或字节码文件直接编译打包为独立的 Windows 原生可执行程序 (.exe)。",
+        "示例: Build main.tzd -o myapp.exe",
+        TzdCommandSystem::handleBuildExe);
+
+    // [函数模式] build("main.tzd", "-o myapp.exe");
+    interpreter->registerNativeFunction("build", [argsToStrings](const std::vector<TzdValue>& args) -> TzdValue {
+        TzdCommandSystem::handleBuildExe(argsToStrings(args));
+        return TzdValue(0.0);
+    });
 }
 
 void printRuntimeError(const std::string& msg, antlr4::Token* token) {
@@ -197,6 +214,190 @@ void TzdCommandSystem::handleRunScript(const std::vector<std::string>& args) {
     }
     catch (const std::exception& e) {
         std::cerr << "[Tzd 系统错误] " << e.what() << std::endl;
+    }
+}
+
+void TzdCommandSystem::handleBuildExe(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cout << "================================================================\n"
+                  << "  TzdLang 原生独立可执行程序编译器 (.exe AOT Generator)\n"
+                  << "================================================================\n"
+                  << "  用法: Build <脚本.tzd | 字节码.tzdc> [选项]\n\n"
+                  << "  基本选项:\n"
+                  << "    -o <输出.exe>          指定输出可执行文件名\n"
+                  << "    -s / --silent          生成程序静默运行\n"
+                  << "    -O0 / -O1 / -O2 / -O3  指定优化级别（默认 -O2）\n"
+                  << "    --opt=<0-3>            同上\n\n"
+                  << "  AOT 机器码与依赖控制:\n"
+                  << "    --buildCpu             CPU-Only 模式：完全排除 CUDA/GPU/Torch\n"
+                  << "                           生成的 .exe 纯静态链接，不依赖任何第三方 DLL\n"
+                  << "    --codegen              仅生成对应的原生 C++ 源码包\n"
+                  << "    --keep-cpp             保留编译过程中的原生 C++ 中间源码\n"
+                  << "    --pe-stub              使用旧版 PE Overlay 存根模式（不推荐）\n"
+                  << "================================================================\n"
+                  << std::endl;
+        return;
+    }
+
+    std::string inputFile = "";
+    std::string outputFile = "";
+    tzd::ExeCompileOptions options;
+    // Default to TRUE AOT native machine code compilation!
+    options.targetMode = tzd::ExeTargetMode::NATIVE_MACHINE_CODE;
+
+    for (size_t i = 0; i < args.size(); ++i) {
+        std::string a = args[i];
+        if (a == "-o" && i + 1 < args.size()) {
+            outputFile = args[++i];
+        }
+        else if (a.rfind("-o=", 0) == 0 || a.rfind("--output=", 0) == 0) {
+            outputFile = a.substr(a.find('=') + 1);
+        }
+        else if (a == "-s" || a == "--silent") {
+            options.silent = true;
+        }
+        else if (a == "--no-jit" || a == "--noJit") {
+            options.enableJit = false;
+        }
+        else if (a == "--jit") {
+            options.enableJit = true;
+        }
+        else if (a == "--all-stdlib") {
+            options.bundleAllStdlib = true;
+        }
+        else if (a == "--no-bundle-stdlib") {
+            options.bundleStdlib = false;
+        }
+        else if (a == "--copy-dlls") {
+            options.copyDependencies = true;
+        }
+        else if (a == "--no-copy-dlls") {
+            options.copyDependencies = false;
+        }
+        else if (a == "--no-smart-deps") {
+            options.smartDeps = false;
+        }
+        // CPU-only mode: strip all GPU/CUDA/torch
+        else if (a == "--buildCpu" || a == "--build-cpu" || a == "--cpu-only" || a == "--cpuOnly") {
+            options.cpuOnly = true;
+        }
+        else if (a == "--codegen") {
+            options.targetMode = tzd::ExeTargetMode::NATIVE_CODEGEN;
+        }
+        else if (a == "--keep-cpp" || a == "--keepCpp") {
+            options.keepCpp = true;
+        }
+        else if (a == "--pe-stub" || a == "--stub-overlay") {
+            options.targetMode = tzd::ExeTargetMode::STANDALONE_PE;
+        }
+        else if (a.rfind("--stub=", 0) == 0) {
+            options.customStubPath = a.substr(7);
+        }
+        else if (a.rfind("--opt=", 0) == 0 || a.rfind("--opt-level=", 0) == 0 || a.rfind("-O=", 0) == 0) {
+            options.optLevel = std::stoi(a.substr(a.find('=') + 1));
+        }
+        else if (a == "-O0") options.optLevel = 0;
+        else if (a == "-O1") options.optLevel = 1;
+        else if (a == "-O2") options.optLevel = 2;
+        else if (a == "-O3") options.optLevel = 3;
+        else if (!a.empty() && a[0] != '-') {
+            if (inputFile.empty()) {
+                inputFile = a;
+            }
+        }
+    }
+
+    if (inputFile.empty()) {
+        std::cerr << "[Tzd 编译错误] 未指定输入的 .tzd 源代码或 .tzdc 字节码文件。" << std::endl;
+        return;
+    }
+
+    auto stripQ = [](std::string s) {
+        if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.front() == s.back()) {
+            return s.substr(1, s.size() - 2);
+        }
+        return s;
+    };
+    inputFile = stripQ(inputFile);
+    outputFile = stripQ(outputFile);
+
+    if (interpreter) {
+        options.extraIncludePaths = interpreter->m_includePaths;
+    }
+
+    // Silence the old per-step progress callback (we use the bar instead)
+    options.onProgress = nullptr;
+
+    std::cout << "================================================================\n"
+              << "  TzdLang AOT 独立机器码编译器 (代码/字节码 -> 原生机器码)\n"
+              << "================================================================\n"
+              << "  源文件    : " << std::filesystem::absolute(inputFile).string() << "\n";
+    if (!outputFile.empty())
+        std::cout << "  目标文件  : " << outputFile << "\n";
+    std::cout << "  优化级别  : -O" << options.optLevel << "\n"
+              << "  构建模式  : " << (options.cpuOnly ? "CPU-Only 机器码（零外部 DLL）" : "全功能 AOT 机器码（智能依赖检测）") << "\n"
+              << "================================================================\n";
+    std::cout.flush();
+
+    tzd::TzdExeCompiler compiler;
+    tzd::ExeCompileResult res;
+
+    std::string ext = std::filesystem::path(inputFile).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    try {
+        if (ext == ".tzdc") {
+            res = compiler.compileBytecode(inputFile, outputFile, options);
+        }
+        else {
+            res = compiler.compileTzd(inputFile, outputFile, options);
+        }
+    }
+    catch (const std::exception& e) {
+        std::cout << std::endl;
+        res.success = false;
+        res.errorMessage = std::string("Unhandled exception during compilation: ") + e.what();
+    }
+    catch (...) {
+        std::cout << std::endl;
+        res.success = false;
+        res.errorMessage = "Unknown fatal exception during compilation.";
+    }
+
+    if (res.success) {
+        std::string outDir = std::filesystem::path(res.outputExePath).parent_path().string();
+        double sizeKb = res.totalExeSizeBytes / 1024.0;
+        double sizeMb = sizeKb / 1024.0;
+
+        std::cout << "\n"
+                  << "================================================================\n"
+                  << "  ✓  AOT 机器码编译成功！\n"
+                  << "================================================================\n"
+                  << "  源文件路径  : " << std::filesystem::absolute(inputFile).string() << "\n"
+                  << "  目标可执行  : " << res.outputExePath << "\n"
+                  << "  输出目录    : " << outDir << "\n";
+        if (sizeMb >= 1.0) {
+            std::cout << std::fixed << std::setprecision(2) << "  程序体积    : " << sizeMb << " MB (" << sizeKb << " KB)\n";
+        } else {
+            std::cout << std::fixed << std::setprecision(1) << "  程序体积    : " << sizeKb << " KB\n";
+        }
+        std::cout << "  优化级别    : -O" << options.optLevel << "\n"
+                  << "  依赖特性    : 零外部 DLL 依赖（纯静态原生 x86_64 机器码）\n"
+                  << "  构建架构    : " << (options.cpuOnly ? "CPU-Only Standalone" : "Native Standalone") << "\n"
+                  << "  编译耗时    : " << std::fixed << std::setprecision(2) << res.durationSeconds << " 秒\n"
+                  << "================================================================\n"
+                  << "  运行方式: " << res.outputExePath << "\n"
+                  << "================================================================\n"
+                  << std::endl;
+    }
+    else {
+        std::cerr << "\n"
+                  << "================================================================\n"
+                  << "  ✗  编译失败\n"
+                  << "================================================================\n"
+                  << "  " << res.errorMessage << "\n"
+                  << "================================================================\n"
+                  << std::endl;
     }
 }
 
@@ -525,6 +726,17 @@ void TzdCommandSystem::enterInteractiveMode() {
 void TzdCommandSystem::start(int argc, char* argv[]) {
     init();
 
+    // 0. 命令行独立子命令: build / -b
+    if (argc > 1 && (_stricmp(argv[1], "build") == 0 || _stricmp(argv[1], "-b") == 0)) {
+        std::vector<std::string> buildArgs;
+        for (int i = 2; i < argc; ++i) {
+            buildArgs.push_back(argv[i]);
+        }
+        handleBuildExe(buildArgs);
+        fflush(stdout); fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), 0);
+    }
+
     std::string runMainScript = "";
     bool hasCustomFlags = false;
     bool silentMode = false;
@@ -765,6 +977,18 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
             catch (const std::exception& e) {
                 std::cerr << "Bytecode execution error: " << e.what() << std::endl;
             }
+            fflush(stdout); fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+        // 8. 编译为独立可执行文件: --build=file.tzd / --build-exe=file.tzd
+        else if (arg.rfind("--build=", 0) == 0 || arg.rfind("--build-exe=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            std::string srcPath = stripQuotes(arg.substr(eqPos + 1));
+            std::vector<std::string> buildArgs = { srcPath };
+            for (int j = i + 1; j < argc; ++j) {
+                buildArgs.push_back(argv[j]);
+            }
+            handleBuildExe(buildArgs);
             fflush(stdout); fflush(stderr);
             TerminateProcess(GetCurrentProcess(), 0);
         }

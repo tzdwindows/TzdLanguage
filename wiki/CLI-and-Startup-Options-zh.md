@@ -15,6 +15,7 @@ TzdTools 提供了工业级灵活丰富的命令行启动参数体系（CLI Flag
 | `--runMainTzd="<path>"` | 无 | 路径字符串 | 空 | 直接执行指定的 `.tzd` 脚本，自动调用 `main()` 入口 |
 | `--compile="<path.tzd>"` | 无 | 路径字符串 | 空 | AOT 编译 `.tzd` 为 `.tzdc` 二进制字节码文件并退出 |
 | `--runbc="<path.tzdc>"` | 无 | 路径字符串 | 空 | 直接加载并执行 `.tzdc` 预编译二进制字节码文件 |
+| `build <file>` / `--build="<file>"` | `-b` / `--build-exe` | 路径与选项 | 空 | 将 `.tzd` 或 `.tzdc` 直接编译打包为独立 Windows 可执行程序 (`.exe`) |
 | `--setProjectDirectory="<path>"` | `--setpd="<path>"` | 路径字符串 | 当前目录 | 切换当前工作目录，并将该路径加入模块导入搜索列表 |
 | `--addLibraryDirectory="<paths>"` | 无 | 路径列表（逗号分隔） | 空 | 扩展类库与模块包含路径（支持双引号与多路径） |
 | `--jit` | 无 | 无参标志 | **启用** (默认) | 显式启用 LLVM ORC JIT 实时编译优化引擎 |
@@ -68,6 +69,26 @@ TzdTools.exe --compile="bench.tzd"
 ```cmd
 :: 直接执行预编译的字节码文件
 TzdTools.exe --runbc="bench.tzdc"
+```
+
+#### `build <file>` / `--build="<file>"` (直接编译为独立可执行程序)
+将 `.tzd` 源代码文件或 `.tzdc` 字节码文件直接编译、打包、内嵌为独立的 Windows PE 原生可执行文件（`.exe`）。
+- **递归依赖内嵌**：自动递归扫描 `import` 语句，并将所有依赖的标准库模块（`stdlib/*`）打包进可执行文件的内嵌虚拟文件系统（`EmbeddedVFS`）；
+- **原生 API 全量内嵌**：内置所有原生模块（`TzdNativeModule`、数学、系统调用、LibTorch / CUDA、FFI 动态调用库等）；
+- **独立运行与传参**：生成的 `.exe` 可脱离 Tzd 开发环境独立双击或在命令行运行，支持传入命令行参数并在脚本内通过全局变量 `ARGV` 或 `args` 访问。
+
+```cmd
+:: 基础编译：生成 main.exe
+TzdTools.exe build main.tzd
+
+:: 指定输出文件名与静默运行模式
+TzdTools.exe build main.tzd -o MyApp.exe --silent
+
+:: 打包字节码并禁用 JIT
+TzdTools.exe build main.tzdc -o MyApp.exe --no-jit
+
+:: 仅生成内嵌原生 C++ 源码工程包
+TzdTools.exe build main.tzd --codegen
 ```
 
 ---
@@ -364,4 +385,19 @@ TzdTools.exe -s --runbc="server.tzdc"
 ### 场景 D：本地开发与 VS Code DAP 断点调试
 ```cmd
 TzdTools.exe --setpd="D:/Projects/MyGame" --debug-port=54321 --jit --runMainTzd="D:/Projects/MyGame/src/main.tzd"
+```
+
+### 场景 E：编译为独立原生机器码可执行程序（AOT 独立机器码，零第三方 DLL 依赖）
+```cmd
+:: 1. 编译为原生机器码 .exe（默认 -O2 优化，动态进度条，体积约 300KB）
+TzdTools.exe build "app.tzd" -o "app.exe" -O2
+
+:: 2. CPU-Only 纯净构建（完全排除 PyTorch / CUDA / c10.dll，适用于无 GPU 机器）
+TzdTools.exe build "app.tzd" --buildCpu -o "app_cpu.exe"
+
+:: 3. 导出生成的原生 C++ 源码包
+TzdTools.exe build "app.tzd" --codegen -o "app.cpp"
+
+:: 4. 编译并保留生成的中间 C++ 源码
+TzdTools.exe build "app.tzd" --keep-cpp -o "app.exe"
 ```
