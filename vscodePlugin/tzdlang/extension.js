@@ -464,8 +464,19 @@ class TzdConfigurationProvider {
         config.debugPort = 54321;
       }
 
+      const extConfig = vscode.workspace.getConfiguration(CFG_SECTION);
+      if (config.jit === undefined) {
+        config.jit = extConfig.get("enableJit", true);
+      }
+      if (config.optLevel === undefined) {
+        config.optLevel = extConfig.get("optLevel", 3);
+      }
+      if (config.enableAstInlining === undefined) {
+        config.enableAstInlining = extConfig.get("enableAstInlining", true);
+      }
+
       if (!config.args) {
-        config.args = ["--jit"];
+        config.args = config.jit ? ["--jit", "--jit-debug", `-O${config.optLevel}`] : ["--no-jit"];
       }
     }
 
@@ -548,14 +559,75 @@ function activate(context) {
         return;
       }
       await doc.save();
+      const extConfig = vscode.workspace.getConfiguration(CFG_SECTION);
+      const optLevel = extConfig.get("optLevel", 3);
+      const jitEnabled = extConfig.get("enableJit", true);
+
       vscode.debug.startDebugging(undefined, {
         type: "tzdlang",
         name: `调试 ${path.basename(doc.fileName)}`,
         request: "launch",
         program: doc.fileName,
-        args: ["--jit"],
+        jit: jitEnabled,
+        optLevel: optLevel,
+        args: jitEnabled ? ["--jit", "--jit-debug", `-O${optLevel}`] : ["--no-jit"],
         stopOnEntry: false,
       });
+    }),
+
+    vscode.commands.registerCommand("tzdlang.showJitStatus", async () => {
+      const session = vscode.debug.activeDebugSession;
+      if (!session || (session.type !== "tzdlang" && session.type !== "tzd")) {
+        vscode.window.showInformationMessage("请先启动 TzdLang 调试会话以查看 JIT 引擎状态。");
+        return;
+      }
+      try {
+        const resp = await session.customRequest("evaluate", { expression: ":jit status" });
+        if (!outputChannel) outputChannel = vscode.window.createOutputChannel("TzdLang");
+        outputChannel.show(true);
+        outputChannel.appendLine("\n" + (resp.result || ""));
+      } catch (err) {
+        vscode.window.showErrorMessage("获取 JIT 状态失败: " + err.message);
+      }
+    }),
+
+    vscode.commands.registerCommand("tzdlang.listJitFunctions", async () => {
+      const session = vscode.debug.activeDebugSession;
+      if (!session || (session.type !== "tzdlang" && session.type !== "tzd")) {
+        vscode.window.showInformationMessage("请先启动 TzdLang 调试会话以列出 JIT 函数。");
+        return;
+      }
+      try {
+        const resp = await session.customRequest("evaluate", { expression: ":jit list" });
+        if (!outputChannel) outputChannel = vscode.window.createOutputChannel("TzdLang");
+        outputChannel.show(true);
+        outputChannel.appendLine("\n" + (resp.result || ""));
+      } catch (err) {
+        vscode.window.showErrorMessage("获取 JIT 函数列表失败: " + err.message);
+      }
+    }),
+
+    vscode.commands.registerCommand("tzdlang.dumpJitIR", async () => {
+      const session = vscode.debug.activeDebugSession;
+      if (!session || (session.type !== "tzdlang" && session.type !== "tzd")) {
+        vscode.window.showInformationMessage("请先启动 TzdLang 调试会话以导出 JIT LLVM IR。");
+        return;
+      }
+      const funcName = await vscode.window.showInputBox({
+        prompt: "输入要导出 LLVM IR 的函数名或符号名 (如 noop, main, fast_calc)",
+        placeHolder: "noop",
+      });
+      if (!funcName) return;
+      try {
+        const resp = await session.customRequest("evaluate", { expression: `:jit ir ${funcName}` });
+        const doc = await vscode.workspace.openTextDocument({
+          content: resp.result || "; Empty IR",
+          language: "llvm",
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      } catch (err) {
+        vscode.window.showErrorMessage("导出 LLVM IR 失败: " + err.message);
+      }
     }),
 
     vscode.commands.registerCommand("tzdlang.resetToolsPath", () => {

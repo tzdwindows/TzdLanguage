@@ -2921,8 +2921,11 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
     // before dispatching to this core, so that the bytecode VM and native
     // paths also honour them consistently.
 
-    // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行，除非启用JIT调试) ---
-    if (jittedPtr && (!TzdDebugger::g_DebugActive || TzdJitEngine::isJitDebugEnabled())) {
+    // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行，除非启用JIT调试且该函数内无断点且未处于单步状态) ---
+    int endLine = (funcBody && funcBody->getStop()) ? (int)funcBody->getStop()->getLine() : -1;
+    bool hasBpInFunc = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(sourceFile, line, endLine));
+
+    if (jittedPtr && (!TzdDebugger::g_DebugActive || (TzdJitEngine::isJitDebugEnabled() && !hasBpInFunc))) {
         this->clearJitError();
         this->m_jitUnhandledThrow.reset(); // 清除上一次遗留的异常
         g_CurrentInterpreter = this;

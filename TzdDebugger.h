@@ -8,6 +8,8 @@ namespace TzdDebugger {
     extern bool g_DebugActive;
     void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int port);
     void shutdownServer();
+    bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLine);
+    bool isStepping();
 }
 
 #endif

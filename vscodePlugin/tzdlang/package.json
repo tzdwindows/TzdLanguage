@@ -2,7 +2,7 @@
     "name": "tzdlang",
     "displayName": "TzdLang",
     "description": "现代化、高性能面向对象编程语言 TzdLang 官方插件，支持语法高亮、LSP代码补全、DAP可视化交互断点调试",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "engines": {
         "vscode": "^1.80.0"
     },
@@ -17,6 +17,9 @@
         "onCommand:tzdlang.runCurrentFile",
         "onCommand:tzdlang.debugCurrentFile",
         "onCommand:tzdlang.resetToolsPath",
+        "onCommand:tzdlang.showJitStatus",
+        "onCommand:tzdlang.listJitFunctions",
+        "onCommand:tzdlang.dumpJitIR",
         "onCommand:tzdlang.helloWorld"
     ],
     "main": "./extension.js",
@@ -65,14 +68,47 @@
                                 "description": "要运行和调试的 .tzd 脚本绝对路径或工作区相对路径。",
                                 "default": "${file}"
                             },
+                            "jit": {
+                                "type": "boolean",
+                                "description": "是否开启 JIT 即时编译极速执行 (默认 true，零运行时开销)。",
+                                "default": true
+                            },
+                            "optLevel": {
+                                "type": "number",
+                                "enum": [0, 1, 2, 3],
+                                "description": "JIT 优化级别: 0 (无内联), 1 (轻度), 2 (标准平衡), 3 (极限内联与循环展开)。",
+                                "default": 3
+                            },
+                            "inlineThreshold": {
+                                "type": "number",
+                                "description": "JIT 函数内联阈值 (例如 500)。",
+                                "default": 500
+                            },
+                            "enableAstInlining": {
+                                "type": "boolean",
+                                "description": "是否开启 AST 级小函数极速内联 (大幅消除函数调用装箱开销)。",
+                                "default": true
+                            },
+                            "enableMathIntrinsics": {
+                                "type": "boolean",
+                                "description": "是否开启内置数学函数硬件指令级内联 (如 sqrt -> sqrtsd)。",
+                                "default": true
+                            },
+                            "enableLoopUnroll": {
+                                "type": "boolean",
+                                "description": "是否开启循环展开优化 (Loop Unrolling)。",
+                                "default": true
+                            },
                             "args": {
                                 "type": "array",
-                                "description": "传递给 TzdTools.exe 的额外命令行启动参数 (例如 [\"--jit\", \"--experimental-compute\", \"--bigTime\"])。",
+                                "description": "传递给 TzdTools.exe 的额外命令行启动参数 (例如 [\"--jit-debug\", \"-O3\", \"--bigTime\"])。",
                                 "items": {
                                     "type": "string"
                                 },
                                 "default": [
-                                    "--jit"
+                                    "--jit",
+                                    "--jit-debug",
+                                    "-O3"
                                 ]
                             },
                             "stopOnEntry": {
@@ -119,12 +155,42 @@
                 },
                 "initialConfigurations": [
                     {
-                        "name": "TzdLang: 调试当前脚本",
+                        "name": "TzdLang: JIT 极限性能调试 (-O3 极限内联与循环展开)",
                         "type": "tzdlang",
                         "request": "launch",
                         "program": "${file}",
+                        "jit": true,
+                        "optLevel": 3,
                         "args": [
-                            "--jit"
+                            "--jit",
+                            "--jit-debug",
+                            "-O3"
+                        ],
+                        "stopOnEntry": false
+                    },
+                    {
+                        "name": "TzdLang: JIT 标准调试 (-O2)",
+                        "type": "tzdlang",
+                        "request": "launch",
+                        "program": "${file}",
+                        "jit": true,
+                        "optLevel": 2,
+                        "args": [
+                            "--jit",
+                            "--jit-debug",
+                            "-O2"
+                        ],
+                        "stopOnEntry": false
+                    },
+                    {
+                        "name": "TzdLang: 解释器逐行步进调试 (-O0 / 无JIT)",
+                        "type": "tzdlang",
+                        "request": "launch",
+                        "program": "${file}",
+                        "jit": false,
+                        "optLevel": 0,
+                        "args": [
+                            "--no-jit"
                         ],
                         "stopOnEntry": false
                     },
@@ -183,6 +249,18 @@
                 "title": "TzdLang: 重新设置 TzdTools 路径"
             },
             {
+                "command": "tzdlang.showJitStatus",
+                "title": "TzdLang: 查看 JIT 引擎状态 (:jit status)"
+            },
+            {
+                "command": "tzdlang.listJitFunctions",
+                "title": "TzdLang: 列出已编译 JIT 函数与地址 (:jit list)"
+            },
+            {
+                "command": "tzdlang.dumpJitIR",
+                "title": "TzdLang: 导出函数 LLVM IR (:jit ir)"
+            },
+            {
                 "command": "tzdlang.helloWorld",
                 "title": "Hello World"
             }
@@ -220,6 +298,22 @@
                     "type": "string",
                     "default": "",
                     "description": "TzdTools.exe 的完整路径。留空时扩展会自动在常见位置查找。"
+                },
+                "tzdlang.enableJit": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "是否默认启用 JIT 即时编译及极速执行。"
+                },
+                "tzdlang.optLevel": {
+                    "type": "number",
+                    "enum": [0, 1, 2, 3],
+                    "default": 3,
+                    "description": "默认 JIT 优化级别: 0 (无内联), 1 (轻度), 2 (标准平衡), 3 (极限内联与循环展开)。"
+                },
+                "tzdlang.enableAstInlining": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "是否默认开启 AST 级小函数极速内联。"
                 }
             }
         }

@@ -983,14 +983,17 @@ extern "C" {
         if (!ctor) return instVal;
 
         if (ctor->jittedPtr) {
-            TzdValue* ignored = g_JitPool.next();
-            g_CurrentInterpreter->m_callFrameStack.push_back({ instVal, args, argCount });
+            int endLine = (ctor->body && ctor->body->getStop()) ? (int)ctor->body->getStop()->getLine() : -1;
+            bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(ctor->sourceFile, ctor->line, endLine));
+            if (!hasBp) {
+                TzdValue* ignored = g_JitPool.next();
+                g_CurrentInterpreter->m_callFrameStack.push_back({ instVal, args, argCount });
 
-            if (!TzdDebugger::g_DebugActive) {
-                ctor->jittedPtr(g_CurrentInterpreter, ignored);
-                g_CurrentInterpreter->m_callFrameStack.pop_back();
-                return instVal;
-            }
+                if (!TzdDebugger::g_DebugActive) {
+                    ctor->jittedPtr(g_CurrentInterpreter, ignored);
+                    g_CurrentInterpreter->m_callFrameStack.pop_back();
+                    return instVal;
+                }
 
             // 【修改】：基于构造函数（ctor）的 sourceFile 和 line 字段，拼接 Java 风格构造函数栈帧
             std::string fileLoc = formatSourcePath(ctor->sourceFile);
@@ -1000,13 +1003,14 @@ extern "C" {
             if (line > 0) frameName += ":" + std::to_string(line);
             frameName += ") (JIT Compiled)";
 
-            g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
-            ctor->jittedPtr(g_CurrentInterpreter, ignored);
-            g_CurrentInterpreter->m_callStackFrames.pop_back();
-            g_CurrentInterpreter->m_callFrameStack.pop_back();
-            return instVal;
+                g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+                ctor->jittedPtr(g_CurrentInterpreter, ignored);
+                g_CurrentInterpreter->m_callStackFrames.pop_back();
+                g_CurrentInterpreter->m_callFrameStack.pop_back();
+                return instVal;
+            }
         }
-        else if (g_CurrentInterpreter && ctor->body) {
+        if (g_CurrentInterpreter && ctor->body) {
             std::vector<TzdValue> callArgs;
             callArgs.reserve(argCount);
             for (int i = 0; i < argCount; ++i) callArgs.push_back(args[i]);
@@ -1027,7 +1031,10 @@ extern "C" {
         if (!g_CurrentInterpreter || !funcPtr) return g_JitPool.next();
         TzdValue* funcObj = (TzdValue*)funcPtr;
 
-        if (funcObj->type == TzdValue::FUNCTION && funcObj->jittedPtr) {
+        int endLine = (funcObj->funcBody && funcObj->funcBody->getStop()) ? (int)funcObj->funcBody->getStop()->getLine() : -1;
+        bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(funcObj->sourceFile, funcObj->line, endLine));
+
+        if (funcObj->type == TzdValue::FUNCTION && funcObj->jittedPtr && !hasBp) {
             TzdValue* result = g_JitPool.next();
             if (!TzdDebugger::g_DebugActive) {
                 if (!funcObj->instanceVal) {
@@ -1101,11 +1108,15 @@ extern "C" {
             TzdClassDef* cls = v->instanceVal->definition;
             if (const TzdMemberSlot* slot = cls->tzdDispatch.find((TzdSelector)selector)) {
                 if (slot->method && slot->method->jittedPtr) {
-                    TzdValue* result = g_JitPool.next();
-                    g_CurrentInterpreter->m_callFrameStack.push_back({ v, args, argCount });
-                    slot->method->jittedPtr(g_CurrentInterpreter, result);
-                    g_CurrentInterpreter->m_callFrameStack.pop_back();
-                    return result;
+                    int endLine = (slot->method->body && slot->method->body->getStop()) ? (int)slot->method->body->getStop()->getLine() : -1;
+                    bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(slot->method->sourceFile, slot->method->line, endLine));
+                    if (!hasBp) {
+                        TzdValue* result = g_JitPool.next();
+                        g_CurrentInterpreter->m_callFrameStack.push_back({ v, args, argCount });
+                        slot->method->jittedPtr(g_CurrentInterpreter, result);
+                        g_CurrentInterpreter->m_callFrameStack.pop_back();
+                        return result;
+                    }
                 }
             }
         }

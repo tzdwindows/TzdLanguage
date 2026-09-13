@@ -80,6 +80,48 @@ std::string formatTzdValue(const TzdValue& val) {
     }
 }
 
+bool isStepping() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    return g_DebugState.stepInto || g_DebugState.stepOver || g_DebugState.stepOut;
+}
+
+bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLine) {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    if (g_DebugState.breakpoints.empty()) return false;
+
+    std::string normFile = file;
+    std::replace(normFile.begin(), normFile.end(), '\\', '/');
+    std::transform(normFile.begin(), normFile.end(), normFile.begin(), ::tolower);
+
+    for (const auto& bp : g_DebugState.breakpoints) {
+        bool fileMatch = bp.file.empty() || normFile.empty() || normFile == "memory";
+        if (!fileMatch) {
+            std::string bpNorm = bp.file;
+            std::replace(bpNorm.begin(), bpNorm.end(), '\\', '/');
+            std::transform(bpNorm.begin(), bpNorm.end(), bpNorm.begin(), ::tolower);
+            if (normFile.find(bpNorm) != std::string::npos || bpNorm.find(normFile) != std::string::npos) {
+                fileMatch = true;
+            } else {
+                try {
+                    std::string fn1 = fs::path(normFile).filename().string();
+                    std::string fn2 = fs::path(bpNorm).filename().string();
+                    if (!fn1.empty() && fn1 == fn2) {
+                        fileMatch = true;
+                    }
+                } catch (...) {}
+            }
+        }
+        if (fileMatch) {
+            if (endLine > 0) {
+                if (bp.line >= startLine && bp.line <= endLine) return true;
+            } else {
+                if (bp.line >= startLine) return true;
+            }
+        }
+    }
+    return false;
+}
+
 void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& file, int line) {
     if (g_DebugState.isEvaluating) return;
 

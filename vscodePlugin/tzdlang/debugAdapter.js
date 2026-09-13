@@ -224,10 +224,34 @@ class TzdDebugSession {
       }
     }
 
-    // 附加额外自定义启动参数 (如 --jit, --experimental-compute 等)
+    this.jitEnabled = args.jit !== false;
+
+    // 默认开启 JIT 极速运行与 JIT 调试支持
+    if (this.jitEnabled) {
+      if (!cmdArgs.includes("--jit")) cmdArgs.push("--jit");
+      if (!cmdArgs.includes("--jit-debug")) cmdArgs.push("--jit-debug");
+      const optLevel = args.optLevel !== undefined ? args.optLevel : 3;
+      cmdArgs.push(`-O${optLevel}`);
+      if (args.inlineThreshold !== undefined) {
+        cmdArgs.push(`--inline-threshold=${args.inlineThreshold}`);
+      }
+      if (args.enableAstInlining === false) {
+        cmdArgs.push("--no-inline");
+      }
+      if (args.enableMathIntrinsics === false) {
+        cmdArgs.push("--no-jit-intrinsics");
+      }
+      if (args.enableLoopUnroll === false) {
+        cmdArgs.push("--no-unroll");
+      }
+    } else {
+      cmdArgs.push("--noJit");
+    }
+
+    // 附加额外自定义启动参数 (如 --experimental-compute 等)
     if (Array.isArray(args.args)) {
       for (const a of args.args) {
-        if (a && typeof a === "string") {
+        if (a && typeof a === "string" && !cmdArgs.includes(a)) {
           cmdArgs.push(a);
         }
       }
@@ -613,10 +637,10 @@ class TzdDebugSession {
     this.breakpointsMap.set(normPath, breakpoints);
     flog(`handleSetBreakpoints: file=${normPath} bps=${JSON.stringify(breakpoints)} socketOk=${!!(this.socket && !this.socket.destroyed)} isSuspended=${this.isSuspended}`);
 
-    // 如果 Socket 已经建立且当前处于挂起状态，立即同步断点并消费响应
-    if (this.socket && !this.socket.destroyed && this.isSuspended) {
+    // 如果 Socket 已经建立，立即同步断点并消费响应
+    if (this.socket && !this.socket.destroyed) {
       try {
-        flog(`handleSetBreakpoints: sending :bp clear...`);
+        flog(`handleSetBreakpoints: syncing breakpoints for ${normPath}...`);
         await this.sendDebugCommand(`:bp clear "${normPath}"\n`);
         for (const bp of breakpoints) {
           flog(`handleSetBreakpoints: sending :bp add line ${bp.line}`);
@@ -630,7 +654,7 @@ class TzdDebugSession {
     } else {
       // 标记尚未同步，稍后由 startup pause 或 configurationDone 触发同步
       this.breakpointsSynced = false;
-      flog(`handleSetBreakpoints: deferred sync until startup pause/configDone`);
+      flog(`handleSetBreakpoints: deferred sync until socket ready/startup pause`);
     }
 
     const responseBreakpoints = breakpoints.map((bp, index) => ({
@@ -643,6 +667,25 @@ class TzdDebugSession {
     this.sendResponse(request, {
       breakpoints: responseBreakpoints,
     });
+  }
+
+  async syncAllBreakpoints() {
+    if (!this.socket || this.socket.destroyed) return;
+    flog("syncAllBreakpoints: starting sync...");
+    for (const [normPath, bps] of this.breakpointsMap.entries()) {
+      flog(`syncAllBreakpoints: syncing ${bps.length} breakpoints for ${normPath}`);
+      try {
+        await this.sendDebugCommand(`:bp clear "${normPath}"\n`);
+        for (const bp of bps) {
+          flog(`syncAllBreakpoints: sending :bp add "${normPath}" ${bp.line}`);
+          await this.sendDebugCommand(`:bp add "${normPath}" ${bp.line}\n`);
+        }
+      } catch (e) {
+        flog(`syncAllBreakpoints EXCEPTION for ${normPath}: ${e.message}`);
+      }
+    }
+    this.breakpointsSynced = true;
+    flog("syncAllBreakpoints: finished successfully");
   }
 
   async handleConfigurationDone(request) {
@@ -766,26 +809,98 @@ class TzdDebugSession {
   }
 
   handleScopes(request) {
+    const scopes = [
+      {
+        name: "局部变量 (Locals)",
+        presentationHint: "locals",
+        variablesReference: 1001,
+        expensive: false,
+      },
+      {
+        name: "全局变量 (Globals)",
+        presentationHint: "globals",
+        variablesReference: 1002,
+        expensive: false,
+      },
+    ];
+
+    if (this.jitEnabled !== false) {
+      scopes.push({
+        name: "JIT 引擎 (JIT Engine)",
+        presentationHint: "registers",
+        variablesReference: 1003,
+        expensive: false,
+      });
+    }
+
     this.sendResponse(request, {
-      scopes: [
-        {
-          name: "局部变量 (Locals)",
-          presentationHint: "locals",
-          variablesReference: 1001,
-          expensive: false,
-        },
-        {
-          name: "全局变量 (Globals)",
-          presentationHint: "globals",
-          variablesReference: 1002,
-          expensive: false,
-        },
-      ],
+      scopes: scopes,
     });
   }
 
   async handleVariables(request, args) {
     const varRef = args.variablesReference;
+
+    if (varRef === 1003) {
+      // 查询 JIT 状态及编译函数列表
+      const variables = [];
+      try {
+        const rawStatus = await this.sendDebugCommand(":jit status\n");
+        const statusLines = rawStatus.split("\n");
+        for (const line of statusLines) {
+          const trimLine = line.trim();
+          if (!trimLine || trimLine.startsWith("===") || trimLine.startsWith("---") || trimLine.startsWith("Use ':'")) continue;
+          const colonPos = trimLine.indexOf(": ");
+          if (colonPos !== -1) {
+            const key = trimLine.substring(0, colonPos).trim();
+            const val = trimLine.substring(colonPos + 2).trim();
+            variables.push({
+              name: key,
+              value: val,
+              type: "jit_status",
+              variablesReference: 0,
+            });
+          }
+        }
+
+        // 查询已编译的 JIT 函数列表
+        const rawList = await this.sendDebugCommand(":jit list\n");
+        const listLines = rawList.split("\n");
+        for (const line of listLines) {
+          const trimLine = line.trim();
+          if (!trimLine || trimLine.startsWith("===") || trimLine.includes("(No JIT functions")) continue;
+          if (trimLine.startsWith("[")) {
+            const closeBracket = trimLine.indexOf("]");
+            if (closeBracket !== -1) {
+              const idxStr = trimLine.substring(0, closeBracket + 1);
+              const rest = trimLine.substring(closeBracket + 1).trim();
+              const pipePos = rest.indexOf("|");
+              const funcName = pipePos !== -1 ? rest.substring(0, pipePos).trim() : rest;
+              const meta = pipePos !== -1 ? rest.substring(pipePos).trim() : "";
+              variables.push({
+                name: `${idxStr} ${funcName}`,
+                value: meta,
+                type: "jit_symbol",
+                variablesReference: 0,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        variables.push({
+          name: "JIT Status",
+          value: `Error: ${e.message}`,
+          type: "error",
+          variablesReference: 0,
+        });
+      }
+
+      this.sendResponse(request, {
+        variables: variables,
+      });
+      return;
+    }
+
     let cmd = ":locals\n";
     if (varRef === 1002) {
       cmd = ":globals\n";
@@ -875,9 +990,10 @@ class TzdDebugSession {
       return;
     }
 
-    if (rawExpr.startsWith(":")) {
+    if (rawExpr.startsWith(":") || rawExpr === "jit" || rawExpr.startsWith("jit ")) {
+      const execCmd = rawExpr.startsWith(":") ? rawExpr : ":" + rawExpr;
       try {
-        let output = await this.sendDebugCommand(rawExpr);
+        let output = await this.sendDebugCommand(execCmd);
         output = output.replace(/TzdDebug>\s*$/g, "").trim();
         this.sendResponse(request, { result: output || "(no output)", variablesReference: 0 });
       } catch (err) {
