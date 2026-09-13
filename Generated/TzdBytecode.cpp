@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <chrono>
 
 namespace {
 
@@ -60,6 +61,127 @@ double bcAsDouble(const TzdValue& v) {
 
 bool bcIsIntLike(const TzdValue& v) {
     return v.type >= TzdValue::SBYTE && v.type <= TzdValue::LONG;
+}
+
+inline void releaseResourceIfNeeded(TzdValue& v) {
+    if (v.instanceVal) {
+        v.instanceVal->release();
+        v.instanceVal = nullptr;
+    }
+    if (v.type == TzdValue::TENSOR && v.ptrVal) {
+        tzdTensorRelease(v.ptrVal);
+        v.ptrVal = nullptr;
+    }
+}
+
+inline void copyValueFast(TzdValue& dst, const TzdValue& src) {
+    releaseResourceIfNeeded(dst);
+    dst.type = src.type;
+    switch (src.type) {
+    case TzdValue::INT: case TzdValue::LONG: case TzdValue::SHORT: case TzdValue::SBYTE:
+    case TzdValue::UINT: case TzdValue::ULONG: case TzdValue::USHORT: case TzdValue::BYTE:
+        dst.lVal = src.lVal;
+        break;
+    case TzdValue::DOUBLE: case TzdValue::FLOAT:
+        dst.dVal = src.dVal;
+        break;
+    case TzdValue::BOOL:
+        dst.bVal = src.bVal;
+        break;
+    case TzdValue::NONE:
+        dst.lVal = 0;
+        break;
+    case TzdValue::STRING:
+        dst.sVal = src.sVal;
+        break;
+    case TzdValue::POINTER:
+        dst.ptrVal = src.ptrVal;
+        break;
+    case TzdValue::INSTANCE:
+        dst.instanceVal = src.instanceVal;
+        if (dst.instanceVal) dst.instanceVal->retain();
+        break;
+    default:
+        dst = src;
+        break;
+    }
+}
+
+inline void moveValueFast(TzdValue& dst, TzdValue&& src) {
+    releaseResourceIfNeeded(dst);
+    dst.type = src.type;
+    switch (src.type) {
+    case TzdValue::INT: case TzdValue::LONG: case TzdValue::SHORT: case TzdValue::SBYTE:
+    case TzdValue::UINT: case TzdValue::ULONG: case TzdValue::USHORT: case TzdValue::BYTE:
+        dst.lVal = src.lVal;
+        break;
+    case TzdValue::DOUBLE: case TzdValue::FLOAT:
+        dst.dVal = src.dVal;
+        break;
+    case TzdValue::BOOL:
+        dst.bVal = src.bVal;
+        break;
+    case TzdValue::NONE:
+        dst.lVal = 0;
+        break;
+    case TzdValue::STRING:
+        dst.sVal = std::move(src.sVal);
+        break;
+    case TzdValue::POINTER:
+        dst.ptrVal = src.ptrVal;
+        break;
+    case TzdValue::INSTANCE:
+        dst.instanceVal = src.instanceVal;
+        src.instanceVal = nullptr;
+        break;
+    default:
+        dst = std::move(src);
+        break;
+    }
+    src.type = TzdValue::NONE;
+    src.ptrVal = nullptr;
+}
+
+// Unwrap ParenExprContext to inner expression
+static TzdLangParser::ExpressionContext* unwrapExpr(TzdLangParser::ExpressionContext* expr) {
+    while (expr) {
+        if (auto p = dynamic_cast<TzdLangParser::ParenExprContext*>(expr)) {
+            expr = p->expression();
+        } else {
+            break;
+        }
+    }
+    return expr;
+}
+
+// Try to extract an integer constant from an expression (e.g. 1, -1, 100)
+static bool tryGetIntLiteral(TzdLangParser::ExpressionContext* expr, int64_t& outVal) {
+    expr = unwrapExpr(expr);
+    if (!expr) return false;
+    if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(expr)) {
+        if (auto intCtx = dynamic_cast<TzdLangParser::IntExprContext*>(atomExpr->atom())) {
+            std::string raw = intCtx->getText();
+            try {
+                outVal = std::stoll(raw, nullptr, 0);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+    }
+    return false;
+}
+
+// Check if an expression is an identifier referring to the specified variable name
+static bool isSameVarId(TzdLangParser::ExpressionContext* expr, const std::string& varName) {
+    expr = unwrapExpr(expr);
+    if (!expr) return false;
+    if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(expr)) {
+        if (auto idCtx = dynamic_cast<TzdLangParser::IdExprContext*>(atomExpr->atom())) {
+            return idCtx->IDENTIFIER()->getText() == varName;
+        }
+    }
+    return false;
 }
 
 // Check if either operand requires BIGINT/RATIONAL arithmetic
@@ -156,11 +278,46 @@ int TzdBytecodeCompiler::addConstant(const ConstEntry& e) {
 
 void TzdBytecodeCompiler::emit(OpCode op, int32_t arg1, int32_t arg2) {
     if (!m_currentFunc) return;
+    auto& code = m_currentFunc->code;
+    // Peephole optimization for POP
+    if (op == OpCode::POP && code.size() >= 2) {
+        // Pattern 1: DUP, STORE_LOCAL -> STORE_LOCAL
+        if (code.back().op == OpCode::STORE_LOCAL && code[code.size() - 2].op == OpCode::DUP) {
+            Instruction store = code.back();
+            code.pop_back();
+            code.pop_back();
+            code.push_back(store);
+            return;
+        }
+        // Pattern 2: DUP, STORE_VAR -> STORE_VAR
+        if (code.back().op == OpCode::STORE_VAR && code[code.size() - 2].op == OpCode::DUP) {
+            Instruction store = code.back();
+            code.pop_back();
+            code.pop_back();
+            code.push_back(store);
+            return;
+        }
+        // Pattern 3: INC_LOCAL, LOAD_LOCAL -> INC_LOCAL
+        if (code.back().op == OpCode::LOAD_LOCAL && code[code.size() - 2].op == OpCode::INC_LOCAL &&
+            code.back().arg1 == code[code.size() - 2].arg1) {
+            code.pop_back();
+            return;
+        }
+        // Pattern 4: LOAD_LOCAL, INC_LOCAL -> INC_LOCAL
+        if (code.back().op == OpCode::INC_LOCAL && code[code.size() - 2].op == OpCode::LOAD_LOCAL &&
+            code.back().arg1 == code[code.size() - 2].arg1) {
+            Instruction inc = code.back();
+            code.pop_back();
+            code.pop_back();
+            code.push_back(inc);
+            return;
+        }
+    }
     Instruction instr;
     instr.op = op;
     instr.arg1 = arg1;
     instr.arg2 = arg2;
-    m_currentFunc->code.push_back(instr);
+    code.push_back(instr);
 }
 
 size_t TzdBytecodeCompiler::here() const {
@@ -391,6 +548,9 @@ static int stackDelta(OpCode op, int32_t arg1, int32_t arg2) {
     case OpCode::TRY: case OpCode::TRY_END:
         return 0;
 
+    case OpCode::INC_LOCAL:
+        return 0;
+
     case OpCode::HALT:
         return 0;
     }
@@ -416,7 +576,7 @@ static bool usesConstantOp(OpCode op) {
 }
 
 static bool usesLocalOp(OpCode op) {
-    return op == OpCode::LOAD_LOCAL || op == OpCode::STORE_LOCAL;
+    return op == OpCode::LOAD_LOCAL || op == OpCode::STORE_LOCAL || op == OpCode::INC_LOCAL;
 }
 
 bool TzdBytecodeCompiler::verifyModule(BytecodeModule& mod, std::string* errMsg) {
@@ -1062,6 +1222,41 @@ std::any TzdBytecodeCompiler::visitAssignmentExpr(
         if (auto id = dynamic_cast<TzdLangParser::IdExprContext*>(atom)) {
             std::string name = id->IDENTIFIER()->getText();
             int slot = resolveLocal(name);
+
+            // Fast path: i += delta or i -= delta on local slot
+            int64_t delta = 0;
+            if (slot >= 0 && isCompound && (ctx->PLUS_ASSIGN() || ctx->MIN_ASSIGN())) {
+                if (tryGetIntLiteral(ctx->expression(1), delta)) {
+                    int32_t d = ctx->PLUS_ASSIGN() ? (int32_t)delta : -(int32_t)delta;
+                    emit(OpCode::INC_LOCAL, slot, d);
+                    emit(OpCode::LOAD_LOCAL, slot);
+                    return std::any();
+                }
+            }
+
+            // Fast path: i = i + delta or i = i - delta (or i = delta + i) on local slot
+            if (slot >= 0 && !isCompound) {
+                if (auto addCtx = dynamic_cast<TzdLangParser::AdditiveExprContext*>(ctx->expression(1))) {
+                    if (addCtx->PLUS()) {
+                        if (isSameVarId(addCtx->expression(0), name) && tryGetIntLiteral(addCtx->expression(1), delta)) {
+                            emit(OpCode::INC_LOCAL, slot, (int32_t)delta);
+                            emit(OpCode::LOAD_LOCAL, slot);
+                            return std::any();
+                        } else if (isSameVarId(addCtx->expression(1), name) && tryGetIntLiteral(addCtx->expression(0), delta)) {
+                            emit(OpCode::INC_LOCAL, slot, (int32_t)delta);
+                            emit(OpCode::LOAD_LOCAL, slot);
+                            return std::any();
+                        }
+                    } else if (addCtx->MINUS()) {
+                        if (isSameVarId(addCtx->expression(0), name) && tryGetIntLiteral(addCtx->expression(1), delta)) {
+                            emit(OpCode::INC_LOCAL, slot, -(int32_t)delta);
+                            emit(OpCode::LOAD_LOCAL, slot);
+                            return std::any();
+                        }
+                    }
+                }
+            }
+
             if (isCompound) {
                 if (slot >= 0) emit(OpCode::LOAD_LOCAL, slot);
                 else emit(OpCode::LOAD_VAR, addConstant(name));
@@ -1192,13 +1387,16 @@ std::any TzdBytecodeCompiler::visitPrefixExpr(TzdLangParser::PrefixExprContext* 
         if (auto id = dynamic_cast<TzdLangParser::IdExprContext*>(atom)) {
             std::string name = id->IDENTIFIER()->getText();
             int slot = resolveLocal(name);
-            if (slot >= 0) emit(OpCode::LOAD_LOCAL, slot);
-            else emit(OpCode::LOAD_VAR, addConstant(name));
+            if (slot >= 0) {
+                emit(OpCode::INC_LOCAL, slot, isInc ? 1 : -1);
+                emit(OpCode::LOAD_LOCAL, slot);
+                return std::any();
+            }
+            emit(OpCode::LOAD_VAR, addConstant(name));
             emit(OpCode::PUSH_INT, addConstant((int64_t)1));
             emit(isInc ? OpCode::ADD : OpCode::SUB);
             emit(OpCode::DUP);
-            if (slot >= 0) emit(OpCode::STORE_LOCAL, slot);
-            else emit(OpCode::STORE_VAR, addConstant(name));
+            emit(OpCode::STORE_VAR, addConstant(name));
             return std::any();
         }
     }
@@ -1241,13 +1439,16 @@ std::any TzdBytecodeCompiler::visitPostfixExpr(TzdLangParser::PostfixExprContext
         if (auto id = dynamic_cast<TzdLangParser::IdExprContext*>(atom)) {
             std::string name = id->IDENTIFIER()->getText();
             int slot = resolveLocal(name);
-            if (slot >= 0) emit(OpCode::LOAD_LOCAL, slot);
-            else emit(OpCode::LOAD_VAR, addConstant(name));
+            if (slot >= 0) {
+                emit(OpCode::LOAD_LOCAL, slot);
+                emit(OpCode::INC_LOCAL, slot, isInc ? 1 : -1);
+                return std::any();
+            }
+            emit(OpCode::LOAD_VAR, addConstant(name));
             emit(OpCode::DUP);                   // keep old as result
             emit(OpCode::PUSH_INT, addConstant((int64_t)1));
             emit(isInc ? OpCode::ADD : OpCode::SUB);
-            if (slot >= 0) emit(OpCode::STORE_LOCAL, slot);
-            else emit(OpCode::STORE_VAR, addConstant(name));
+            emit(OpCode::STORE_VAR, addConstant(name));
             return std::any();
         }
     }
@@ -1403,13 +1604,32 @@ BytecodeModule TzdBytecodeCompiler::loadFromFile(const std::string& path) {
 // TzdBytecodeVM
 // ============================================================================
 TzdBytecodeVM::TzdBytecodeVM(TzdInterpreter* interp) : m_interp(interp) {
-    m_stack.reserve(65536);  // pre-allocate to avoid reallocation during execution
-    m_locals.reserve(8192);
+    m_stack.resize(65536);
+    m_locals.resize(16384);
+    m_sp = 0;
+    m_localTop = 0;
 }
 
 TzdValue TzdBytecodeVM::execute(const BytecodeModule& module) {
     if (module.functions.empty()) return TzdValue();
     m_module = &module;
+    for (size_t i = 0; i < m_sp; ++i) {
+        if (m_stack[i].instanceVal) {
+            m_stack[i].instanceVal->release();
+            m_stack[i].instanceVal = nullptr;
+        }
+        m_stack[i].type = TzdValue::NONE;
+    }
+    m_sp = 0;
+    for (size_t i = 0; i < m_localTop; ++i) {
+        if (m_locals[i].instanceVal) {
+            m_locals[i].instanceVal->release();
+            m_locals[i].instanceVal = nullptr;
+        }
+        m_locals[i].type = TzdValue::NONE;
+    }
+    m_localTop = 0;
+    m_handlers.clear();
     try {
         return runBytecodeFunc(module, 0, {});
     } catch (const TzdThrowException& e) {
@@ -1581,6 +1801,7 @@ static const char* opName(OpCode op) {
     case OpCode::MAKE_ARRAY: return "MK_ARR";
     case OpCode::TRY: return "TRY";
     case OpCode::TRY_END: return "TRY_END";
+    case OpCode::INC_LOCAL: return "INC_L";
     case OpCode::HALT: return "HALT";
     }
     return "?";
@@ -1606,117 +1827,181 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
     return runBytecodeFunc(module, funcIndex, args.data(), args.size());
 }
 
+struct VMCallFrame {
+    size_t funcIndex;
+    const Instruction* code;
+    size_t codeSize;
+    size_t ip;
+    size_t localBase;
+    size_t stackBase;
+    size_t handlerBase;
+};
+
 TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                                         size_t funcIndex,
                                         const TzdValue* argsData,
                                         size_t argCount) {
     if (funcIndex >= module.functions.size()) return TzdValue();
-    const BytecodeFunc& f = module.functions[funcIndex];
-    const std::vector<Instruction>& code = f.code;
+    const BytecodeFunc* curFunc = &module.functions[funcIndex];
+    const Instruction* code = curFunc->code.data();
+    size_t codeSize = curFunc->code.size();
 
-    // Fresh local frame (locals are relative to localBase).
-    size_t localBase = m_locals.size();
-    int localsNeeded = (f.localCount > f.paramCount) ? f.localCount : f.paramCount;
+    // Call stack for iterative dispatch (eliminates recursive C++ runBytecodeFunc)
+    std::vector<VMCallFrame> callFrames;
+    callFrames.reserve(128);
+
+    size_t initialLocalBase = m_localTop;
+    size_t initialStackBase = m_sp;
+    size_t initialHandlerBase = m_handlers.size();
+
+    size_t currentFuncIdx = funcIndex;
+    size_t localBase = m_localTop;
+    int localsNeeded = (curFunc->localCount > curFunc->paramCount) ? curFunc->localCount : curFunc->paramCount;
     size_t needed = localBase + (size_t)localsNeeded + 1;
-    // Only grow when the vector is too small (avoids default ctor calls)
     if (m_locals.size() < needed) {
-        m_locals.resize(needed);
+        m_locals.resize(needed * 2);
+    }
+    m_localTop = needed;
+
+    // Copy initial arguments into locals
+    for (int i = 0; i < curFunc->paramCount && i < (int)argCount; ++i) {
+        copyValueFast(m_locals[localBase + i], argsData[i]);
+    }
+    for (size_t i = localBase + argCount; i < needed; ++i) {
+        releaseResourceIfNeeded(m_locals[i]);
+        m_locals[i].type = TzdValue::NONE;
+        m_locals[i].lVal = 0;
     }
 
-    // Copy args to locals BEFORE m_stack.reserve() — argsData may point
-    // into m_stack's buffer, and reserve can reallocate it (use-after-free).
-    for (int i = 0; i < f.paramCount && i < (int)argCount; ++i) {
-        m_locals[localBase + i] = argsData[i];
-    }
-    // Clear remaining local slots to null (for locals beyond params)
-    for (size_t i = localBase + f.paramCount; i < needed; ++i) {
-        m_locals[i] = TzdValue();
-    }
-
-    // Pre-allocate operand stack space based on verifier-computed maxStackDepth
-    if (f.maxStackDepth > 0) {
-        m_stack.reserve(m_stack.size() + (size_t)f.maxStackDepth + 4);
-    }
-
-    size_t stackBase = m_stack.size();
+    size_t stackBase = m_sp;
     size_t handlerBase = m_handlers.size();
     size_t ip = 0;
     TzdValue result; // default null
 
+    auto pushInt = [&](int64_t v) {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        auto& slot = m_stack[m_sp++];
+        releaseResourceIfNeeded(slot);
+        slot.type = TzdValue::INT;
+        slot.lVal = v;
+    };
+    auto pushDouble = [&](double v) {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        auto& slot = m_stack[m_sp++];
+        releaseResourceIfNeeded(slot);
+        slot.type = TzdValue::DOUBLE;
+        slot.dVal = v;
+    };
+    auto pushBool = [&](bool v) {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        auto& slot = m_stack[m_sp++];
+        releaseResourceIfNeeded(slot);
+        slot.type = TzdValue::BOOL;
+        slot.bVal = v;
+    };
+    auto pushNull = [&]() {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        auto& slot = m_stack[m_sp++];
+        releaseResourceIfNeeded(slot);
+        slot.type = TzdValue::NONE;
+        slot.lVal = 0;
+    };
+    auto pushValue = [&](const TzdValue& v) {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        copyValueFast(m_stack[m_sp++], v);
+    };
+    auto pushValueMove = [&](TzdValue&& v) {
+        if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+        moveValueFast(m_stack[m_sp++], std::move(v));
+    };
     auto pop = [&](TzdValue& out) -> bool {
-        if (m_stack.size() <= stackBase) return false;
-        out = std::move(m_stack.back());
-        m_stack.pop_back();
+        if (m_sp <= stackBase) return false;
+        moveValueFast(out, std::move(m_stack[--m_sp]));
         return true;
     };
 
-    // Main execution loop: try/catch is OUTSIDE the while to avoid
-    // per-instruction exception handling overhead. The outer for(;;)
-    // re-enters the loop only when an exception is caught.
     for (;;) {
     try {
-    while (ip < code.size()) {
+    while (ip < codeSize) {
         const Instruction& instr = code[ip];
         switch (instr.op) {
             // ---- Constants ----
             case OpCode::PUSH_DOUBLE: {
                 const ConstEntry& c = module.constants[instr.arg1];
-                m_stack.emplace_back(c.dVal);
+                pushDouble(c.dVal);
                 ++ip; break;
             }
             case OpCode::PUSH_INT: {
                 const ConstEntry& c = module.constants[instr.arg1];
                 if (c.type == ConstEntry::BIGINT) {
-                    // Big integer literal — push as BIGINT TzdValue
                     TzdValue v;
                     v.type = TzdValue::BIGINT;
                     v.sVal = c.sVal;
-                    m_stack.push_back(std::move(v));
+                    pushValueMove(std::move(v));
                 } else {
-                    m_stack.emplace_back(c.iVal);
+                    pushInt(c.iVal);
                 }
                 ++ip; break;
             }
             case OpCode::PUSH_STRING: {
                 const ConstEntry& c = module.constants[instr.arg1];
-                m_stack.emplace_back(c.sVal);
+                if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+                auto& slot = m_stack[m_sp++];
+                releaseResourceIfNeeded(slot);
+                slot.type = TzdValue::STRING;
+                slot.sVal = c.sVal;
                 ++ip; break;
             }
             case OpCode::PUSH_BOOL: {
                 const ConstEntry& c = module.constants[instr.arg1];
-                m_stack.emplace_back(c.bVal);
+                pushBool(c.bVal);
                 ++ip; break;
             }
             case OpCode::PUSH_NULL: {
-                m_stack.emplace_back();
+                pushNull();
                 ++ip; break;
             }
 
             // ---- Variables ----
             case OpCode::LOAD_LOCAL: {
                 const TzdValue& v = m_locals[localBase + instr.arg1];
-                // Type-specialized fast path: construct a new TzdValue with
-                // only the relevant field, avoiding a full 200+ byte copy
-                // of all empty strings/vectors/maps in the struct.
                 switch (v.type) {
-                case TzdValue::DOUBLE: case TzdValue::FLOAT:
-                    m_stack.emplace_back(v.dVal); break;
                 case TzdValue::INT: case TzdValue::LONG: case TzdValue::SHORT:
                 case TzdValue::SBYTE:
-                    m_stack.emplace_back(v.lVal); break;
+                    pushInt(v.lVal); break;
+                case TzdValue::DOUBLE: case TzdValue::FLOAT:
+                    pushDouble(v.dVal); break;
                 case TzdValue::BOOL:
-                    m_stack.emplace_back(v.bVal); break;
-                case TzdValue::STRING:
-                    m_stack.emplace_back(v.sVal); break;
+                    pushBool(v.bVal); break;
+                case TzdValue::NONE:
+                    pushNull(); break;
+                case TzdValue::STRING: {
+                    if (m_sp >= m_stack.size()) m_stack.resize(m_stack.size() * 2);
+                    auto& slot = m_stack[m_sp++];
+                    releaseResourceIfNeeded(slot);
+                    slot.type = TzdValue::STRING;
+                    slot.sVal = v.sVal;
+                    break;
+                }
                 default:
-                    m_stack.push_back(v); break;
+                    pushValue(v); break;
                 }
                 ++ip; break;
             }
             case OpCode::STORE_LOCAL: {
-                // Move directly from stack top, then shrink (avoids double move)
-                m_locals[localBase + instr.arg1] = std::move(m_stack.back());
-                m_stack.pop_back();
+                if (m_sp > stackBase) {
+                    moveValueFast(m_locals[localBase + instr.arg1], std::move(m_stack[--m_sp]));
+                }
+                ++ip; break;
+            }
+            case OpCode::INC_LOCAL: {
+                TzdValue& v = m_locals[localBase + instr.arg1];
+                if (v.type == TzdValue::INT || v.type == TzdValue::LONG ||
+                    v.type == TzdValue::SHORT || v.type == TzdValue::SBYTE) {
+                    v.lVal += instr.arg2;
+                } else if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT) {
+                    v.dVal += instr.arg2;
+                }
                 ++ip; break;
             }
             case OpCode::LOAD_VAR: {
@@ -1725,214 +2010,373 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 if (it != module.funcIndex.end()) {
                     TzdValue fv;
                     fv.type = TzdValue::FUNCTION;
-                    fv.name = name; // bytecode sentinel (funcBody null)
-                    m_stack.push_back(std::move(fv));
+                    fv.name = name;
+                    pushValueMove(std::move(fv));
                 } else {
-                    m_stack.push_back(m_interp->getVariable(name, nullptr));
+                    pushValue(m_interp->getVariable(name, nullptr));
                 }
                 ++ip; break;
             }
             case OpCode::STORE_VAR: {
                 const std::string& name = module.constants[instr.arg1].sVal;
-                m_interp->setVariable(name, m_stack.back());
-                m_stack.pop_back();
+                if (m_sp > stackBase) {
+                    m_interp->setVariable(name, m_stack[--m_sp]);
+                }
                 ++ip; break;
             }
 
             // ---- Arithmetic ----
             case OpCode::ADD: {
-                if (m_stack.size() >= stackBase + 2) {
-                    auto& b = m_stack.back();
-                    auto& a = *(m_stack.end() - 2);
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
                     if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
                         a.lVal += b.lVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
                     } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
                         a.dVal += b.dVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        a.type = TzdValue::DOUBLE;
+                        a.dVal = (double)a.lVal + b.dVal;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        a.dVal += (double)b.lVal;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::STRING && b.type == TzdValue::STRING) {
+                        a.sVal += b.sVal;
+                        --m_sp; ++ip; break;
                     }
                 }
                 TzdValue b, a; pop(b); pop(a);
                 if (a.type == TzdValue::STRING || b.type == TzdValue::STRING) {
-                    m_stack.emplace_back(bcValueToString(a) + bcValueToString(b));
+                    pushValueMove(TzdValue(bcValueToString(a) + bcValueToString(b)));
                 } else if (bcIsIntLike(a) && bcIsIntLike(b)) {
-                    m_stack.emplace_back(a.lVal + b.lVal);
+                    pushInt(a.lVal + b.lVal);
                 } else if (bcNeedsBigint(a, b)) {
-                    m_stack.emplace_back(bcBigintArith(a, b, '+'));
+                    pushValueMove(bcBigintArith(a, b, '+'));
                 } else {
-                    m_stack.emplace_back(bcAsDouble(a) + bcAsDouble(b));
+                    pushDouble(bcAsDouble(a) + bcAsDouble(b));
                 }
                 ++ip; break;
             }
             case OpCode::SUB: {
-                if (m_stack.size() >= stackBase + 2) {
-                    auto& b = m_stack.back();
-                    auto& a = *(m_stack.end() - 2);
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
                     if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
                         a.lVal -= b.lVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
                     } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
                         a.dVal -= b.dVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        a.type = TzdValue::DOUBLE;
+                        a.dVal = (double)a.lVal - b.dVal;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        a.dVal -= (double)b.lVal;
+                        --m_sp; ++ip; break;
                     }
                 }
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b))
-                    m_stack.emplace_back(a.lVal - b.lVal);
+                    pushInt(a.lVal - b.lVal);
                 else if (bcNeedsBigint(a, b))
-                    m_stack.emplace_back(bcBigintArith(a, b, '-'));
+                    pushValueMove(bcBigintArith(a, b, '-'));
                 else
-                    m_stack.emplace_back(bcAsDouble(a) - bcAsDouble(b));
+                    pushDouble(bcAsDouble(a) - bcAsDouble(b));
                 ++ip; break;
             }
             case OpCode::MUL: {
-                if (m_stack.size() >= stackBase + 2) {
-                    auto& b = m_stack.back();
-                    auto& a = *(m_stack.end() - 2);
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
                     if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
                         a.lVal *= b.lVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
                     } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
                         a.dVal *= b.dVal;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        a.type = TzdValue::DOUBLE;
+                        a.dVal = (double)a.lVal * b.dVal;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        a.dVal *= (double)b.lVal;
+                        --m_sp; ++ip; break;
                     }
                 }
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b))
-                    m_stack.emplace_back(a.lVal * b.lVal);
+                    pushInt(a.lVal * b.lVal);
                 else if (bcNeedsBigint(a, b))
-                    m_stack.emplace_back(bcBigintArith(a, b, '*'));
+                    pushValueMove(bcBigintArith(a, b, '*'));
                 else
-                    m_stack.emplace_back(bcAsDouble(a) * bcAsDouble(b));
+                    pushDouble(bcAsDouble(a) * bcAsDouble(b));
                 ++ip; break;
             }
             case OpCode::DIV: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT && b.lVal != 0) {
+                        a.lVal /= b.lVal;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE && b.dVal != 0.0) {
+                        a.dVal /= b.dVal;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b)) {
                     if (b.lVal == 0) throw std::runtime_error("Division by zero");
-                    m_stack.emplace_back(a.lVal / b.lVal);
+                    pushInt(a.lVal / b.lVal);
                 } else if (bcNeedsBigint(a, b)) {
-                    m_stack.emplace_back(bcBigintArith(a, b, '/'));
+                    pushValueMove(bcBigintArith(a, b, '/'));
                 } else {
                     double r = bcAsDouble(b);
                     if (r == 0.0) throw std::runtime_error("Division by zero");
-                    m_stack.emplace_back(bcAsDouble(a) / r);
+                    pushDouble(bcAsDouble(a) / r);
                 }
                 ++ip; break;
             }
             case OpCode::MOD: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT && b.lVal != 0) {
+                        a.lVal %= b.lVal;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
                 if (bcIsIntLike(a) && bcIsIntLike(b) && b.lVal != 0) {
-                    m_stack.emplace_back(a.lVal % b.lVal);
+                    pushInt(a.lVal % b.lVal);
                 } else if (bcNeedsBigint(a, b)) {
-                    m_stack.emplace_back(bcBigintArith(a, b, '%'));
+                    pushValueMove(bcBigintArith(a, b, '%'));
                 } else {
                     double r = bcAsDouble(b);
                     if (r == 0.0) throw std::runtime_error("Modulo by zero");
-                    m_stack.emplace_back(std::fmod(bcAsDouble(a), r));
+                    pushDouble(std::fmod(bcAsDouble(a), r));
                 }
                 ++ip; break;
             }
             case OpCode::POW: {
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(std::pow(bcAsDouble(a), bcAsDouble(b)));
+                pushDouble(std::pow(bcAsDouble(a), bcAsDouble(b)));
                 ++ip; break;
             }
             case OpCode::NEG: {
+                if (m_sp > stackBase) {
+                    TzdValue& a = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT) {
+                        a.lVal = -a.lVal;
+                        ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE) {
+                        a.dVal = -a.dVal;
+                        ++ip; break;
+                    }
+                }
                 TzdValue a; pop(a);
-                if (bcIsIntLike(a)) m_stack.emplace_back(-a.lVal);
-                else m_stack.emplace_back(-bcAsDouble(a));
+                if (bcIsIntLike(a)) pushInt(-a.lVal);
+                else pushDouble(-bcAsDouble(a));
                 ++ip; break;
             }
 
             // ---- Comparison ----
             case OpCode::EQ: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
+                        bool res = a.lVal == b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
+                        bool res = a.dVal == b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::BOOL && b.type == TzdValue::BOOL) {
+                        bool res = a.bVal == b.bVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(TzdInterpreter::valuesEqual(a, b));
+                pushBool(TzdInterpreter::valuesEqual(a, b));
                 ++ip; break;
             }
             case OpCode::NE: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
+                        bool res = a.lVal != b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
+                        bool res = a.dVal != b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::BOOL && b.type == TzdValue::BOOL) {
+                        bool res = a.bVal != b.bVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(!TzdInterpreter::valuesEqual(a, b));
+                pushBool(!TzdInterpreter::valuesEqual(a, b));
                 ++ip; break;
             }
             case OpCode::LT: {
-                if (m_stack.size() >= stackBase + 2) {
-                    auto& b = m_stack.back();
-                    auto& a = *(m_stack.end() - 2);
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
                     if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
                         bool res = a.lVal < b.lVal;
                         a.type = TzdValue::BOOL;
                         a.bVal = res;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
                     } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
                         bool res = a.dVal < b.dVal;
                         a.type = TzdValue::BOOL;
                         a.bVal = res;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        bool res = (double)a.lVal < b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        bool res = a.dVal < (double)b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
                     }
                 }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(bcAsDouble(a) < bcAsDouble(b));
+                pushBool(bcAsDouble(a) < bcAsDouble(b));
                 ++ip; break;
             }
             case OpCode::LE: {
-                if (m_stack.size() >= stackBase + 2) {
-                    auto& b = m_stack.back();
-                    auto& a = *(m_stack.end() - 2);
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
                     if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
                         bool res = a.lVal <= b.lVal;
                         a.type = TzdValue::BOOL;
                         a.bVal = res;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
                     } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
                         bool res = a.dVal <= b.dVal;
                         a.type = TzdValue::BOOL;
                         a.bVal = res;
-                        m_stack.pop_back();
-                        ++ip; break;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        bool res = (double)a.lVal <= b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        bool res = a.dVal <= (double)b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
                     }
                 }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(bcAsDouble(a) <= bcAsDouble(b));
+                pushBool(bcAsDouble(a) <= bcAsDouble(b));
                 ++ip; break;
             }
             case OpCode::GT: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
+                        bool res = a.lVal > b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
+                        bool res = a.dVal > b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        bool res = (double)a.lVal > b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        bool res = a.dVal > (double)b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(bcAsDouble(a) > bcAsDouble(b));
+                pushBool(bcAsDouble(a) > bcAsDouble(b));
                 ++ip; break;
             }
             case OpCode::GE: {
+                if (m_sp >= stackBase + 2) {
+                    TzdValue& a = m_stack[m_sp - 2];
+                    TzdValue& b = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::INT && b.type == TzdValue::INT) {
+                        bool res = a.lVal >= b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::DOUBLE) {
+                        bool res = a.dVal >= b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::INT && b.type == TzdValue::DOUBLE) {
+                        bool res = (double)a.lVal >= b.dVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    } else if (a.type == TzdValue::DOUBLE && b.type == TzdValue::INT) {
+                        bool res = a.dVal >= (double)b.lVal;
+                        a.type = TzdValue::BOOL;
+                        a.bVal = res;
+                        --m_sp; ++ip; break;
+                    }
+                }
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(bcAsDouble(a) >= bcAsDouble(b));
+                pushBool(bcAsDouble(a) >= bcAsDouble(b));
                 ++ip; break;
             }
 
             // ---- Logical ----
             case OpCode::AND: {
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(TzdInterpreter::isTruthy(a) &&
-                                     TzdInterpreter::isTruthy(b));
+                pushBool(TzdInterpreter::isTruthy(a) && TzdInterpreter::isTruthy(b));
                 ++ip; break;
             }
             case OpCode::OR: {
                 TzdValue b, a; pop(b); pop(a);
-                m_stack.emplace_back(TzdInterpreter::isTruthy(a) ||
-                                     TzdInterpreter::isTruthy(b));
+                pushBool(TzdInterpreter::isTruthy(a) || TzdInterpreter::isTruthy(b));
                 ++ip; break;
             }
             case OpCode::NOT: {
+                if (m_sp > stackBase) {
+                    TzdValue& a = m_stack[m_sp - 1];
+                    if (a.type == TzdValue::BOOL) {
+                        a.bVal = !a.bVal;
+                        ++ip; break;
+                    }
+                }
                 TzdValue a; pop(a);
-                m_stack.emplace_back(!TzdInterpreter::isTruthy(a));
+                pushBool(!TzdInterpreter::isTruthy(a));
                 ++ip; break;
             }
 
@@ -1942,24 +2386,23 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 break;
             }
             case OpCode::JMP_FALSE: {
-                // Fast path: check top without full pop (avoids 200+ byte move)
-                bool truthy;
-                if (m_stack.size() > stackBase) {
-                    truthy = TzdInterpreter::isTruthy(m_stack.back());
-                    m_stack.pop_back();
-                } else {
-                    truthy = false;
+                bool truthy = false;
+                if (m_sp > stackBase) {
+                    const TzdValue& top = m_stack[--m_sp];
+                    if (top.type == TzdValue::BOOL) truthy = top.bVal;
+                    else if (top.type == TzdValue::INT || top.type == TzdValue::LONG) truthy = (top.lVal != 0);
+                    else truthy = TzdInterpreter::isTruthy(top);
                 }
                 ip = truthy ? (ip + 1) : (size_t)instr.arg1;
                 break;
             }
             case OpCode::JMP_TRUE: {
-                bool truthy;
-                if (m_stack.size() > stackBase) {
-                    truthy = TzdInterpreter::isTruthy(m_stack.back());
-                    m_stack.pop_back();
-                } else {
-                    truthy = false;
+                bool truthy = false;
+                if (m_sp > stackBase) {
+                    const TzdValue& top = m_stack[--m_sp];
+                    if (top.type == TzdValue::BOOL) truthy = top.bVal;
+                    else if (top.type == TzdValue::INT || top.type == TzdValue::LONG) truthy = (top.lVal != 0);
+                    else truthy = TzdInterpreter::isTruthy(top);
                 }
                 ip = truthy ? (size_t)instr.arg1 : (ip + 1);
                 break;
@@ -1967,55 +2410,130 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
 
             // ---- Function calls ----
             case OpCode::CALL_FUNC: {
+                if (instr.cache >= 0) {
+                    if (m_interp && !m_interp->m_noJit) {
+                        void* jitPtr = instr.cacheClass;
+                        if (!jitPtr) {
+                            if (instr.cacheIndex < 0 || ++instr.cacheIndex >= 64) {
+                                instr.cacheIndex = 0;
+                                const std::string& name = module.constants[instr.arg1].sVal;
+                                if (TzdBytecodeJIT::getInstance().getHotThreshold() < 1000000) {
+                                    jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, name, m_interp);
+                                    if (jitPtr) {
+                                        instr.cacheClass = jitPtr;
+                                    }
+                                }
+                            }
+                        }
+                        if (jitPtr) {
+                            const std::string& name = module.constants[instr.arg1].sVal;
+                            int argc = instr.arg2;
+                            std::vector<TzdValue> callArgs(argc);
+                            for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
+                            TzdValue fv = m_interp->getVariable(name, nullptr);
+                            TzdValue r = m_interp->callFunction(fv, callArgs);
+                            pushValueMove(std::move(r));
+                            ++ip;
+                            break;
+                        }
+                    }
+
+                    if (callFrames.size() >= 10000) {
+                        throw std::runtime_error("Maximum call stack size exceeded in bytecode VM");
+                    }
+
+                    size_t targetFuncIdx = (size_t)instr.cache;
+                    const BytecodeFunc& calleeFunc = module.functions[targetFuncIdx];
+                    int calleeLocals = (calleeFunc.localCount > calleeFunc.paramCount) ? calleeFunc.localCount : calleeFunc.paramCount;
+                    size_t newLocalBase = m_localTop;
+                    size_t neededSlots = newLocalBase + (size_t)calleeLocals + 1;
+                    if (m_locals.size() < neededSlots) {
+                        m_locals.resize(neededSlots * 2);
+                    }
+                    m_localTop = neededSlots;
+
+                    int argc = instr.arg2;
+                    size_t argsStart = m_sp - argc;
+                    for (int i = 0; i < calleeFunc.paramCount && i < argc; ++i) {
+                        moveValueFast(m_locals[newLocalBase + i], std::move(m_stack[argsStart + i]));
+                    }
+                    for (size_t i = newLocalBase + argc; i < newLocalBase + calleeLocals; ++i) {
+                        releaseResourceIfNeeded(m_locals[i]);
+                        m_locals[i].type = TzdValue::NONE;
+                        m_locals[i].lVal = 0;
+                    }
+                    m_sp = argsStart;
+
+                    callFrames.push_back({
+                        currentFuncIdx,
+                        code,
+                        codeSize,
+                        ip + 1,
+                        localBase,
+                        stackBase,
+                        handlerBase
+                    });
+
+                    currentFuncIdx = targetFuncIdx;
+                    curFunc = &calleeFunc;
+                    code = curFunc->code.data();
+                    codeSize = curFunc->code.size();
+                    ip = 0;
+                    localBase = newLocalBase;
+                    stackBase = m_sp;
+                    handlerBase = m_handlers.size();
+                    break;
+                }
+
+                if (instr.cache == -3) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                    pushDouble((double)ms);
+                    ++ip; break;
+                }
+                if (instr.cache == -4) {
+                    TzdValue val;
+                    pop(val);
+                    pushValueMove(TzdValue(bcValueToString(val)));
+                    ++ip; break;
+                }
+
                 const std::string& name = module.constants[instr.arg1].sVal;
                 int argc = instr.arg2;
-                TzdValue r;
 
-                // On-demand JIT bridge: compile hot bytecode functions to native.
-                // Skip entirely when threshold is very high (JIT effectively disabled)
-                if (m_interp && TzdBytecodeJIT::getInstance().getHotThreshold() < 1000000) {
-                    void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, name, m_interp);
-                    if (jitPtr) {
-                        // JIT-compiled: route through callFunction for proper
-                        // arg frame setup, scope management, and exception handling.
-                        std::vector<TzdValue> callArgs(argc);
-                        for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
-                        TzdValue fv = m_interp->getVariable(name, nullptr);
-                        r = m_interp->callFunction(fv, callArgs);
-                        m_stack.push_back(std::move(r));
-                        ++ip;
-                        break;
-                    }
+                if (name == "clock" && argc == 0) {
+                    instr.cache = -3;
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                    pushDouble((double)ms);
+                    ++ip; break;
+                }
+                if (name == "toString" && argc == 1) {
+                    instr.cache = -4;
+                    TzdValue val;
+                    pop(val);
+                    pushValueMove(TzdValue(bcValueToString(val)));
+                    ++ip; break;
                 }
 
-                // Use cached function index to avoid hash lookup on every call
-                size_t funcIdx;
-                if (instr.cache >= 0) {
-                    funcIdx = (size_t)instr.cache;
+                auto it = module.funcIndex.find(name);
+                if (it != module.funcIndex.end()) {
+                    instr.cache = (int32_t)it->second;
+                    continue;
                 } else {
-                    auto it = module.funcIndex.find(name);
-                    funcIdx = (it != module.funcIndex.end()) ? it->second : (size_t)-1;
-                    instr.cache = (int32_t)funcIdx;
+                    instr.cache = -2;
                 }
 
-                if (funcIdx != (size_t)-1) {
-                    if ((int)m_stack.size() - (int)stackBase >= argc) {
-                        size_t argsStart = m_stack.size() - argc;
-                        r = runBytecodeFunc(module, funcIdx, m_stack.data() + argsStart, (size_t)argc);
-                        m_stack.resize(argsStart);
-                    } else {
-                        std::vector<TzdValue> callArgs(argc);
-                        for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
-                        r = runBytecodeFunc(module, funcIdx, callArgs.data(), callArgs.size());
-                    }
-                } else if (m_interp) {
+                if (m_interp) {
                     std::vector<TzdValue> callArgs(argc);
                     for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
                     TzdValue fv = m_interp->getVariable(name, nullptr);
-                    r = callValue(module, fv, callArgs);
+                    TzdValue r = callValue(module, fv, callArgs);
+                    pushValueMove(std::move(r));
+                    ++ip; break;
+                } else {
+                    throw std::runtime_error("Undefined function: " + name);
                 }
-                m_stack.push_back(std::move(r));
-                ++ip; break;
             }
             case OpCode::CALL_NATIVE: {
                 const std::string& name = module.constants[instr.arg1].sVal;
@@ -2023,7 +2541,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 std::vector<TzdValue> callArgs(argc);
                 for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
                 TzdValue fv = m_interp->getVariable(name, nullptr);
-                m_stack.push_back(callValue(module, fv, callArgs));
+                pushValueMove(callValue(module, fv, callArgs));
                 ++ip; break;
             }
             case OpCode::CALL_VALUE: {
@@ -2031,7 +2549,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 std::vector<TzdValue> callArgs(argc);
                 for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
                 TzdValue callee; pop(callee);
-                m_stack.push_back(callValue(module, callee, callArgs));
+                pushValueMove(callValue(module, callee, callArgs));
                 ++ip; break;
             }
             case OpCode::CALL_METHOD: {
@@ -2041,78 +2559,179 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 for (int i = argc - 1; i >= 0; --i) pop(callArgs[i]);
                 TzdValue receiver; pop(receiver);
 
-                TzdValue bound;
                 TzdSelector msel = tzdInternSelector(mname);
                 if (receiver.type == TzdValue::INSTANCE && receiver.instanceVal) {
                     TzdClassDef* cls = receiver.instanceVal->definition;
-                    // 查找方法
                     ClassMethod* m = cls ? cls->findMethod(mname) : nullptr;
-
                     if (m && m->body) {
                         auto it = module.funcIndex.find(m->name);
                         if (it != module.funcIndex.end()) {
-                            size_t funcIdx = it->second;
-                            std::vector<TzdValue> actualArgs;
-                            actualArgs.reserve(argc + 1);
-                            actualArgs.push_back(receiver); // Push "this"
-                            actualArgs.insert(actualArgs.end(), callArgs.begin(), callArgs.end());
+                            size_t targetFuncIdx = it->second;
+                            const BytecodeFunc& calleeFunc = module.functions[targetFuncIdx];
+                            int calleeLocals = (calleeFunc.localCount > calleeFunc.paramCount) ? calleeFunc.localCount : calleeFunc.paramCount;
+                            size_t newLocalBase = m_localTop;
+                            size_t neededSlots = newLocalBase + (size_t)calleeLocals + 1;
+                            if (m_locals.size() < neededSlots) {
+                                m_locals.resize(neededSlots * 2);
+                            }
+                            m_localTop = neededSlots;
 
-                            TzdValue r = runBytecodeFunc(module, funcIdx, actualArgs.data(), actualArgs.size());
-                            m_stack.push_back(std::move(r));
-                            ++ip;
+                            moveValueFast(m_locals[newLocalBase], std::move(receiver));
+                            for (int i = 0; i < argc && i + 1 < calleeFunc.paramCount; ++i) {
+                                moveValueFast(m_locals[newLocalBase + 1 + i], std::move(callArgs[i]));
+                            }
+                            for (size_t i = newLocalBase + 1 + argc; i < newLocalBase + calleeLocals; ++i) {
+                                releaseResourceIfNeeded(m_locals[i]);
+                                m_locals[i].type = TzdValue::NONE;
+                                m_locals[i].lVal = 0;
+                            }
+
+                            callFrames.push_back({
+                                currentFuncIdx,
+                                code,
+                                codeSize,
+                                ip + 1,
+                                localBase,
+                                stackBase,
+                                handlerBase
+                            });
+
+                            currentFuncIdx = targetFuncIdx;
+                            curFunc = &calleeFunc;
+                            code = curFunc->code.data();
+                            codeSize = curFunc->code.size();
+                            ip = 0;
+                            localBase = newLocalBase;
+                            stackBase = m_sp;
+                            handlerBase = m_handlers.size();
                             break;
                         }
-                    } else if (receiver.type == TzdValue::CLASS_DEF &&
-                               receiver.classDefVal) {
+                    } else if (receiver.type == TzdValue::CLASS_DEF && receiver.classDefVal) {
                         const TzdMemberSlot* slot = receiver.classDefVal->tzdDispatch.find(msel);
-                        ClassMethod* m = (slot && slot->method) ? slot->method : receiver.classDefVal->findMethod(mname);
-                        if (m) {
-                            // JIT bridge for static methods
-                            if (receiver.classDefVal && m->body && m_interp) {
+                        ClassMethod* sm = (slot && slot->method) ? slot->method : receiver.classDefVal->findMethod(mname);
+                        if (sm) {
+                            if (receiver.classDefVal && sm->body && m_interp && !m_interp->m_noJit) {
                                 std::string fullMName = receiver.classDefVal->fullName + "_" + mname;
-                                if (!m->jittedPtr) {
+                                if (!sm->jittedPtr) {
                                     void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, fullMName, m_interp);
                                     if (jitPtr) {
-                                        m->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
+                                        sm->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
                                     }
                                 }
                             }
-                            if (m->templateVal) {
-                                bound = *(m->templateVal);
+                            TzdValue bound;
+                            if (sm->templateVal) {
+                                bound = *(sm->templateVal);
                             } else {
-                                bound = TzdValue(m->name, m->params, m->body);
-                                bound.paramTypes = m->paramTypes;
+                                bound = TzdValue(sm->name, sm->params, sm->body);
+                                bound.paramTypes = sm->paramTypes;
                             }
-                            bound.jittedPtr = m->jittedPtr;
+                            bound.jittedPtr = sm->jittedPtr;
+                            pushValueMove(callValue(module, bound, callArgs));
+                            ++ip; break;
                         }
-                               } else if (receiver.type == TzdValue::MAP) {
-                                   auto it = receiver.mapVal.find(mname);
-                                   if (it != receiver.mapVal.end()) bound = it->second;
-                               }
-                    m_stack.push_back(callValue(module, bound, callArgs));
-                    ++ip; break;
+                    } else if (receiver.type == TzdValue::MAP) {
+                        auto it = receiver.mapVal.find(mname);
+                        if (it != receiver.mapVal.end()) {
+                            pushValueMove(callValue(module, it->second, callArgs));
+                            ++ip; break;
+                        }
+                    }
                 }
+                pushValueMove(callValue(module, TzdValue(), callArgs));
+                ++ip; break;
             }
 
+            // ---- Returns ----
             case OpCode::RET: {
-                // Move directly from stack top (avoids intermediate TzdValue)
-                if (m_stack.size() > stackBase) {
-                    result = std::move(m_stack.back());
-                    m_stack.pop_back();
+                if (!callFrames.empty()) {
+                    bool hasRet = (m_sp > stackBase);
+                    size_t retIdx = m_sp - 1;
+
+                    for (size_t i = localBase; i < m_localTop; ++i) {
+                        releaseResourceIfNeeded(m_locals[i]);
+                        m_locals[i].type = TzdValue::NONE;
+                    }
+                    m_localTop = localBase;
+
+                    if (m_handlers.size() > handlerBase) {
+                        m_handlers.resize(handlerBase);
+                    }
+
+                    const VMCallFrame& prev = callFrames.back();
+                    currentFuncIdx = prev.funcIndex;
+                    curFunc = &module.functions[currentFuncIdx];
+                    code = prev.code;
+                    codeSize = prev.codeSize;
+                    ip = prev.ip;
+                    localBase = prev.localBase;
+                    size_t calleeStackBase = stackBase;
+                    stackBase = prev.stackBase;
+                    handlerBase = prev.handlerBase;
+                    callFrames.pop_back();
+
+                    if (hasRet) {
+                        if (retIdx != calleeStackBase) {
+                            moveValueFast(m_stack[calleeStackBase], std::move(m_stack[retIdx]));
+                        }
+                        m_sp = calleeStackBase + 1;
+                    } else {
+                        m_sp = calleeStackBase;
+                        pushNull();
+                    }
+                    break;
+                } else {
+                    if (m_sp > stackBase) {
+                        moveValueFast(result, std::move(m_stack[--m_sp]));
+                    } else {
+                        result = TzdValue();
+                    }
+                    goto funcExit;
                 }
-                goto funcExit;
             }
             case OpCode::RET_VOID: {
-                goto funcExit;
+                for (size_t i = localBase; i < m_localTop; ++i) {
+                    releaseResourceIfNeeded(m_locals[i]);
+                    m_locals[i].type = TzdValue::NONE;
+                }
+                m_localTop = localBase;
+
+                if (m_handlers.size() > handlerBase) {
+                    m_handlers.resize(handlerBase);
+                }
+
+                if (!callFrames.empty()) {
+                    const VMCallFrame& prev = callFrames.back();
+                    currentFuncIdx = prev.funcIndex;
+                    curFunc = &module.functions[currentFuncIdx];
+                    code = prev.code;
+                    codeSize = prev.codeSize;
+                    ip = prev.ip;
+                    localBase = prev.localBase;
+                    size_t calleeStackBase = stackBase;
+                    stackBase = prev.stackBase;
+                    handlerBase = prev.handlerBase;
+                    callFrames.pop_back();
+
+                    m_sp = calleeStackBase;
+                    pushNull();
+                    break;
+                } else {
+                    result = TzdValue();
+                    goto funcExit;
+                }
             }
 
             // ---- Stack ops ----
             case OpCode::POP: {
-                if (m_stack.size() > stackBase) m_stack.pop_back();
+                if (m_sp > stackBase) --m_sp;
                 ++ip; break;
             }
             case OpCode::DUP: {
-                if (!m_stack.empty()) m_stack.push_back(m_stack.back());
+                if (m_sp > stackBase) {
+                    const TzdValue& top = m_stack[m_sp - 1];
+                    pushValue(top);
+                }
                 ++ip; break;
             }
 
@@ -2126,77 +2745,63 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     if (i < argc - 1) std::cout << " ";
                 }
                 std::cout << std::endl;
-                m_stack.emplace_back(); // print returns null
+                pushNull();
                 ++ip; break;
             }
             case OpCode::THROW: {
                 TzdValue v; pop(v);
                 throw TzdThrowException(std::move(v));
             }
-            case OpCode::SCOPE_PUSH: {
-                ++ip; break; // no-op: locals are statically allocated
-            }
-            case OpCode::SCOPE_POP: {
+            case OpCode::SCOPE_PUSH: case OpCode::SCOPE_POP: {
                 ++ip; break;
             }
 
-            // ---- OOP / container ----
+            // ---- OOP / Container ----
             case OpCode::LOAD_MEMBER: {
                 const std::string& name = module.constants[instr.arg1].sVal;
                 TzdValue obj; pop(obj);
-
                 if (obj.type == TzdValue::INSTANCE && obj.instanceVal) {
                     TzdClassDef* cls = obj.instanceVal->definition;
-
-                    // 1. 【极速路径：内联缓存命中】
-                    // 比较类定义指针是否相同，相同则直接用缓存的数组索引，完全跳过哈希运算！
                     if (instr.cacheClass == (void*)cls && instr.cacheIndex >= 0) {
                         const TzdValue& val = obj.instanceVal->fieldValues[instr.cacheIndex];
                         switch (val.type) {
-                            case TzdValue::DOUBLE: case TzdValue::FLOAT: m_stack.emplace_back(val.dVal); break;
-                            case TzdValue::INT: case TzdValue::LONG: m_stack.emplace_back(val.lVal); break;
-                            case TzdValue::BOOL: m_stack.emplace_back(val.bVal); break;
-                            default: m_stack.push_back(val); break;
+                            case TzdValue::DOUBLE: case TzdValue::FLOAT: pushDouble(val.dVal); break;
+                            case TzdValue::INT: case TzdValue::LONG: pushInt(val.lVal); break;
+                            case TzdValue::BOOL: pushBool(val.bVal); break;
+                            default: pushValue(val); break;
                         }
-                        ++ip;
-                        break;
+                        ++ip; break;
                     }
-
-                    // 2. 【慢速路径：Cache Miss】
                     int fieldIdx = cls->getFieldIndex(name);
                     if (fieldIdx >= 0) {
                         instr.cacheClass = (void*)cls;
                         instr.cacheIndex = fieldIdx;
-
                         const TzdValue& val = obj.instanceVal->fieldValues[fieldIdx];
                         switch (val.type) {
-                            case TzdValue::DOUBLE: case TzdValue::FLOAT: m_stack.emplace_back(val.dVal); break;
-                            case TzdValue::INT: case TzdValue::LONG: m_stack.emplace_back(val.lVal); break;
-                            case TzdValue::BOOL: m_stack.emplace_back(val.bVal); break;
-                            default: m_stack.push_back(val); break;
+                            case TzdValue::DOUBLE: case TzdValue::FLOAT: pushDouble(val.dVal); break;
+                            case TzdValue::INT: case TzdValue::LONG: pushInt(val.lVal); break;
+                            case TzdValue::BOOL: pushBool(val.bVal); break;
+                            default: pushValue(val); break;
                         }
                     } else {
                         TzdSelector sel = tzdInternSelector(name);
-                        m_stack.push_back(obj.instanceVal->getMember(sel, name));
+                        pushValue(obj.instanceVal->getMember(sel, name));
                     }
                 } else {
-                    m_stack.push_back(getMember(obj, name));
+                    pushValue(getMember(obj, name));
                 }
                 ++ip; break;
             }
-
             case OpCode::STORE_MEMBER: {
                 const std::string& name = module.constants[instr.arg1].sVal;
                 TzdValue val; pop(val);
                 TzdValue obj; pop(obj);
-
                 if (obj.type == TzdValue::INSTANCE && obj.instanceVal) {
                     TzdClassDef* cls = obj.instanceVal->definition;
                     if (instr.cacheClass == (void*)cls && instr.cacheIndex >= 0) {
                         obj.instanceVal->fieldValues[instr.cacheIndex] = val;
-                        m_stack.push_back(std::move(val));
-                        ++ip;
-                        break;
+                        pushValue(val);
+                        ++ip; break;
                     }
                     int fieldIdx = cls->getFieldIndex(name);
                     if (fieldIdx >= 0) {
@@ -2210,31 +2815,25 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 } else {
                     setMember(obj, name, val);
                 }
-                m_stack.push_back(std::move(val));
+                pushValue(val);
                 ++ip; break;
             }
             case OpCode::LOAD_INDEX: {
                 TzdValue idx; pop(idx);
                 TzdValue container; pop(container);
-                int i = (idx.type == TzdValue::DOUBLE) ? (int)idx.dVal
-                                                        : (int)idx.lVal;
+                int i = (idx.type == TzdValue::DOUBLE) ? (int)idx.dVal : (int)idx.lVal;
                 if (container.type == TzdValue::ARRAY) {
                     if (i < 0 || i >= (int)container.arrVal.size())
-                        throw std::runtime_error("Array index out of bounds: " +
-                                                 std::to_string(i));
-                    m_stack.push_back(container.arrVal[i]);
+                        throw std::runtime_error("Array index out of bounds: " + std::to_string(i));
+                    pushValue(container.arrVal[i]);
                 } else if (container.type == TzdValue::STRING) {
                     if (i < 0 || i >= (int)container.sVal.size())
-                        throw std::runtime_error("String index out of bounds: " +
-                                                 std::to_string(i));
-                    m_stack.emplace_back(std::string(1, container.sVal[i]));
+                        throw std::runtime_error("String index out of bounds: " + std::to_string(i));
+                    pushValueMove(TzdValue(std::string(1, container.sVal[i])));
                 } else if (container.type == TzdValue::MAP) {
-                    std::string key;
-                    if (idx.type == TzdValue::STRING) key = idx.sVal;
-                    else key = TzdInterpreter::getAsString(std::any(idx));
+                    std::string key = (idx.type == TzdValue::STRING) ? idx.sVal : TzdInterpreter::getAsString(std::any(idx));
                     auto it = container.mapVal.find(key);
-                    m_stack.push_back(it != container.mapVal.end() ? it->second
-                                                                   : TzdValue());
+                    pushValue(it != container.mapVal.end() ? it->second : TzdValue());
                 } else {
                     throw std::runtime_error("Type does not support indexing");
                 }
@@ -2244,23 +2843,18 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 TzdValue val; pop(val);
                 TzdValue idx; pop(idx);
                 TzdValue container; pop(container);
-                int i = (idx.type == TzdValue::DOUBLE) ? (int)idx.dVal
-                                                        : (int)idx.lVal;
+                int i = (idx.type == TzdValue::DOUBLE) ? (int)idx.dVal : (int)idx.lVal;
                 if (container.type == TzdValue::ARRAY) {
                     if (i < 0) i = (int)container.arrVal.size();
                     if (i >= (int)container.arrVal.size())
                         container.arrVal.resize(i + 1);
                     container.arrVal[i] = val;
                 } else if (container.type == TzdValue::MAP) {
-                    // Direct string key access (avoid bcValueToString overhead)
-                    std::string key;
-                    if (idx.type == TzdValue::STRING) key = idx.sVal;
-                    else key = TzdInterpreter::getAsString(std::any(idx));
+                    std::string key = (idx.type == TzdValue::STRING) ? idx.sVal : TzdInterpreter::getAsString(std::any(idx));
                     container.mapVal[key] = val;
                 }
-                // Push value (result) and modified container (for store-back)
-                m_stack.push_back(std::move(val));
-                m_stack.push_back(std::move(container));
+                pushValue(val);
+                pushValueMove(std::move(container));
                 ++ip; break;
             }
             case OpCode::NEW_OBJECT: {
@@ -2271,25 +2865,18 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
 
                 TzdClassDef* cls = TzdOopManager::getClass(className);
                 if (!cls)
-                    throw std::runtime_error("Cannot find class definition: " +
-                                             className);
-                // TzdInstance constructor already copies pre-computed
-                // defaultFieldValues — no need to re-evaluate field initializers
-                // via the AST interpreter (which was the #1 bottleneck).
+                    throw std::runtime_error("Cannot find class definition: " + className);
                 TzdInstance* inst = new TzdInstance(cls);
                 TzdValue instVal(inst);
 
-                // Find and run constructor if present
                 ClassConstructor* ctor = cls->findConstructor(argc);
                 if (!ctor && argc == 0 && !cls->constructors.empty())
                     ctor = cls->findConstructor(0);
 
                 if (ctor) {
-                    // Submit constructor for async JIT compilation if hot
-                    if (ctor->body && m_interp && !ctor->jittedPtr) {
+                    if (ctor->body && m_interp && !m_interp->m_noJit && !ctor->jittedPtr) {
                         std::string ctorJitName = cls->fullName + "_" + cls->simpleName;
-                        void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(
-                            module, ctorJitName, m_interp);
+                        void* jitPtr = TzdBytecodeJIT::getInstance().onFunctionCall(module, ctorJitName, m_interp);
                         if (jitPtr) {
                             ctor->jittedPtr = reinterpret_cast<void(*)(void*,void*)>(jitPtr);
                         }
@@ -2298,8 +2885,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     ctorScope["this"] = instVal;
                     m_interp->scopes.push_back(std::move(ctorScope));
                     try {
-                        TzdValue ctorFunc(cls->simpleName, ctor->params,
-                                           ctor->body);
+                        TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
                         ctorFunc.jittedPtr = ctor->jittedPtr;
                         ctorFunc.setInstance(inst);
                         m_interp->callFunction(ctorFunc, ctorArgs);
@@ -2309,75 +2895,155 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     }
                     m_interp->scopes.pop_back();
                 }
-                m_stack.push_back(std::move(instVal));
+                pushValueMove(std::move(instVal));
                 ++ip; break;
             }
             case OpCode::MAKE_ARRAY: {
                 int count = instr.arg1;
                 std::vector<TzdValue> elems(count);
                 for (int i = count - 1; i >= 0; --i) pop(elems[i]);
-                m_stack.emplace_back(elems);
+                pushValueMove(TzdValue(elems));
                 ++ip; break;
             }
-
-            // ---- Exception handling ----
             case OpCode::TRY: {
-                m_handlers.push_back({funcIndex, (size_t)instr.arg1,
-                                      stackBase, localBase, ""});
+                m_handlers.push_back({currentFuncIdx, (size_t)instr.arg1, m_sp, localBase, ""});
                 ++ip; break;
             }
             case OpCode::TRY_END: {
                 if (!m_handlers.empty()) m_handlers.pop_back();
                 ++ip; break;
             }
-
             case OpCode::HALT: {
                 goto funcExit;
             }
-
             default:
                 ++ip; break;
-            }
-        } // end while
-        break; // normal exit from while loop → break out of for(;;)
+        }
+    } // end while (ip < codeSize)
+
+    // Reached end of function without explicit RET/RET_VOID
+    if (!callFrames.empty()) {
+        for (size_t i = localBase; i < m_localTop; ++i) {
+            releaseResourceIfNeeded(m_locals[i]);
+            m_locals[i].type = TzdValue::NONE;
+        }
+        m_localTop = localBase;
+        m_sp = stackBase;
+        if (m_handlers.size() > handlerBase) {
+            m_handlers.resize(handlerBase);
+        }
+        const VMCallFrame& prev = callFrames.back();
+        currentFuncIdx = prev.funcIndex;
+        curFunc = &module.functions[currentFuncIdx];
+        code = prev.code;
+        codeSize = prev.codeSize;
+        ip = prev.ip;
+        localBase = prev.localBase;
+        stackBase = prev.stackBase;
+        handlerBase = prev.handlerBase;
+        callFrames.pop_back();
+
+        pushNull();
+        continue;
+    }
+    break; // normal exit
     } // end try
     catch (const TzdThrowException& ex) {
-            // Unwind to the nearest active handler registered in this frame.
-            bool handled = false;
-            while (!m_handlers.empty() &&
-                   m_handlers.back().funcIndex == funcIndex) {
-                CatchFrame cf = m_handlers.back();
-                m_handlers.pop_back();
-                if (m_stack.size() > cf.stackBase) m_stack.resize(cf.stackBase);
-                m_stack.push_back(ex.value); // the catch handler binds it
+        bool handled = false;
+        while (!m_handlers.empty()) {
+            CatchFrame cf = m_handlers.back();
+            m_handlers.pop_back();
+            if (cf.funcIndex == currentFuncIdx) {
+                m_sp = cf.stackBase;
+                pushValue(ex.value);
                 ip = cf.catchIp;
                 handled = true;
                 break;
+            } else {
+                bool foundInStack = false;
+                for (auto it = callFrames.rbegin(); it != callFrames.rend(); ++it) {
+                    if (it->funcIndex == cf.funcIndex) {
+                        foundInStack = true;
+                        break;
+                    }
+                }
+                if (foundInStack) {
+                    while (!callFrames.empty() && currentFuncIdx != cf.funcIndex) {
+                        for (size_t i = localBase; i < m_localTop; ++i) {
+                            releaseResourceIfNeeded(m_locals[i]);
+                            m_locals[i].type = TzdValue::NONE;
+                        }
+                        m_localTop = localBase;
+                        const VMCallFrame& prev = callFrames.back();
+                        currentFuncIdx = prev.funcIndex;
+                        curFunc = &module.functions[currentFuncIdx];
+                        code = prev.code;
+                        codeSize = prev.codeSize;
+                        localBase = prev.localBase;
+                        stackBase = prev.stackBase;
+                        handlerBase = prev.handlerBase;
+                        callFrames.pop_back();
+                    }
+                    m_sp = cf.stackBase;
+                    pushValue(ex.value);
+                    ip = cf.catchIp;
+                    handled = true;
+                    break;
+                }
             }
-            if (!handled) {
-                // No handler in this frame: restore frames and propagate.
-                if (m_locals.size() > localBase) m_locals.resize(localBase);
-                if (m_stack.size() > stackBase) m_stack.resize(stackBase);
-                m_handlers.resize(handlerBase);
-                throw;
-            }
-            // Handler found: continue the for(;;) loop to re-enter while
-            continue;
         }
-        catch (...) {
-            // Any other exception (e.g. runtime errors from division by zero):
-            // restore this frame's stack/locals/handlers before propagating so
-            // the VM is never left in a corrupt state for the next call.
-            if (m_locals.size() > localBase) m_locals.resize(localBase);
-            if (m_stack.size() > stackBase) m_stack.resize(stackBase);
-            m_handlers.resize(handlerBase);
+        if (!handled) {
+            while (!callFrames.empty()) {
+                const VMCallFrame& prev = callFrames.back();
+                localBase = prev.localBase;
+                stackBase = prev.stackBase;
+                handlerBase = prev.handlerBase;
+                callFrames.pop_back();
+            }
+            for (size_t i = initialLocalBase; i < m_localTop; ++i) {
+                releaseResourceIfNeeded(m_locals[i]);
+                m_locals[i].type = TzdValue::NONE;
+            }
+            m_localTop = initialLocalBase;
+            m_sp = initialStackBase;
+            m_handlers.resize(initialHandlerBase);
             throw;
         }
+        continue;
+    }
+    catch (...) {
+        while (!callFrames.empty()) {
+            const VMCallFrame& prev = callFrames.back();
+            localBase = prev.localBase;
+            stackBase = prev.stackBase;
+            handlerBase = prev.handlerBase;
+            callFrames.pop_back();
+        }
+        for (size_t i = initialLocalBase; i < m_localTop; ++i) {
+            releaseResourceIfNeeded(m_locals[i]);
+            m_locals[i].type = TzdValue::NONE;
+        }
+        m_localTop = initialLocalBase;
+        m_sp = initialStackBase;
+        m_handlers.resize(initialHandlerBase);
+        throw;
+    }
     } // end for(;;)
 
 funcExit:
-    if (m_locals.size() > localBase) m_locals.resize(localBase);
-    if (m_stack.size() > stackBase) m_stack.resize(stackBase);
-    m_handlers.resize(handlerBase);
+    while (!callFrames.empty()) {
+        const VMCallFrame& prev = callFrames.back();
+        localBase = prev.localBase;
+        stackBase = prev.stackBase;
+        handlerBase = prev.handlerBase;
+        callFrames.pop_back();
+    }
+    for (size_t i = initialLocalBase; i < m_localTop; ++i) {
+        releaseResourceIfNeeded(m_locals[i]);
+        m_locals[i].type = TzdValue::NONE;
+    }
+    m_localTop = initialLocalBase;
+    m_sp = initialStackBase;
+    m_handlers.resize(initialHandlerBase);
     return result;
 }

@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // TzdBytecode.h - Bytecode VM instruction set, compiler, and VM declarations
 // (Implementation to be added)
 // ============================================================================
@@ -70,6 +70,7 @@ enum class OpCode : uint8_t {
     CALL_VALUE   = 0x8A,   // arg1 = arg count; pop args, pop callee value, call it
     TRY          = 0x8B,   // arg1 = catch handler offset; register catch target
     TRY_END      = 0x8C,   // unregister current catch target
+    INC_LOCAL    = 0x8D,   // arg1 = local slot, arg2 = delta (signed 32-bit int)
     HALT = 0xFF,
 };
 
@@ -249,6 +250,8 @@ private:
     const BytecodeModule* m_module = nullptr;
     std::vector<TzdValue> m_stack;
     std::vector<TzdValue> m_locals;
+    size_t m_sp = 0;
+    size_t m_localTop = 0;
 
     // Active try/catch handlers (for THROW unwinding within bytecode).
     struct CatchFrame {
