@@ -564,50 +564,73 @@ function showToast(message, type = "info") {
 // ---------------------------------------------------------------------------
 let lenisInstance = null;
 
-function initSmoothScroll() {
-  if (typeof Lenis !== "undefined") {
-    try {
-      lenisInstance = new Lenis({
-        duration: 1.2,
-        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-        orientation: "vertical",
-        gestureOrientation: "vertical",
-        smoothWheel: true,
-        wheelMultiplier: 1.0,
-        touchMultiplier: 1.5,
-        infinite: false,
-      });
+/**
+ * Graceful motion fallback helper
+ * Guarantees all cards and text remain 100% visible and unclipped if animation libraries fail or user prefers reduced motion.
+ */
+function applyMotionFallback() {
+  document.documentElement.classList.add("motion-fallback");
+  const fallbackElements = document.querySelectorAll(
+    ".card-motion-wrapper, .card-motion-left, .card-motion-center, .card-motion-right, .pin-stage-header, .stat-card"
+  );
+  fallbackElements.forEach((el) => {
+    el.style.opacity = "1";
+    el.style.transform = "none";
+    el.style.webkitTransform = "none";
+    el.style.filter = "none";
+    el.style.willChange = "auto";
+  });
+}
 
-      // Synchronize Lenis with GSAP ScrollTrigger if both are present
-      if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
-        lenisInstance.on("scroll", ScrollTrigger.update);
-        gsap.ticker.add((time) => {
-          lenisInstance.raf(time * 1000);
-        });
-        gsap.ticker.lagSmoothing(0);
-      } else {
-        function raf(time) {
-          lenisInstance.raf(time);
-          requestAnimationFrame(raf);
-        }
+function initSmoothScroll() {
+  if (typeof Lenis === "undefined") {
+    console.warn("Lenis library not loaded, smooth scrolling disabled.");
+    return;
+  }
+
+  const prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (prefersReduced) return;
+
+  try {
+    lenisInstance = new Lenis({
+      lerp: 0.1, // 降低计算复杂度，兼顾低性能设备
+      smoothWheel: true,
+      syncTouch: false, // 禁用移动端强制模拟，避免触控冲突
+    });
+
+    if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+      lenisInstance.on("scroll", ScrollTrigger.update);
+
+      gsap.ticker.add((time) => {
+        lenisInstance.raf(time * 1000);
+      });
+      gsap.ticker.lagSmoothing(0);
+    } else {
+      function raf(time) {
+        lenisInstance.raf(time);
         requestAnimationFrame(raf);
       }
-
-      // Physics smooth scrolling for in-page anchors
-      document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
-        anchor.addEventListener("click", function (e) {
-          const href = this.getAttribute("href");
-          if (!href || href === "#") return;
-          const target = document.querySelector(href);
-          if (target) {
-            e.preventDefault();
-            lenisInstance.scrollTo(target, { offset: -68, duration: 1.2 });
-          }
-        });
-      });
-    } catch (e) {
-      console.warn("Lenis initialization skipped:", e);
+      requestAnimationFrame(raf);
     }
+
+    // Physics smooth scrolling for in-page anchors
+    document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+      anchor.addEventListener("click", function (e) {
+        const href = this.getAttribute("href");
+        if (!href || href === "#") return;
+        const target = document.querySelector(href);
+        if (target) {
+          e.preventDefault();
+          if (lenisInstance) {
+            lenisInstance.scrollTo(target, { offset: -68, duration: 1.0 });
+          } else {
+            target.scrollIntoView({ behavior: "smooth" });
+          }
+        }
+      });
+    });
+  } catch (e) {
+    console.warn("Lenis initialization skipped:", e);
   }
 }
 
@@ -619,7 +642,20 @@ function initPinningScrollRunway() {
   const stage = document.querySelector(".pin-viewport-stage");
   if (!runway || !stage) return;
 
-  if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+  const prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (prefersReduced) {
+    applyMotionFallback();
+    return;
+  }
+
+  // Defensive environmental check for GSAP & ScrollTrigger
+  if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
+    console.warn("GSAP / ScrollTrigger not available, applying high-fidelity static fallback.");
+    applyMotionFallback();
+    return;
+  }
+
+  try {
     gsap.registerPlugin(ScrollTrigger);
 
     ScrollTrigger.matchMedia({
@@ -633,6 +669,7 @@ function initPinningScrollRunway() {
             pin: stage,
             scrub: 1.2,
             anticipatePin: 1,
+            invalidateOnRefresh: true,
           },
         });
 
@@ -715,13 +752,14 @@ function initPinningScrollRunway() {
         gsap.from(".card-motion-wrapper", {
           scrollTrigger: {
             trigger: ".download-cards-grid",
-            start: "top 80%",
+            start: "top 85%",
           },
           y: 40,
           opacity: 0,
           stagger: 0.15,
           duration: 0.85,
           ease: "power3.out",
+          clearProps: "transform,opacity",
         });
       },
     });
@@ -738,34 +776,48 @@ function initPinningScrollRunway() {
         duration: 0.65,
         stagger: 0.08,
         ease: "power2.out",
+        clearProps: "transform,opacity",
       });
     }
-  } else {
-    // Graceful IntersectionObserver fallback for offline
-    const cards = document.querySelectorAll(".download-cards-grid .card-motion-wrapper");
-    cards.forEach((c) => {
-      c.style.opacity = "0";
-      c.style.transform = "translateY(40px)";
-      c.style.transition = "opacity 0.8s ease, transform 0.8s ease";
-    });
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          cards.forEach((c, idx) => {
-            setTimeout(() => {
-              c.style.opacity = "1";
-              c.style.transform = "translateY(0)";
-            }, idx * 120);
-          });
-          observer.disconnect();
-        }
-      });
-    }, { threshold: 0.15 });
-
-    const grid = document.querySelector(".download-cards-grid");
-    if (grid) observer.observe(grid);
+  } catch (err) {
+    console.error("ScrollTrigger setup error:", err);
+    applyMotionFallback();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 6.1. ScrollTrigger Lifecycle & Font Synchronization
+// ---------------------------------------------------------------------------
+function setupScrollLifecycle() {
+  if (typeof ScrollTrigger === "undefined") return;
+
+  // 1. Initial calculation
+  ScrollTrigger.refresh();
+
+  // 2. Wait for webfonts to finish rendering so line wraps and heights are exact
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      ScrollTrigger.refresh();
+    }).catch(() => {});
+  }
+
+  // 3. Wait for all resources (images, styles) to completely load
+  window.addEventListener("load", () => {
+    ScrollTrigger.refresh();
+    // Safety buffer for late layout shifts or asynchronous asset parsing
+    setTimeout(() => {
+      ScrollTrigger.refresh();
+    }, 250);
+  });
+
+  // 4. Orientation / window resize listener with debounce
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      ScrollTrigger.refresh();
+    }, 150);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -773,32 +825,48 @@ function initPinningScrollRunway() {
 // ---------------------------------------------------------------------------
 function init3DTiltAndSpotlight() {
   const cards = document.querySelectorAll(".card-tilt-inner");
+  if (!cards.length) return;
+
+  const hasMouse = window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!hasMouse || prefersReduced) return;
 
   cards.forEach((card) => {
     const shine = card.querySelector(".card-spotlight-shine");
+    let ticking = false;
 
     card.addEventListener("mousemove", (e) => {
-      const rect = card.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
+      if (ticking) return;
+      ticking = true;
 
-      // Max ±6deg tilt angle
-      const tiltX = -((y - centerY) / centerY) * 6;
-      const tiltY = ((x - centerX) / centerX) * 6;
+      requestAnimationFrame(() => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
 
-      card.style.transform = `perspective(1000px) rotateX(${tiltX.toFixed(2)}deg) rotateY(${tiltY.toFixed(2)}deg) translateZ(8px)`;
-      card.style.transition = "transform 0.08s ease-out";
+        // Max ±6deg tilt angle
+        const tiltX = -((y - centerY) / centerY) * 6;
+        const tiltY = ((x - centerX) / centerX) * 6;
 
-      if (shine) {
-        shine.style.background = `radial-gradient(circle at ${x}px ${y}px, rgba(255, 255, 255, 0.15), transparent 60%)`;
-        shine.style.opacity = "1";
-      }
+        const transformVal = `perspective(1000px) rotateX(${tiltX.toFixed(2)}deg) rotateY(${tiltY.toFixed(2)}deg) translateZ(8px)`;
+        card.style.transform = transformVal;
+        card.style.webkitTransform = transformVal;
+        card.style.transition = "transform 0.08s ease-out";
+
+        if (shine) {
+          shine.style.background = `radial-gradient(circle at ${x}px ${y}px, rgba(255, 255, 255, 0.15), transparent 60%)`;
+          shine.style.opacity = "1";
+        }
+        ticking = false;
+      });
     });
 
     card.addEventListener("mouseleave", () => {
-      card.style.transform = "perspective(1000px) rotateX(0deg) rotateY(0deg) translateZ(0px)";
+      const resetTransform = "perspective(1000px) rotateX(0deg) rotateY(0deg) translateZ(0px)";
+      card.style.transform = resetTransform;
+      card.style.webkitTransform = resetTransform;
       card.style.transition = "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)";
       if (shine) {
         shine.style.opacity = "0";
@@ -815,50 +883,62 @@ function initMagneticButtons() {
   const magneticButtons = document.querySelectorAll(".magnetic-btn");
   if (!magneticButtons.length) return;
 
+  const hasMouse = window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!hasMouse || prefersReduced) return;
+
   const triggerRadius = 35; // 35px attraction zone
+  let ticking = false;
 
   window.addEventListener("mousemove", (e) => {
-    magneticButtons.forEach((btn) => {
-      const rect = btn.getBoundingClientRect();
-      const btnCenterX = rect.left + rect.width / 2;
-      const btnCenterY = rect.top + rect.height / 2;
+    if (ticking) return;
+    ticking = true;
 
-      const distX = e.clientX - btnCenterX;
-      const distY = e.clientY - btnCenterY;
+    requestAnimationFrame(() => {
+      magneticButtons.forEach((btn) => {
+        const rect = btn.getBoundingClientRect();
+        const btnCenterX = rect.left + rect.width / 2;
+        const btnCenterY = rect.top + rect.height / 2;
 
-      const halfW = rect.width / 2;
-      const halfH = rect.height / 2;
-      const isNearby = Math.abs(distX) < halfW + triggerRadius && Math.abs(distY) < halfH + triggerRadius;
+        const distX = e.clientX - btnCenterX;
+        const distY = e.clientY - btnCenterY;
 
-      if (isNearby) {
-        const pullFactor = 0.35;
-        if (typeof gsap !== "undefined") {
-          gsap.to(btn, {
-            x: distX * pullFactor,
-            y: distY * pullFactor,
-            duration: 0.25,
-            ease: "power2.out",
-            overwrite: "auto",
-          });
+        const halfW = rect.width / 2;
+        const halfH = rect.height / 2;
+        const isNearby = Math.abs(distX) < halfW + triggerRadius && Math.abs(distY) < halfH + triggerRadius;
+
+        if (isNearby) {
+          const pullFactor = 0.35;
+          if (typeof gsap !== "undefined") {
+            gsap.to(btn, {
+              x: distX * pullFactor,
+              y: distY * pullFactor,
+              duration: 0.25,
+              ease: "power2.out",
+              overwrite: "auto",
+            });
+          } else {
+            btn.style.transform = `translate3d(${distX * pullFactor}px, ${distY * pullFactor}px, 0)`;
+          }
         } else {
-          btn.style.transform = `translate(${distX * pullFactor}px, ${distY * pullFactor}px)`;
+          if (typeof gsap !== "undefined") {
+            gsap.to(btn, {
+              x: 0,
+              y: 0,
+              duration: 0.65,
+              ease: "elastic.out(1, 0.3)",
+              overwrite: "auto",
+            });
+          } else {
+            btn.style.transform = "translate3d(0, 0, 0)";
+          }
         }
-      } else {
-        if (typeof gsap !== "undefined") {
-          gsap.to(btn, {
-            x: 0,
-            y: 0,
-            duration: 0.65,
-            ease: "elastic.out(1, 0.3)",
-            overwrite: "auto",
-          });
-        } else {
-          btn.style.transform = "translate(0, 0)";
-        }
-      }
+      });
+      ticking = false;
     });
   });
 }
+
 
 // ---------------------------------------------------------------------------
 // 7. Interactive Background Canvas Particle System
@@ -1001,6 +1081,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize Lenis physics smooth scroll & Apple Scroll-Driven Pinning
   initSmoothScroll();
   initPinningScrollRunway();
+  setupScrollLifecycle();
   init3DTiltAndSpotlight();
   initMagneticButtons();
 

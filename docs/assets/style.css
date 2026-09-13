@@ -40,21 +40,21 @@
 }
 
 html {
-  scroll-behavior: smooth;
   background-color: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow-x: clip;
 }
 
 body {
   background-color: var(--bg-base);
   min-height: 100vh;
   position: relative;
-  overflow-x: hidden;
-  max-width: 100vw;
+  overflow-x: clip;
+  width: 100%;
   line-height: 1.6;
 }
 
@@ -327,6 +327,7 @@ button {
 .hero-title .text-gradient {
   background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.65) 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
@@ -464,6 +465,7 @@ button {
   letter-spacing: -0.025em;
   background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.7) 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.65rem;
 }
@@ -1173,6 +1175,7 @@ button {
   height: 300vh;
   background-color: #080808;
   z-index: 20;
+  overflow-x: clip;
 }
 
 .pin-viewport-stage {
@@ -1184,9 +1187,10 @@ button {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  overflow: hidden;
   box-sizing: border-box;
   padding: 1.5rem;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 .stage-container {
@@ -1198,6 +1202,8 @@ button {
   align-items: center;
   position: relative;
   z-index: 10;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 .pin-stage-header {
@@ -1205,6 +1211,10 @@ button {
   margin-bottom: 2rem;
   will-change: transform, opacity;
   transform-origin: center center;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .download-pill-badge {
@@ -1224,6 +1234,12 @@ button {
 /* 3D Perspective Container (Apple Mac Pro / iPhone Keynote stage) */
 .cards-perspective-container {
   perspective: 1000px;
+  -webkit-perspective: 1000px;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform, opacity;
   width: 100%;
   position: relative;
 }
@@ -1234,12 +1250,20 @@ button {
   gap: 1.75rem;
   width: 100%;
   position: relative;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
 }
 
 /* Motion Wrappers: controlled purely by GSAP ScrollTrigger timeline */
 .card-motion-wrapper {
   will-change: transform, opacity, filter;
   position: relative;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
 }
 
 .card-motion-wrapper.featured-wrapper {
@@ -1250,8 +1274,8 @@ button {
 .card-tilt-inner, .dl-card {
   position: relative;
   background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   padding: 2.35rem 2rem 2.15rem 2rem;
@@ -1259,7 +1283,14 @@ button {
   flex-direction: column;
   overflow: hidden;
   transform-style: preserve-3d;
-  will-change: transform;
+  -webkit-transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  will-change: transform, opacity;
   box-shadow: 0 16px 40px -15px rgba(0, 0, 0, 0.6);
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
@@ -1710,5 +1741,95 @@ button {
     min-width: unset;
     width: 100%;
   }
+}
+
+/* --------------------------------------------------------------------------
+   12. Accessibility & Cross-Browser Graceful Fallback (prefers-reduced-motion / No-GSAP)
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .pin-download-runway {
+    height: auto !important;
+    min-height: auto !important;
+    padding: 5rem 0 !important;
+  }
+
+  .pin-viewport-stage {
+    position: static !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 1.5rem !important;
+    transform: none !important;
+    -webkit-transform: none !important;
+  }
+
+  .card-motion-wrapper,
+  .card-motion-left,
+  .card-motion-center,
+  .card-motion-right,
+  .pin-stage-header {
+    transform: none !important;
+    -webkit-transform: none !important;
+    opacity: 1 !important;
+    filter: none !important;
+    will-change: auto !important;
+  }
+
+  .card-tilt-inner,
+  .dl-card {
+    transform: none !important;
+    -webkit-transform: none !important;
+    transition: none !important;
+  }
+}
+
+/* Safe fallback state when GSAP / ScrollTrigger fails to initialize or is offline */
+.motion-fallback .pin-download-runway,
+html.no-gsap .pin-download-runway {
+  height: auto !important;
+  min-height: auto !important;
+  padding: 5rem 0 !important;
+}
+
+.motion-fallback .pin-viewport-stage,
+html.no-gsap .pin-viewport-stage {
+  position: static !important;
+  height: auto !important;
+  overflow: visible !important;
+  padding: 0 1.5rem !important;
+  transform: none !important;
+  -webkit-transform: none !important;
+}
+
+.motion-fallback .card-motion-wrapper,
+.motion-fallback .card-motion-left,
+.motion-fallback .card-motion-center,
+.motion-fallback .card-motion-right,
+.motion-fallback .pin-stage-header,
+html.no-gsap .card-motion-wrapper,
+html.no-gsap .card-motion-left,
+html.no-gsap .card-motion-center,
+html.no-gsap .card-motion-right,
+html.no-gsap .pin-stage-header {
+  transform: none !important;
+  -webkit-transform: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+  will-change: auto !important;
+}
+
+.motion-fallback .card-tilt-inner,
+.motion-fallback .dl-card,
+html.no-gsap .card-tilt-inner,
+html.no-gsap .dl-card {
+  transform: none !important;
+  -webkit-transform: none !important;
+  transition: none !important;
 }
 
