@@ -500,7 +500,195 @@ function initMobileNavigation() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. App Initialization
+// 5. Toast Notification Utility
+// ---------------------------------------------------------------------------
+function showToast(message, type = "info") {
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    container.className = "toast-container";
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement("div");
+  toast.className = "toast-item";
+  
+  const iconSvg = type === "success" 
+    ? `<svg class="toast-icon success" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`
+    : `<svg class="toast-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+
+  toast.innerHTML = `${iconSvg}<span>${message}</span>`;
+  container.appendChild(toast);
+
+  // Trigger animation
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+
+  setTimeout(() => {
+    toast.classList.remove("show");
+    toast.classList.add("hide");
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, 280);
+  }, 3200);
+}
+
+// ---------------------------------------------------------------------------
+// 6. Card Mouse Spotlight Effect
+// ---------------------------------------------------------------------------
+function initSpotlightCards() {
+  const cards = document.querySelectorAll(".spotlight-card");
+  cards.forEach((card) => {
+    card.addEventListener("mousemove", (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      card.style.setProperty("--mouse-x", `${x}px`);
+      card.style.setProperty("--mouse-y", `${y}px`);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 7. Interactive Background Canvas Particle System
+// ---------------------------------------------------------------------------
+function initBackgroundParticles() {
+  const canvas = document.getElementById("bg-canvas");
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  let width, height;
+  let particles = [];
+  const particleCount = 45;
+  const maxDistance = 140;
+  let mouse = { x: null, y: null, radius: 150 };
+
+  function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
+
+  window.addEventListener("mousemove", (e) => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+  });
+
+  window.addEventListener("mouseout", () => {
+    mouse.x = null;
+    mouse.y = null;
+  });
+
+  class Particle {
+    constructor() {
+      this.x = Math.random() * width;
+      this.y = Math.random() * height;
+      this.vx = (Math.random() - 0.5) * 0.45;
+      this.vy = (Math.random() - 0.5) * 0.45;
+      this.radius = Math.random() * 1.6 + 0.8;
+      this.color = Math.random() > 0.4 ? "#38BDF8" : "#818CF8";
+    }
+
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+
+      if (this.x < 0 || this.x > width) this.vx = -this.vx;
+      if (this.y < 0 || this.y > height) this.vy = -this.vy;
+
+      // Mouse gentle interaction
+      if (mouse.x != null && mouse.y != null) {
+        const dx = mouse.x - this.x;
+        const dy = mouse.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < mouse.radius) {
+          const force = (mouse.radius - dist) / mouse.radius;
+          this.x -= (dx / dist) * force * 1.5;
+          this.y -= (dy / dist) * force * 1.5;
+        }
+      }
+    }
+
+    draw() {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = this.color;
+      ctx.fill();
+    }
+  }
+
+  for (let i = 0; i < particleCount; i++) {
+    particles.push(new Particle());
+  }
+
+  function animate() {
+    ctx.clearRect(0, 0, width, height);
+
+    for (let i = 0; i < particles.length; i++) {
+      particles[i].update();
+      particles[i].draw();
+
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < maxDistance) {
+          const alpha = (1 - dist / maxDistance) * 0.18;
+          ctx.beginPath();
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
+          ctx.lineWidth = 0.75;
+          ctx.stroke();
+        }
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  animate();
+}
+
+// ---------------------------------------------------------------------------
+// 8. Download & Command Interactivity
+// ---------------------------------------------------------------------------
+function initDownloadInteractions() {
+  // Download buttons feedback
+  document.querySelectorAll(".dl-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const fileName = btn.getAttribute("data-file") || "安装程序";
+      showToast(`已开始下载 ${fileName}！请在下载完成后运行安装。`, "success");
+    });
+  });
+
+  // Quick command copy
+  const copyCmdBtn = document.getElementById("btn-copy-install-cmd");
+  if (copyCmdBtn) {
+    copyCmdBtn.addEventListener("click", () => {
+      const cmdText = document.getElementById("install-cmd-text")?.innerText || "tzd --help";
+      navigator.clipboard.writeText(cmdText).then(() => {
+        showToast("命令已复制到剪贴板！", "success");
+        copyCmdBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span style="color:#34D399;">已复制</span>`;
+        setTimeout(() => {
+          copyCmdBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>复制代码</span>`;
+        }, 2000);
+      });
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 9. App Initialization
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
   // Bind workbench sidebar items
@@ -515,8 +703,12 @@ document.addEventListener("DOMContentLoaded", () => {
   switchTopic("01_variables");
   initCopyButton();
   initMobileNavigation();
+  initSpotlightCards();
+  initBackgroundParticles();
+  initDownloadInteractions();
 
   if (window.lucide) {
     window.lucide.createIcons();
   }
 });
+

@@ -19,6 +19,9 @@
 </head>
 <body>
 
+  <!-- Interactive Starfield/Constellation Particle Canvas -->
+  <canvas id="bg-canvas"></canvas>
+
   <!-- Ambient Depth Lights (Strictly 2 Low-Saturation Deep Glows) -->
   <div class="ambient-glow-wrapper" aria-hidden="true">
     <div class="ambient-light-teal"></div>
@@ -33,19 +36,25 @@
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
         </div>
         <span class="brand-name">TzdLang</span>
-        <span class="version-badge">v0.9.4</span>
+        <span class="version-badge"><span class="pulse-dot"></span>v0.2.3 最新版</span>
       </a>
 
       <nav class="header-nav">
         <a href="#hero" class="nav-link">概览</a>
+        <a href="#download" class="nav-link" style="color:#38BDF8; font-weight:600;">下载安装 ✦</a>
+        <a href="wiki.html" class="nav-link" style="color:#34D399; font-weight:600;">Wiki 知识库 📖</a>
         <a href="#workbench" class="nav-link">语法手册</a>
-        <a href="tour.html" class="nav-link" style="color:#38BDF8; font-weight:500;">语言全景向导 (Tour) ✦</a>
+        <a href="tour.html" class="nav-link">交互向导 (Tour)</a>
         <a href="#architecture" class="nav-link">核心架构</a>
         <a href="#benchmarks" class="nav-link">性能基准</a>
         <a href="#toolchain" class="nav-link">生态工具</a>
       </nav>
 
       <div class="header-actions">
+        <a href="#download" class="btn-primary" style="padding: 0.45rem 1rem; font-size: 0.825rem; gap: 0.4rem;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>下载 v0.2.3</span>
+        </a>
         <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" rel="noopener noreferrer" class="btn-github">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
           <span>GitHub</span>
@@ -60,8 +69,10 @@
   <!-- Mobile Navigation Drawer -->
   <div class="mobile-nav-drawer" id="mobile-nav-drawer">
     <a href="#hero" class="nav-link">概览</a>
+    <a href="#download" class="nav-link" style="color:#38BDF8; font-weight:600;">📥 下载中心 (v0.2.3)</a>
+    <a href="wiki.html" class="nav-link" style="color:#34D399; font-weight:600;">📖 Wiki 知识库 (入门到精通)</a>
     <a href="#workbench" class="nav-link">语法手册</a>
-    <a href="tour.html" class="nav-link" style="color:#38BDF8; font-weight:500;">语言全景向导 (Tour) ✦</a>
+    <a href="tour.html" class="nav-link">语言全景向导 (Tour)</a>
     <a href="#architecture" class="nav-link">核心架构</a>
     <a href="#benchmarks" class="nav-link">性能基准</a>
     <a href="#toolchain" class="nav-link">生态工具</a>
@@ -72,7 +83,7 @@
     <div class="hero-container">
       <div class="hero-pill-announcement">
         <span class="indicator-dot"></span>
-        <span>Swift / C++ 级原生性能 · 现代面向对象系统语言</span>
+        <span>🎉 TzdTools v0.2.3 正式发布 · 提供 GPU &amp; CPU 双架构安装程序 · 纯 CPU 版缩减 95.5% 仅 55MB</span>
       </div>
 
       <h1 class="hero-title">
@@ -85,12 +96,16 @@
       </p>
 
       <div class="hero-cta-group">
-        <a href="#workbench" class="btn-primary">
-          <span>探索语法手册</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <a href="#download" class="btn-primary" style="box-shadow: 0 4px 25px rgba(2, 132, 199, 0.45);">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>立即下载 TzdTools v0.2.3</span>
         </a>
-        <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" rel="noopener noreferrer" class="btn-secondary">
-          <span>查看 GitHub 源码</span>
+        <a href="wiki.html" class="btn-secondary" style="border-color: rgba(52, 211, 153, 0.4); color: #fff;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+          <span>Wiki 教程：从入门到精通</span>
+        </a>
+        <a href="#workbench" class="btn-secondary">
+          <span>探索语法手册</span>
         </a>
       </div>
 
@@ -105,12 +120,235 @@
           <div class="stat-label">无全局解释器锁 (No GIL)</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">Tier 1</div>
-          <div class="stat-label">LLVM JIT 原生特化</div>
+          <div class="stat-value">55<span>MB</span></div>
+          <div class="stat-label">CPU 轻量版安装包体积</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">SATB</div>
           <div class="stat-label">分代三色标记写屏障</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dedicated Download Center Section -->
+  <section class="download-section" id="download">
+    <div class="section-container">
+      <div class="section-header-compact">
+        <div class="download-pill-badge">
+          <span class="pulse-dot"></span>
+          <span>Official Release v0.2.3 · 官方安装程序与工具链下载</span>
+        </div>
+        <h2 class="section-title">获取 TzdTools 运行环境与开发工具</h2>
+        <p class="section-desc">提供 <strong>GPU 完整版</strong> 与 <strong>CPU 轻量版</strong> 双架构独立安装向导，支持 Windows 10/11 64位操作系统，开箱即用。</p>
+      </div>
+
+      <!-- 3 Download Cards Grid -->
+      <div class="download-cards-grid">
+        <!-- Card 1: GPU Edition -->
+        <div class="spotlight-card dl-card dl-card-featured">
+          <span class="dl-badge-top dl-badge-gpu">🔥 深度学习 &amp; AI 推荐</span>
+          <div class="dl-card-header">
+            <div class="dl-icon-box dl-icon-gpu">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            </div>
+            <div class="dl-title-wrap">
+              <div class="dl-card-title">TzdTools GPU 完整版</div>
+              <div class="dl-card-subtitle">CUDA 12.6 NVRTC · LibTorch GPU</div>
+            </div>
+          </div>
+
+          <div class="dl-meta-row">
+            <span class="dl-file-size">1.20 GB</span>
+            <span class="dl-file-badge">Windows x64 (.exe)</span>
+          </div>
+
+          <ul class="dl-feature-list">
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>全套 CUDA 12.6 运行时</strong>：补齐 <code>nvrtc-builtins64_126.dll</code> 等关键依赖</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>LibTorch GPU 深度学习加速</strong>：cuBLAS、cuDNN、cuFFT 硬件原生支持</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>Stockham 4-Step GPU NTT</strong>：百万位高精度大数极速乘法算子</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>NSIS 现代安装向导</strong>：自动配置系统 PATH 环境变量与桌面快捷方式</span>
+            </li>
+          </ul>
+
+          <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.3/TzdTools_Setup_v0.2.3.exe" class="dl-btn dl-btn-primary" data-file="TzdTools GPU 完整版">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>下载 GPU 安装包 (1.20 GB)</span>
+          </a>
+          <div class="dl-hint-row">支持 NVIDIA Compute Capability ≥ 6.0 显卡</div>
+        </div>
+
+        <!-- Card 2: CPU Edition -->
+        <div class="spotlight-card dl-card">
+          <span class="dl-badge-top dl-badge-cpu">⚡ 极致精简 · 缩减 95.5%</span>
+          <div class="dl-card-header">
+            <div class="dl-icon-box dl-icon-cpu">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+            </div>
+            <div class="dl-title-wrap">
+              <div class="dl-card-title">TzdTools CPU 轻量版</div>
+              <div class="dl-card-subtitle">纯 CPU 运行库 · 秒级下载</div>
+            </div>
+          </div>
+
+          <div class="dl-meta-row">
+            <span class="dl-file-size">55.0 MB</span>
+            <span class="dl-file-badge">Windows x64 (.exe)</span>
+          </div>
+
+          <ul class="dl-feature-list">
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>体积缩减 95.5%</strong>：安装包仅 55MB（解压后 293MB），几秒即可下载完毕</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>免除庞大 CUDA 依赖</strong>：无独立显卡笔记本、轻薄本、CI/CD 环境最佳选择</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>全功能语言特性保留</strong>：JIT 原生编译、字节码 VM、SATB GC、OOP 完整保留</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>完整官方标准库 (stdlib/)</strong>：内置 core、thread、torch 等全套标准模块</span>
+            </li>
+          </ul>
+
+          <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.3/TzdTools_Setup_v0.2.3_CPU.exe" class="dl-btn dl-btn-emerald" data-file="TzdTools CPU 轻量版">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>下载 CPU 安装包 (55.0 MB)</span>
+          </a>
+          <div class="dl-hint-row">适用于任何 64位 Windows PC，无显卡要求</div>
+        </div>
+
+        <!-- Card 3: VS Code Extension -->
+        <div class="spotlight-card dl-card">
+          <span class="dl-badge-top dl-badge-vsix">IDE 开发套件</span>
+          <div class="dl-card-header">
+            <div class="dl-icon-box dl-icon-vsix">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 9.4 7.55 4.24a1.64 1.64 0 0 0-2.3 1.43V18.33a1.64 1.64 0 0 0 2.3 1.43L16.5 14.6a1.64 1.64 0 0 0 0-2.85z"></path></svg>
+            </div>
+            <div class="dl-title-wrap">
+              <div class="dl-card-title">VS Code 官方扩展</div>
+              <div class="dl-card-subtitle">语法高亮 · 智能补全 · 断点调试</div>
+            </div>
+          </div>
+
+          <div class="dl-meta-row">
+            <span class="dl-file-size">1.15 MB</span>
+            <span class="dl-file-badge">VSIX Package</span>
+          </div>
+
+          <ul class="dl-feature-list">
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>高精度语法高亮</strong>：针对 <code>.tzd</code> 脚本的语义着色、代码折叠与代码片段</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>LSP 语言服务器支持</strong>：上下文感知智能代码补全、函数签名提示与跳转</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>DAP 协议断点调试器</strong>：支持可视化断点设置、单步步入/步过、局部变量监视</span>
+            </li>
+            <li class="dl-feature-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span><strong>兼容主流编辑器</strong>：支持 VS Code、Cursor、Windsurf 及所有 VS Code 派生 IDE</span>
+            </li>
+          </ul>
+
+          <a href="https://github.com/tzdwindows/TzdLanguage/releases/download/v0.2.3/tzdlang-0.2.3.vsix" class="dl-btn dl-btn-purple" data-file="VS Code 插件 (tzdlang-0.2.3.vsix)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>下载 VSIX 插件包 (1.15 MB)</span>
+          </a>
+          <div class="dl-hint-row">在 VS Code 中执行 Extensions: Install from VSIX... 安装</div>
+        </div>
+      </div>
+
+      <!-- Quick Command Strip -->
+      <div class="install-cmd-strip">
+        <div class="install-cmd-left">
+          <svg class="install-cmd-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          <span class="install-cmd-text" id="install-cmd-text">tzd --help</span>
+        </div>
+        <button class="btn-cmd-copy" id="btn-copy-install-cmd">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <span>复制代码</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Wiki Knowledge Base Portal Section -->
+  <section class="wiki-portal-section" id="wiki">
+    <div class="section-container">
+      <div class="wiki-portal-banner">
+        <div class="wiki-portal-header">
+          <div>
+            <div class="section-badge-tiny" style="color:#34D399; border-color:rgba(52, 211, 153, 0.3); background:rgba(52, 211, 153, 0.1);">Official Documentation &amp; Wiki</div>
+            <h2 class="wiki-portal-title">从 Tzd 入门到精通 — 官方知识库指南</h2>
+            <p class="wiki-portal-desc">系统性涵盖从基础语法、类型推断、面向对象继承，到 LibTorch 深度学习张量、GPU NTT 百万位乘法与 JIT/GC 调优的 11 大核心篇章。</p>
+          </div>
+          <a href="wiki.html" class="btn-enter-wiki">
+            <span>进入完整 Wiki 知识库 (从入门到精通全书)</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+          </a>
+        </div>
+
+        <div class="wiki-chapters-grid">
+          <a href="wiki.html#ch01" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 01</span>
+            <span class="wiki-ch-name">语言概览与架构原理</span>
+            <span class="wiki-ch-summary">设计哲学、对比 C++/Rust/Python、整体执行流水线拓扑。</span>
+          </a>
+          <a href="wiki.html#ch02" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 02</span>
+            <span class="wiki-ch-name">环境安装与快速起步</span>
+            <span class="wiki-ch-summary">GPU/CPU 双版本选择、环境变量配置与 VS Code 插件集成。</span>
+          </a>
+          <a href="wiki.html#ch03" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 03</span>
+            <span class="wiki-ch-name">类型系统与变量规范</span>
+            <span class="wiki-ch-summary">var/let/const 声明、原生强类型系统、动态推断与底层指针。</span>
+          </a>
+          <a href="wiki.html#ch04" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 04</span>
+            <span class="wiki-ch-name">控制流、函数与闭包</span>
+            <span class="wiki-ch-summary">条件分支、规范 for 循环、模式匹配、高阶函数与 Lambda 闭包。</span>
+          </a>
+          <a href="wiki.html#ch05" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 05</span>
+            <span class="wiki-ch-name">面向对象体系与多态</span>
+            <span class="wiki-ch-summary">类定义、多重继承、访问权限控制、虚函数分发与 super 调用。</span>
+          </a>
+          <a href="wiki.html#ch06" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 06</span>
+            <span class="wiki-ch-name">现代标准库生态与并发</span>
+            <span class="wiki-ch-summary">核心模块 core、无锁多线程 thread、文件网络 I/O 与数学算法。</span>
+          </a>
+          <a href="wiki.html#ch07" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 07</span>
+            <span class="wiki-ch-name">深度学习与 LibTorch 内核</span>
+            <span class="wiki-ch-summary">张量 Tensor 构造、自动求导 Autograd、神经网络构建与 GPU 显存。</span>
+          </a>
+          <a href="wiki.html#ch08" class="wiki-ch-card">
+            <span class="wiki-ch-num">CHAPTER 08</span>
+            <span class="wiki-ch-name">极致算力：GPU NTT 乘法</span>
+            <span class="wiki-ch-summary">Stockham 4-Step 数论变换、NVRTC 动态编译、百万位超大数乘法。</span>
+          </a>
         </div>
       </div>
     </div>
@@ -396,10 +634,15 @@
       <div class="footer-links">
         <a href="https://github.com/tzdwindows/TzdLanguage" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
         <a href="https://github.com/tzdwindows/TzdLanguage/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">开源许可</a>
+        <a href="#download">下载中心</a>
+        <a href="wiki.html">Wiki 知识库</a>
         <a href="#workbench">语法规范</a>
       </div>
     </div>
   </footer>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
 
   <!-- Application Interaction Script -->
   <script src="assets/app.js"></script>
