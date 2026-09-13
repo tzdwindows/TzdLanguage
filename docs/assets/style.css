@@ -58,6 +58,29 @@ body {
   line-height: 1.6;
 }
 
+/* --------------------------------------------------------------------------
+   Lenis Physics Momentum Smooth Scrolling
+   -------------------------------------------------------------------------- */
+html.lenis, html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -202,6 +225,26 @@ button {
   gap: 0.75rem;
 }
 
+.btn-primary-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #000000;
+  background: #ffffff;
+  padding: 0.42rem 0.95rem;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.btn-primary-header:hover {
+  background: #f5f5f7;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
+}
+
 .btn-github {
   display: inline-flex;
   align-items: center;
@@ -282,7 +325,7 @@ button {
 }
 
 .hero-title .text-gradient {
-  background: linear-gradient(135deg, #FFFFFF 20%, #94A3B8 75%, #38BDF8 100%);
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.65) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -418,8 +461,10 @@ button {
 .section-title {
   font-size: clamp(1.8rem, 3.5vw, 2.5rem);
   font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
+  letter-spacing: -0.025em;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
   margin-bottom: 0.65rem;
 }
 
@@ -1104,53 +1149,20 @@ button {
 
 .pulse-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #10B981;
-  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-  animation: pulse-glow 2s infinite;
+  background: #ffffff;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+  animation: pulse-glow 2.5s infinite;
   margin-right: 6px;
   vertical-align: middle;
 }
 
 @keyframes pulse-glow {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-
-/* Spotlight Card Effect (Linear / Vercel style) */
-.spotlight-card {
-  position: relative;
-  overflow: hidden;
-  background: rgba(18, 20, 29, 0.65);
-  border: 1px solid var(--border-glass);
-  border-radius: 20px;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.28s ease, box-shadow 0.28s ease;
-}
-
-.spotlight-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: radial-gradient(650px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(56, 189, 248, 0.15), transparent 45%);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.35s ease;
-  z-index: 1;
-}
-
-.spotlight-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(56, 189, 248, 0.4);
-  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.6), 0 0 25px rgba(56, 189, 248, 0.15);
-}
-
-.spotlight-card:hover::before {
-  opacity: 1;
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.5); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
 }
 
 /* --------------------------------------------------------------------------
@@ -1167,11 +1179,11 @@ button {
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0.95rem;
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 9999px;
-  font-size: 0.8rem;
-  color: #34D399;
+  font-size: 0.78rem;
+  color: #a1a1a6;
   font-weight: 500;
   margin-bottom: 1rem;
 }
@@ -1179,208 +1191,216 @@ button {
 .download-cards-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1.75rem;
-  margin-top: 3rem;
+  gap: 2rem;
+  margin-top: 3.5rem;
 }
 
-.dl-card {
+/* Card Container (Neutral-First High-End Dark Glass) */
+.dl-card, .spotlight-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 2.75rem 2.25rem 2.5rem 2.25rem;
   display: flex;
   flex-direction: column;
-  padding: 2.25rem 2rem;
-  position: relative;
+  overflow: hidden;
+  transition: border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.dl-card-featured {
-  border-color: rgba(56, 189, 248, 0.35);
-  background: linear-gradient(180deg, rgba(24, 32, 48, 0.75) 0%, rgba(18, 20, 29, 0.65) 100%);
-  box-shadow: 0 12px 35px -8px rgba(0, 0, 0, 0.5), 0 0 30px rgba(56, 189, 248, 0.1);
-}
-
-.dl-badge-top {
+/* Mouse Follow Radial Gradient Spotlight (Apple / Linear / Raycast Style) */
+.dl-card::before, .spotlight-card::before {
+  content: "";
   position: absolute;
-  top: 1.25rem;
-  right: 1.25rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  inset: 0;
+  background: radial-gradient(350px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255, 255, 255, 0.09), transparent 75%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.dl-card:hover::before, .spotlight-card:hover::before {
+  opacity: 1;
+}
+
+/* 3D Hover Lift */
+.dl-card:hover, .spotlight-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 20px 48px -12px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+/* Neutral Gray Capsule Badge */
+.dl-badge-neutral {
+  align-self: flex-start;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.02em;
+  color: #a1a1a6;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 4px 11px;
+  border-radius: 9999px;
+  margin-bottom: 1.5rem;
+  position: relative;
+  z-index: 2;
 }
 
-.dl-badge-gpu {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38BDF8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
-}
-
-.dl-badge-cpu {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34D399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.dl-badge-vsix {
-  background: rgba(168, 85, 247, 0.15);
-  color: #C084FC;
-  border: 1px solid rgba(168, 85, 247, 0.3);
-}
-
-.dl-card-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 1rem;
+/* Minimal Vector Icon */
+.dl-icon-minimal {
+  width: 40px;
+  height: 40px;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 1.25rem;
-}
-
-.dl-icon-box {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-subtle);
+  justify-content: flex-start;
+  position: relative;
+  z-index: 2;
 }
 
-.dl-icon-gpu {
-  color: #38BDF8;
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.25);
-}
-
-.dl-icon-cpu {
-  color: #34D399;
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.25);
-}
-
-.dl-icon-vsix {
-  color: #C084FC;
-  background: rgba(168, 85, 247, 0.1);
-  border-color: rgba(168, 85, 247, 0.25);
+.dl-icon-minimal svg {
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.5px;
 }
 
 .dl-title-wrap {
-  flex: 1;
+  margin-bottom: 0.5rem;
+  position: relative;
+  z-index: 2;
 }
 
 .dl-card-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #fff;
-  line-height: 1.3;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #f5f5f7;
+  line-height: 1.25;
+  margin-bottom: 0.35rem;
 }
 
 .dl-card-subtitle {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  margin-top: 0.2rem;
+  font-size: 0.84rem;
+  color: #86868b;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
 }
 
 .dl-meta-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 1.25rem;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 1.75rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 2;
 }
 
 .dl-file-size {
   font-family: var(--font-mono);
   font-size: 1.15rem;
-  font-weight: 700;
-  color: #fff;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.01em;
 }
 
 .dl-file-badge {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  padding: 0.2rem 0.6rem;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  color: #86868b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .dl-feature-list {
   list-style: none;
-  margin-bottom: 2rem;
+  margin-bottom: 2.25rem;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  position: relative;
+  z-index: 2;
 }
 
 .dl-feature-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.65rem;
-  font-size: 0.875rem;
-  color: #D1D5DB;
-  margin-bottom: 0.75rem;
-  line-height: 1.5;
+  gap: 0.75rem;
+  font-size: 0.86rem;
+  color: #9aa1b0;
+  line-height: 1.62;
 }
 
 .dl-feature-item svg {
+  color: #636b7b;
   flex-shrink: 0;
-  margin-top: 0.2rem;
-  color: #38BDF8;
+  margin-top: 0.25rem;
 }
 
+.dl-feature-item strong {
+  color: #e5e5e7;
+  font-weight: 500;
+}
+
+/* Action Buttons (Primary High-Contrast White & Secondary Ghost) */
 .dl-btn {
+  width: 100%;
+  padding: 0.85rem 1.4rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-decoration: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
-  width: 100%;
-  padding: 0.95rem 1.5rem;
-  border-radius: 12px;
-  font-weight: 600;
-  font-size: 0.95rem;
-  transition: all 0.2s ease;
+  gap: 0.5rem;
   position: relative;
   z-index: 2;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.dl-btn-primary {
-  background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(2, 132, 199, 0.4);
+.dl-btn-white {
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid #ffffff;
 }
 
-.dl-btn-primary:hover {
-  background: linear-gradient(135deg, #38BDF8 0%, #0284C7 100%);
-  box-shadow: 0 6px 22px rgba(56, 189, 248, 0.5);
+.dl-btn-white:hover {
+  background: #f5f5f7;
   transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.25);
 }
 
-.dl-btn-emerald {
-  background: linear-gradient(135deg, #059669 0%, #047857 100%);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(5, 150, 105, 0.4);
+.dl-btn-ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.dl-btn-emerald:hover {
-  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-  box-shadow: 0 6px 22px rgba(16, 185, 129, 0.5);
-  transform: translateY(-1px);
-}
-
-.dl-btn-purple {
-  background: linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.4);
-}
-
-.dl-btn-purple:hover {
-  background: linear-gradient(135deg, #9333EA 0%, #7C3AED 100%);
-  box-shadow: 0 6px 22px rgba(147, 51, 234, 0.5);
+.dl-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.25);
   transform: translateY(-1px);
 }
 
 .dl-hint-row {
-  margin-top: 0.65rem;
+  margin-top: 0.85rem;
   text-align: center;
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
+  font-size: 0.74rem;
+  color: #636b7b;
+  position: relative;
+  z-index: 2;
 }
 
 /* Quick Installation Command Strip */

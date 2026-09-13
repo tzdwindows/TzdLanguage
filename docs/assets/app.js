@@ -560,10 +560,123 @@ function showToast(message, type = "info") {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Card Mouse Spotlight Effect
+// 6. Physics Smooth Scrolling & Motion (Lenis + GSAP 3)
+// ---------------------------------------------------------------------------
+let lenisInstance = null;
+
+function initSmoothScroll() {
+  if (typeof Lenis !== "undefined") {
+    try {
+      lenisInstance = new Lenis({
+        duration: 1.2,
+        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        orientation: "vertical",
+        gestureOrientation: "vertical",
+        smoothWheel: true,
+        wheelMultiplier: 1.0,
+        touchMultiplier: 1.5,
+        infinite: false,
+      });
+
+      // Synchronize Lenis with GSAP ScrollTrigger if both are present
+      if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+        lenisInstance.on("scroll", ScrollTrigger.update);
+        gsap.ticker.add((time) => {
+          lenisInstance.raf(time * 1000);
+        });
+        gsap.ticker.lagSmoothing(0);
+      } else {
+        function raf(time) {
+          lenisInstance.raf(time);
+          requestAnimationFrame(raf);
+        }
+        requestAnimationFrame(raf);
+      }
+
+      // Physics smooth scrolling for in-page anchors
+      document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+        anchor.addEventListener("click", function (e) {
+          const href = this.getAttribute("href");
+          if (!href || href === "#") return;
+          const target = document.querySelector(href);
+          if (target) {
+            e.preventDefault();
+            lenisInstance.scrollTo(target, { offset: -68, duration: 1.2 });
+          }
+        });
+      });
+    } catch (e) {
+      console.warn("Lenis initialization skipped:", e);
+    }
+  }
+}
+
+function initScrollAnimations() {
+  const cards = document.querySelectorAll(".download-cards-grid .dl-card");
+  if (!cards.length) return;
+
+  if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+    gsap.registerPlugin(ScrollTrigger);
+
+    gsap.from(".download-cards-grid .dl-card", {
+      scrollTrigger: {
+        trigger: ".download-cards-grid",
+        start: "top 85%",
+        toggleActions: "play none none none",
+      },
+      y: 40,
+      scale: 0.96,
+      opacity: 0,
+      duration: 0.85,
+      stagger: 0.12,
+      ease: "power3.out",
+    });
+
+    if (document.querySelector(".hero-stats-row")) {
+      gsap.from(".hero-stats-row .stat-card", {
+        scrollTrigger: {
+          trigger: ".hero-stats-row",
+          start: "top 92%",
+        },
+        y: 20,
+        opacity: 0,
+        duration: 0.65,
+        stagger: 0.08,
+        ease: "power2.out",
+      });
+    }
+  } else {
+    // IntersectionObserver fallback for offline or CDN unreachability
+    cards.forEach((c) => {
+      c.style.opacity = "0";
+      c.style.transform = "translateY(40px) scale(0.96)";
+      c.style.transition = "opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), transform 0.85s cubic-bezier(0.16, 1, 0.3, 1)";
+    });
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          cards.forEach((c, idx) => {
+            setTimeout(() => {
+              c.style.opacity = "1";
+              c.style.transform = "translateY(0) scale(1)";
+            }, idx * 120);
+          });
+          observer.disconnect();
+        }
+      });
+    }, { threshold: 0.15 });
+
+    const grid = document.querySelector(".download-cards-grid");
+    if (grid) observer.observe(grid);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Radial Gradient Spotlight Pointer Tracking (Apple / Linear / Raycast)
 // ---------------------------------------------------------------------------
 function initSpotlightCards() {
-  const cards = document.querySelectorAll(".spotlight-card");
+  const cards = document.querySelectorAll(".spotlight-card, .dl-card");
   cards.forEach((card) => {
     card.addEventListener("mousemove", (e) => {
       const rect = card.getBoundingClientRect();
@@ -700,7 +813,7 @@ function initDownloadInteractions() {
       const cmdText = document.getElementById("install-cmd-text")?.innerText || "tzd --help";
       navigator.clipboard.writeText(cmdText).then(() => {
         showToast("命令已复制到剪贴板！", "success");
-        copyCmdBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span style="color:#34D399;">已复制</span>`;
+        copyCmdBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span style="color:#FFFFFF;">已复制</span>`;
         setTimeout(() => {
           copyCmdBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>复制代码</span>`;
         }, 2000);
@@ -713,6 +826,10 @@ function initDownloadInteractions() {
 // 9. App Initialization
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
+  // Initialize Lenis physics smooth scroll & GSAP motion
+  initSmoothScroll();
+  initScrollAnimations();
+
   // Bind workbench sidebar items
   document.querySelectorAll(".nav-item-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
