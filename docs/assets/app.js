@@ -611,27 +611,122 @@ function initSmoothScroll() {
   }
 }
 
-function initScrollAnimations() {
-  const cards = document.querySelectorAll(".download-cards-grid .dl-card");
-  if (!cards.length) return;
+// ---------------------------------------------------------------------------
+// 6. Apple Scroll-Driven Pinning Runway (300vh Stage + Scrubbing Timeline)
+// ---------------------------------------------------------------------------
+function initPinningScrollRunway() {
+  const runway = document.getElementById("download");
+  const stage = document.querySelector(".pin-viewport-stage");
+  if (!runway || !stage) return;
 
   if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
     gsap.registerPlugin(ScrollTrigger);
 
-    gsap.from(".download-cards-grid .dl-card", {
-      scrollTrigger: {
-        trigger: ".download-cards-grid",
-        start: "top 85%",
-        toggleActions: "play none none none",
+    ScrollTrigger.matchMedia({
+      // Desktop: 300vh Fixed Viewport Pinning & Staggered 3D Parallax Scrub
+      "(min-width: 1024px)": function () {
+        const tl = gsap.timeline({
+          scrollTrigger: {
+            trigger: runway,
+            start: "top top",
+            end: "bottom bottom",
+            pin: stage,
+            scrub: 1.2,
+            anticipatePin: 1,
+          },
+        });
+
+        // Phase 1 (0% -> 40%): Title pushes up & scales down; 3 cards explode from center aggregated stack
+        tl.fromTo(
+          ".pin-stage-header",
+          { y: 0, scale: 1, opacity: 1 },
+          { y: -28, scale: 0.92, opacity: 0.4, ease: "none", duration: 0.4 },
+          0
+        );
+
+        tl.fromTo(
+          ".card-motion-center",
+          { x: 0, y: 80, scale: 0.8, filter: "blur(8px)", opacity: 0 },
+          { x: 0, y: 0, scale: 1, filter: "blur(0px)", opacity: 1, ease: "none", duration: 0.4 },
+          0
+        );
+
+        tl.fromTo(
+          ".card-motion-left",
+          { x: 300, y: 60, scale: 0.78, filter: "blur(8px)", opacity: 0 },
+          { x: 0, y: 0, scale: 1, filter: "blur(0px)", opacity: 1, ease: "none", duration: 0.4 },
+          0
+        );
+
+        tl.fromTo(
+          ".card-motion-right",
+          { x: -300, y: 60, scale: 0.78, filter: "blur(8px)", opacity: 0 },
+          { x: 0, y: 0, scale: 1, filter: "blur(0px)", opacity: 1, ease: "none", duration: 0.4 },
+          0
+        );
+
+        // Phase 2 (40% -> 80%): Center Full Edition GPU card elevates (scale 1.06, forward 3D); side cards spread outward and dim to 0.65
+        tl.to(
+          ".card-motion-center",
+          { scale: 1.06, y: -12, ease: "none", duration: 0.4 },
+          0.4
+        );
+
+        tl.to(
+          ".card-motion-left",
+          { x: -40, scale: 0.95, opacity: 0.65, filter: "blur(1px)", ease: "none", duration: 0.4 },
+          0.4
+        );
+
+        tl.to(
+          ".card-motion-right",
+          { x: 40, scale: 0.95, opacity: 0.65, filter: "blur(1px)", ease: "none", duration: 0.4 },
+          0.4
+        );
+
+        // Phase 3 (80% -> 100%): Seamless settling for smooth unpinning
+        tl.to(
+          ".card-motion-center",
+          { scale: 1.02, y: 0, ease: "none", duration: 0.2 },
+          0.8
+        );
+
+        tl.to(
+          ".card-motion-left",
+          { x: 0, scale: 1, opacity: 1, filter: "blur(0px)", ease: "none", duration: 0.2 },
+          0.8
+        );
+
+        tl.to(
+          ".card-motion-right",
+          { x: 0, scale: 1, opacity: 1, filter: "blur(0px)", ease: "none", duration: 0.2 },
+          0.8
+        );
+
+        tl.to(
+          ".pin-stage-header",
+          { y: 0, scale: 1, opacity: 0.85, ease: "none", duration: 0.2 },
+          0.8
+        );
       },
-      y: 40,
-      scale: 0.96,
-      opacity: 0,
-      duration: 0.85,
-      stagger: 0.12,
-      ease: "power3.out",
+
+      // Mobile / Tablet: Smooth staggered entrance without viewport locking
+      "(max-width: 1023px)": function () {
+        gsap.from(".card-motion-wrapper", {
+          scrollTrigger: {
+            trigger: ".download-cards-grid",
+            start: "top 80%",
+          },
+          y: 40,
+          opacity: 0,
+          stagger: 0.15,
+          duration: 0.85,
+          ease: "power3.out",
+        });
+      },
     });
 
+    // Hero stats subtle entrance
     if (document.querySelector(".hero-stats-row")) {
       gsap.from(".hero-stats-row .stat-card", {
         scrollTrigger: {
@@ -646,11 +741,12 @@ function initScrollAnimations() {
       });
     }
   } else {
-    // IntersectionObserver fallback for offline or CDN unreachability
+    // Graceful IntersectionObserver fallback for offline
+    const cards = document.querySelectorAll(".download-cards-grid .card-motion-wrapper");
     cards.forEach((c) => {
       c.style.opacity = "0";
-      c.style.transform = "translateY(40px) scale(0.96)";
-      c.style.transition = "opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), transform 0.85s cubic-bezier(0.16, 1, 0.3, 1)";
+      c.style.transform = "translateY(40px)";
+      c.style.transition = "opacity 0.8s ease, transform 0.8s ease";
     });
 
     const observer = new IntersectionObserver((entries) => {
@@ -659,7 +755,7 @@ function initScrollAnimations() {
           cards.forEach((c, idx) => {
             setTimeout(() => {
               c.style.opacity = "1";
-              c.style.transform = "translateY(0) scale(1)";
+              c.style.transform = "translateY(0)";
             }, idx * 120);
           });
           observer.disconnect();
@@ -673,17 +769,93 @@ function initScrollAnimations() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Radial Gradient Spotlight Pointer Tracking (Apple / Linear / Raycast)
+// 7. 3D Perspective Tilt & Pointer Tracking Spotlight (Apple / Linear)
 // ---------------------------------------------------------------------------
-function initSpotlightCards() {
-  const cards = document.querySelectorAll(".spotlight-card, .dl-card");
+function init3DTiltAndSpotlight() {
+  const cards = document.querySelectorAll(".card-tilt-inner");
+
   cards.forEach((card) => {
+    const shine = card.querySelector(".card-spotlight-shine");
+
     card.addEventListener("mousemove", (e) => {
       const rect = card.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      card.style.setProperty("--mouse-x", `${x}px`);
-      card.style.setProperty("--mouse-y", `${y}px`);
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      // Max ±6deg tilt angle
+      const tiltX = -((y - centerY) / centerY) * 6;
+      const tiltY = ((x - centerX) / centerX) * 6;
+
+      card.style.transform = `perspective(1000px) rotateX(${tiltX.toFixed(2)}deg) rotateY(${tiltY.toFixed(2)}deg) translateZ(8px)`;
+      card.style.transition = "transform 0.08s ease-out";
+
+      if (shine) {
+        shine.style.background = `radial-gradient(circle at ${x}px ${y}px, rgba(255, 255, 255, 0.15), transparent 60%)`;
+        shine.style.opacity = "1";
+      }
+    });
+
+    card.addEventListener("mouseleave", () => {
+      card.style.transform = "perspective(1000px) rotateX(0deg) rotateY(0deg) translateZ(0px)";
+      card.style.transition = "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)";
+      if (shine) {
+        shine.style.opacity = "0";
+        shine.style.transition = "opacity 0.4s ease";
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 8. Magnetic Pull Buttons (Apple / Vision Pro Style)
+// ---------------------------------------------------------------------------
+function initMagneticButtons() {
+  const magneticButtons = document.querySelectorAll(".magnetic-btn");
+  if (!magneticButtons.length) return;
+
+  const triggerRadius = 35; // 35px attraction zone
+
+  window.addEventListener("mousemove", (e) => {
+    magneticButtons.forEach((btn) => {
+      const rect = btn.getBoundingClientRect();
+      const btnCenterX = rect.left + rect.width / 2;
+      const btnCenterY = rect.top + rect.height / 2;
+
+      const distX = e.clientX - btnCenterX;
+      const distY = e.clientY - btnCenterY;
+
+      const halfW = rect.width / 2;
+      const halfH = rect.height / 2;
+      const isNearby = Math.abs(distX) < halfW + triggerRadius && Math.abs(distY) < halfH + triggerRadius;
+
+      if (isNearby) {
+        const pullFactor = 0.35;
+        if (typeof gsap !== "undefined") {
+          gsap.to(btn, {
+            x: distX * pullFactor,
+            y: distY * pullFactor,
+            duration: 0.25,
+            ease: "power2.out",
+            overwrite: "auto",
+          });
+        } else {
+          btn.style.transform = `translate(${distX * pullFactor}px, ${distY * pullFactor}px)`;
+        }
+      } else {
+        if (typeof gsap !== "undefined") {
+          gsap.to(btn, {
+            x: 0,
+            y: 0,
+            duration: 0.65,
+            ease: "elastic.out(1, 0.3)",
+            overwrite: "auto",
+          });
+        } else {
+          btn.style.transform = "translate(0, 0)";
+        }
+      }
     });
   });
 }
@@ -826,9 +998,11 @@ function initDownloadInteractions() {
 // 9. App Initialization
 // ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
-  // Initialize Lenis physics smooth scroll & GSAP motion
+  // Initialize Lenis physics smooth scroll & Apple Scroll-Driven Pinning
   initSmoothScroll();
-  initScrollAnimations();
+  initPinningScrollRunway();
+  init3DTiltAndSpotlight();
+  initMagneticButtons();
 
   // Bind workbench sidebar items
   document.querySelectorAll(".nav-item-btn").forEach((btn) => {
@@ -842,7 +1016,6 @@ document.addEventListener("DOMContentLoaded", () => {
   switchTopic("01_variables");
   initCopyButton();
   initMobileNavigation();
-  initSpotlightCards();
   initBackgroundParticles();
   initDownloadInteractions();
 

@@ -1166,12 +1166,45 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   9. Dedicated Downloads Center Section
+   9. Dedicated Downloads Center Section (Apple Scroll-Driven Pinning 300vh Runway)
    -------------------------------------------------------------------------- */
-.download-section {
+.pin-download-runway {
   position: relative;
-  padding: 6.5rem 0 5rem 0;
-  z-index: 1;
+  height: 300vh;
+  background-color: #080808;
+  z-index: 20;
+}
+
+.pin-viewport-stage {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 1.5rem;
+}
+
+.stage-container {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+}
+
+.pin-stage-header {
+  text-align: center;
+  margin-bottom: 2rem;
+  will-change: transform, opacity;
+  transform-origin: center center;
 }
 
 .download-pill-badge {
@@ -1185,54 +1218,71 @@ button {
   font-size: 0.78rem;
   color: #a1a1a6;
   font-weight: 500;
-  margin-bottom: 1rem;
+  margin-bottom: 0.85rem;
 }
 
-.download-cards-grid {
+/* 3D Perspective Container (Apple Mac Pro / iPhone Keynote stage) */
+.cards-perspective-container {
+  perspective: 1000px;
+  width: 100%;
+  position: relative;
+}
+
+.download-cards-grid, .cards-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 2rem;
-  margin-top: 3.5rem;
+  gap: 1.75rem;
+  width: 100%;
+  position: relative;
 }
 
-/* Card Container (Neutral-First High-End Dark Glass) */
-.dl-card, .spotlight-card {
+/* Motion Wrappers: controlled purely by GSAP ScrollTrigger timeline */
+.card-motion-wrapper {
+  will-change: transform, opacity, filter;
+  position: relative;
+}
+
+.card-motion-wrapper.featured-wrapper {
+  z-index: 5;
+}
+
+/* Inner Card: receives 3D mouse tilt & visual glass styling */
+.card-tilt-inner, .dl-card {
   position: relative;
   background: rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
-  padding: 2.75rem 2.25rem 2.5rem 2.25rem;
+  padding: 2.35rem 2rem 2.15rem 2rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-style: preserve-3d;
+  will-change: transform;
+  box-shadow: 0 16px 40px -15px rgba(0, 0, 0, 0.6);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
-/* Mouse Follow Radial Gradient Spotlight (Apple / Linear / Raycast Style) */
-.dl-card::before, .spotlight-card::before {
-  content: "";
+.card-tilt-inner:hover, .dl-card:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.75), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+.dl-card-featured {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Pointer-events-none Cold-White Spotlight Shine Layer */
+.card-spotlight-shine {
   position: absolute;
   inset: 0;
-  background: radial-gradient(350px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255, 255, 255, 0.09), transparent 75%);
+  pointer-events: none;
+  border-radius: inherit;
   opacity: 0;
   transition: opacity 0.3s ease;
-  pointer-events: none;
   z-index: 1;
-}
-
-.dl-card:hover::before, .spotlight-card:hover::before {
-  opacity: 1;
-}
-
-/* 3D Hover Lift */
-.dl-card:hover, .spotlight-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(255, 255, 255, 0.2);
-  box-shadow: 0 20px 48px -12px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(255, 255, 255, 0.1);
 }
 
 /* Neutral Gray Capsule Badge */
@@ -1247,17 +1297,17 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 4px 11px;
   border-radius: 9999px;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   position: relative;
   z-index: 2;
 }
 
 /* Minimal Vector Icon */
 .dl-icon-minimal {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   color: rgba(255, 255, 255, 0.85);
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1266,39 +1316,39 @@ button {
 }
 
 .dl-icon-minimal svg {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   stroke-width: 1.5px;
 }
 
 .dl-title-wrap {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.4rem;
   position: relative;
   z-index: 2;
 }
 
 .dl-card-title {
-  font-size: 1.35rem;
+  font-size: 1.3rem;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: #f5f5f7;
   line-height: 1.25;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.25rem;
 }
 
 .dl-card-subtitle {
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   color: #86868b;
   line-height: 1.5;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .dl-meta-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 1.75rem;
-  padding-bottom: 1.5rem;
+  margin-bottom: 1.35rem;
+  padding-bottom: 1.15rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   position: relative;
   z-index: 2;
@@ -1306,7 +1356,7 @@ button {
 
 .dl-file-size {
   font-family: var(--font-mono);
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 600;
   color: #ffffff;
   letter-spacing: -0.01em;
@@ -1324,11 +1374,11 @@ button {
 
 .dl-feature-list {
   list-style: none;
-  margin-bottom: 2.25rem;
+  margin-bottom: 1.85rem;
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.7rem;
   position: relative;
   z-index: 2;
 }
@@ -1336,16 +1386,16 @@ button {
 .dl-feature-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
-  font-size: 0.86rem;
+  gap: 0.65rem;
+  font-size: 0.83rem;
   color: #9aa1b0;
-  line-height: 1.62;
+  line-height: 1.55;
 }
 
 .dl-feature-item svg {
   color: #636b7b;
   flex-shrink: 0;
-  margin-top: 0.25rem;
+  margin-top: 0.2rem;
 }
 
 .dl-feature-item strong {
@@ -1356,10 +1406,10 @@ button {
 /* Action Buttons (Primary High-Contrast White & Secondary Ghost) */
 .dl-btn {
   width: 100%;
-  padding: 0.85rem 1.4rem;
-  border-radius: 8px;
+  padding: 0.8rem 1.4rem;
+  border-radius: 9999px;
   font-size: 0.88rem;
-  font-weight: 500;
+  font-weight: 600;
   text-decoration: none;
   display: flex;
   align-items: center;
@@ -1367,37 +1417,42 @@ button {
   gap: 0.5rem;
   position: relative;
   z-index: 2;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* Magnetic Button Wrapper */
+.magnetic-btn {
+  position: relative;
+  will-change: transform;
 }
 
 .dl-btn-white {
-  background: #ffffff;
+  background: #EDEDED;
   color: #000000;
-  border: 1px solid #ffffff;
+  border: 1px solid #EDEDED;
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
 }
 
 .dl-btn-white:hover {
-  background: #f5f5f7;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.25);
+  background: #FFFFFF;
+  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.35);
 }
 
 .dl-btn-ghost {
-  background: rgba(255, 255, 255, 0.05);
-  color: #f5f5f7;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #EDEDED;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .dl-btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 .dl-hint-row {
-  margin-top: 0.85rem;
+  margin-top: 0.75rem;
   text-align: center;
-  font-size: 0.74rem;
+  font-size: 0.73rem;
   color: #636b7b;
   position: relative;
   z-index: 2;
