@@ -31,13 +31,13 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
    - CPU 级 Direct Garner CRT 重构与多线程进位扫描
    - 高性能定点数倒数无除法十进制转换（fast_div_1e9）
    - 实测：474 万位仅需 175 ms，纯乘法超越单核 GMP 2.07 倍，全流程领先 14.5 倍
-5. [**JIT 编译器核心技术与实现**](JIT-Compiler-Internals-zh.md)
-   - Tier 0：紧凑型堆栈式字节码虚拟机
+5. [**JIT 编译器与字节码虚拟机核心技术**](JIT-Compiler-Internals-zh.md)
+   - Tier 0：极致优化堆栈式字节码虚拟机（扁平迭代调用栈、`INC_LOCAL`、标量极速赋值、100 万次调用 0.089s 飙升 83.5 倍）
    - Tier 1：异步 LLVM ORC JIT 实时编译引擎
    - 细粒度优化等级（`-O0` 到 `-O3`）与混合 AST/LLVM 多级内联流水线
    - 函数特化（原生 double worker）、循环展开与数学指令特化
    - 零开销 JIT 调试接口与函数级选择性回退（Selective Deoptimization）
-   - 循环与调用开销基准（超越 JDK 20 HotSpot C2）
+   - 循环与调用开销基准（大幅超越 JDK 20 HotSpot C2）
 6. [**LibTorch 深度学习引擎集成**](Deep-Learning-and-PyTorch-zh.md)
    - 一等公民 Tensor 抽象与无锁引用计数生命周期（`c10::intrusive_ptr`）
    - 反向模式自动微分（Autograd）

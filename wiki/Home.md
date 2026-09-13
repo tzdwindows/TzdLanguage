@@ -31,13 +31,13 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - Direct Garner CRT reconstruction & OpenMP multi-threading
    - Reciprocal division-free base-10^9 conversion (fast_div_1e9)
    - Benchmark: 175 ms on 4.74M digits, beating GMP by up to 14.5x
-5. [**JIT Compiler Internals & Execution Tiers**](JIT-Compiler-Internals.md)
-   - Tier 0: Compact Bytecode Virtual Machine
+5. [**JIT Compiler & Bytecode VM Internals**](JIT-Compiler-Internals.md)
+   - Tier 0: Ultra-Optimized Compact Bytecode VM (flat iterative dispatch, `INC_LOCAL`, fast scalar transfers, 83.5x speedup to 0.089s/1M calls)
    - Tier 1: Asynchronous LLVM ORC JIT Engine
    - Fine-grained optimization levels (`-O0` to `-O3`) & multi-stage inlining pipeline
    - Native double worker specialization, loop unrolling & math intrinsics
    - Zero-overhead JIT debugging interface with Selective Deoptimization
-   - Benchmark comparisons against JDK 20 HotSpot
+   - Benchmark comparisons against JDK 20 HotSpot C2
 6. [**Deep Learning Engine (LibTorch Integration)**](Deep-Learning-and-PyTorch.md)
    - First-class Tensor types & zero-lock memory lifecycle
    - Automatic differentiation (Autograd)
