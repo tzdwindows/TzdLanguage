@@ -98,9 +98,21 @@ endif()
 
 # 3. LibTorch
 if(TZD_ENABLE_LIBTORCH)
-    find_path(LIBTORCH_ROOT
-        NAMES lib/torch.lib include/torch/csrc/api/include/torch/torch.h
-        HINTS
+    if(NOT HAVE_CUDA)
+        set(LIBTORCH_HINTS
+            "$ENV{LIBTORCH_CPU_PATH}"
+            "$ENV{LIBTORCH_PATH}"
+            "$ENV{LIBTORCH_ROOT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/External/libtorch_cpu_backup"
+            "${CMAKE_CURRENT_SOURCE_DIR}/External/libtorch_cpu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/External/libtorch"
+            "C:/libtorch_cpu"
+            "C:/libtorch"
+            "D:/libtorch"
+            "E:/libtorch"
+        )
+    else()
+        set(LIBTORCH_HINTS
             "$ENV{LIBTORCH_PATH}"
             "$ENV{LIBTORCH_ROOT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/External/libtorch"
@@ -108,6 +120,11 @@ if(TZD_ENABLE_LIBTORCH)
             "C:/libtorch"
             "D:/libtorch"
             "E:/libtorch"
+        )
+    endif()
+    find_path(LIBTORCH_ROOT
+        NAMES lib/torch.lib include/torch/csrc/api/include/torch/torch.h
+        HINTS ${LIBTORCH_HINTS}
         DOC "Path to LibTorch root directory"
     )
     if(LIBTORCH_ROOT AND (EXISTS "${LIBTORCH_ROOT}/lib/torch.lib" OR EXISTS "${LIBTORCH_ROOT}/include/torch/csrc/api/include/torch/torch.h"))
@@ -395,15 +412,19 @@ if(HAVE_LIBTORCH)
     target_link_libraries(TzdTools PRIVATE
         torch
         torch_cpu
-        torch_cuda
         c10
-        c10_cuda
         fbgemm
         cpuinfo
         dnnl
         XNNPACK
         pthreadpool
     )
+    if(HAVE_CUDA)
+        target_link_libraries(TzdTools PRIVATE
+            torch_cuda
+            c10_cuda
+        )
+    endif()
 endif()
 
 # Fintamath

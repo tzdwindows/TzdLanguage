@@ -2235,6 +2235,14 @@ std::vector<uint64_t> bigint_mul_gpu_ntt_limbs(const std::vector<uint64_t>& la, 
 
     return lr;
 }
+#else
+void bigint_gpu_warmup(int target_n) {
+    (void)target_n;
+}
+std::string bigint_mul_gpu_ntt_str(const std::string& a, const std::string& b) {
+    (void)a; (void)b;
+    throw std::runtime_error("GPU NTT is not available in non-CUDA build");
+}
 #endif
 
 // ---- GPU model detection: universal compatibility for all CC >= 6.0 GPUs ----
