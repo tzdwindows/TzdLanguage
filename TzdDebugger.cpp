@@ -1,4 +1,4 @@
-﻿#define _WINSOCKAPI_
+#define _WINSOCKAPI_
 
 #include "Generated/TzdInterpreter.h"
 #include "TzdDebugger.h"
@@ -143,6 +143,8 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
                 if (!fileMatch) {
                     std::string f1 = file;
                     std::string f2 = bp.file;
+                    std::replace(f1.begin(), f1.end(), '\\', '/');
+                    std::replace(f2.begin(), f2.end(), '\\', '/');
                     std::transform(f1.begin(), f1.end(), f1.begin(), ::tolower);
                     std::transform(f2.begin(), f2.end(), f2.begin(), ::tolower);
                     if (f1.find(f2) != std::string::npos || f2.find(f1) != std::string::npos) {
@@ -199,23 +201,49 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
             std::string subAction;
             ss >> subAction;
             if (subAction == "add") {
-                std::string fileOrLine;
-                ss >> fileOrLine;
-                std::string lineStr;
-                if (ss >> lineStr) {
-                    int bpLine = std::stoi(lineStr);
-                    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
-                    Breakpoint bp{ g_DebugState.nextBreakpointId++, fileOrLine, bpLine };
-                    g_DebugState.breakpoints.push_back(bp);
-                    sendStr(clientSocket, "Breakpoint " + std::to_string(bp.id) + " added at " + fileOrLine + ":" + std::to_string(bpLine) + "\n");
-                } else if (!fileOrLine.empty()) {
-                    int bpLine = std::stoi(fileOrLine);
-                    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
-                    Breakpoint bp{ g_DebugState.nextBreakpointId++, "", bpLine };
-                    g_DebugState.breakpoints.push_back(bp);
-                    sendStr(clientSocket, "Breakpoint " + std::to_string(bp.id) + " added at line " + std::to_string(bpLine) + "\n");
-                } else {
+                std::string remainder;
+                std::getline(ss, remainder);
+                size_t first = remainder.find_first_not_of(" \t");
+                if (first == std::string::npos) {
                     sendStr(clientSocket, "Usage: :bp add [file] <line>\n");
+                } else {
+                    remainder = remainder.substr(first);
+                    size_t lastSpace = remainder.find_last_of(" \t");
+                    std::string filePart = "";
+                    int bpLine = -1;
+                    if (lastSpace != std::string::npos) {
+                        std::string lineStr = remainder.substr(lastSpace + 1);
+                        try {
+                            bpLine = std::stoi(lineStr);
+                            filePart = remainder.substr(0, lastSpace);
+                            size_t fStart = filePart.find_first_not_of(" \t");
+                            size_t fEnd = filePart.find_last_not_of(" \t");
+                            if (fStart != std::string::npos && fEnd != std::string::npos) {
+                                filePart = filePart.substr(fStart, fEnd - fStart + 1);
+                            }
+                            if (filePart.size() >= 2 && filePart.front() == '"' && filePart.back() == '"') {
+                                filePart = filePart.substr(1, filePart.size() - 2);
+                            }
+                        } catch (...) {
+                            bpLine = -1;
+                        }
+                    }
+                    if (bpLine == -1) {
+                        try {
+                            bpLine = std::stoi(remainder);
+                            filePart = "";
+                        } catch (...) {
+                            bpLine = -1;
+                        }
+                    }
+                    if (bpLine > 0) {
+                        std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                        Breakpoint bp{ g_DebugState.nextBreakpointId++, filePart, bpLine };
+                        g_DebugState.breakpoints.push_back(bp);
+                        sendStr(clientSocket, "Breakpoint " + std::to_string(bp.id) + " added at " + (filePart.empty() ? "" : filePart + ":") + std::to_string(bpLine) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :bp add [file] <line>\n");
+                    }
                 }
             }
             else if (subAction == "list") {
@@ -232,6 +260,42 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
                     }
                 }
                 sendStr(clientSocket, reply.str());
+            }
+            else if (subAction == "clear") {
+                std::string clearTarget;
+                std::getline(ss, clearTarget);
+                size_t cStart = clearTarget.find_first_not_of(" \t");
+                size_t cEnd = clearTarget.find_last_not_of(" \t");
+                if (cStart != std::string::npos && cEnd != std::string::npos) {
+                    clearTarget = clearTarget.substr(cStart, cEnd - cStart + 1);
+                    if (clearTarget.size() >= 2 && clearTarget.front() == '"' && clearTarget.back() == '"') {
+                        clearTarget = clearTarget.substr(1, clearTarget.size() - 2);
+                    }
+                } else {
+                    clearTarget.clear();
+                }
+
+                std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                if (clearTarget.empty()) {
+                    g_DebugState.breakpoints.clear();
+                    sendStr(clientSocket, "All breakpoints cleared.\n");
+                } else {
+                    std::string targetNorm = clearTarget;
+                    std::replace(targetNorm.begin(), targetNorm.end(), '\\', '/');
+                    std::transform(targetNorm.begin(), targetNorm.end(), targetNorm.begin(), ::tolower);
+
+                    auto it = std::remove_if(g_DebugState.breakpoints.begin(), g_DebugState.breakpoints.end(),
+                        [&targetNorm](const Breakpoint& bp) {
+                            if (bp.file.empty()) return false;
+                            std::string f = bp.file;
+                            std::replace(f.begin(), f.end(), '\\', '/');
+                            std::transform(f.begin(), f.end(), f.begin(), ::tolower);
+                            return (f.find(targetNorm) != std::string::npos || targetNorm.find(f) != std::string::npos);
+                        });
+                    int count = (int)std::distance(it, g_DebugState.breakpoints.end());
+                    g_DebugState.breakpoints.erase(it, g_DebugState.breakpoints.end());
+                    sendStr(clientSocket, "Cleared " + std::to_string(count) + " breakpoints for " + clearTarget + "\n");
+                }
             }
             else if (subAction == "del") {
                 int bpId = -1;
@@ -250,7 +314,7 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
                 }
             }
             else {
-                sendStr(clientSocket, "Usage: :bp [add|list|del] ...\n");
+                sendStr(clientSocket, "Usage: :bp [add|list|del|clear] ...\n");
             }
         }
         else if (action == "step" || action == "over") {

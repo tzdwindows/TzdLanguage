@@ -1,17 +1,21 @@
 {
     "name": "tzdlang",
     "displayName": "TzdLang",
-    "description": "添加对tzd语言的支持",
-    "version": "0.0.1",
+    "description": "现代化、高性能面向对象编程语言 TzdLang 官方插件，支持语法高亮、LSP代码补全、DAP可视化交互断点调试",
+    "version": "0.2.0",
     "engines": {
-        "vscode": "^1.109.5"
+        "vscode": "^1.80.0"
     },
     "categories": [
-        "Programming Languages"
+        "Programming Languages",
+        "Debuggers"
     ],
     "activationEvents": [
         "onLanguage:tzdlang",
+        "onDebug:tzdlang",
+        "onDebug:tzd",
         "onCommand:tzdlang.runCurrentFile",
+        "onCommand:tzdlang.debugCurrentFile",
         "onCommand:tzdlang.resetToolsPath",
         "onCommand:tzdlang.helloWorld"
     ],
@@ -38,10 +42,140 @@
                 "path": "./syntaxes/tzdlang.tmLanguage.json"
             }
         ],
+        "breakpoints": [
+            {
+                "language": "tzdlang"
+            }
+        ],
+        "debuggers": [
+            {
+                "type": "tzdlang",
+                "label": "TzdLang 调试器",
+                "languages": [
+                    "tzdlang"
+                ],
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [
+                            "program"
+                        ],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "要运行和调试的 .tzd 脚本绝对路径或工作区相对路径。",
+                                "default": "${file}"
+                            },
+                            "args": {
+                                "type": "array",
+                                "description": "传递给 TzdTools.exe 的额外命令行启动参数 (例如 [\"--jit\", \"--experimental-compute\", \"--bigTime\"])。",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "default": [
+                                    "--jit"
+                                ]
+                            },
+                            "stopOnEntry": {
+                                "type": "boolean",
+                                "description": "是否在程序启动入口第一行暂停。",
+                                "default": false
+                            },
+                            "cwd": {
+                                "type": "string",
+                                "description": "脚本运行工作目录。",
+                                "default": "${workspaceFolder}"
+                            },
+                            "debugPort": {
+                                "type": "number",
+                                "description": "TzdTools 调试服务器端口 (默认 54321)。",
+                                "default": 54321
+                            },
+                            "debugHost": {
+                                "type": "string",
+                                "description": "TzdTools 调试服务器主机地址 (默认 127.0.0.1)。",
+                                "default": "127.0.0.1"
+                            },
+                            "toolsPath": {
+                                "type": "string",
+                                "description": "自定义 TzdTools.exe 路径，留空则自动检测。",
+                                "default": ""
+                            }
+                        }
+                    },
+                    "attach": {
+                        "properties": {
+                            "debugPort": {
+                                "type": "number",
+                                "description": "目标 TzdTools 调试服务器端口 (例如 54321)。",
+                                "default": 54321
+                            },
+                            "debugHost": {
+                                "type": "string",
+                                "description": "目标 TzdTools 调试服务器主机地址。",
+                                "default": "127.0.0.1"
+                            }
+                        }
+                    }
+                },
+                "initialConfigurations": [
+                    {
+                        "name": "TzdLang: 调试当前脚本",
+                        "type": "tzdlang",
+                        "request": "launch",
+                        "program": "${file}",
+                        "args": [
+                            "--jit"
+                        ],
+                        "stopOnEntry": false
+                    },
+                    {
+                        "name": "TzdLang: CPU极限NTT大数调试",
+                        "type": "tzdlang",
+                        "request": "launch",
+                        "program": "${file}",
+                        "args": [
+                            "--experimental-compute",
+                            "--bigTime"
+                        ],
+                        "stopOnEntry": false
+                    },
+                    {
+                        "name": "TzdLang: GPU加速NTT大数调试",
+                        "type": "tzdlang",
+                        "request": "launch",
+                        "program": "${file}",
+                        "args": [
+                            "--forceGPU",
+                            "--bigTime"
+                        ],
+                        "stopOnEntry": false
+                    },
+                    {
+                        "name": "TzdLang: 附加到运行中服务 (Attach)",
+                        "type": "tzdlang",
+                        "request": "attach",
+                        "debugHost": "127.0.0.1",
+                        "debugPort": 54321
+                    }
+                ]
+            },
+            {
+                "type": "tzd",
+                "label": "Tzd (别名)",
+                "languages": [
+                    "tzdlang"
+                ]
+            }
+        ],
         "commands": [
             {
+                "command": "tzdlang.debugCurrentFile",
+                "title": "TzdLang: 调试当前 Tzd 脚本 (F5)",
+                "icon": "$(debug-alt)"
+            },
+            {
                 "command": "tzdlang.runCurrentFile",
-                "title": "TzdLang: 运行当前 Tzd 脚本",
+                "title": "TzdLang: 运行当前 Tzd 脚本 (Ctrl+F5)",
                 "icon": "$(play)"
             },
             {
@@ -56,16 +190,26 @@
         "menus": {
             "editor/title": [
                 {
+                    "command": "tzdlang.debugCurrentFile",
+                    "group": "navigation@1",
+                    "when": "editorLangId == tzdlang"
+                },
+                {
                     "command": "tzdlang.runCurrentFile",
-                    "group": "navigation",
+                    "group": "navigation@2",
                     "when": "editorLangId == tzdlang"
                 }
             ]
         },
         "keybindings": [
             {
-                "command": "tzdlang.runCurrentFile",
+                "command": "tzdlang.debugCurrentFile",
                 "key": "f5",
+                "when": "editorLangId == tzdlang"
+            },
+            {
+                "command": "tzdlang.runCurrentFile",
+                "key": "ctrl+f5",
                 "when": "editorLangId == tzdlang"
             }
         ],
@@ -83,12 +227,13 @@
     "scripts": {
         "lint": "eslint .",
         "pretest": "npm run lint",
-        "test": "vscode-test"
+        "test": "vscode-test",
+        "test:dap": "node test/dap_test.js"
     },
     "devDependencies": {
         "@types/mocha": "^10.0.10",
         "@types/node": "22.x",
-        "@types/vscode": "^1.109.5",
+        "@types/vscode": "^1.80.0",
         "@vscode/test-cli": "^0.0.12",
         "@vscode/test-electron": "^2.5.2",
         "eslint": "^9.39.3"

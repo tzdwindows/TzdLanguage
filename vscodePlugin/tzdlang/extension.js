@@ -1,4 +1,4 @@
-﻿// ─── TzdLang VS Code Extension ───────────────────────────────────────────────
+// ─── TzdLang VS Code Extension ───────────────────────────────────────────────
 // 为 TzdLang 提供语法支持、脚本运行和工具链管理。
 // 底层解释器为 TzdTools.exe，支持 --runMainTzd=<file> 等命令行参数。
 // ──────────────────────────────────────────────────────────────────────────────
@@ -8,6 +8,7 @@ const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
 const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
+const { TzdDebugSession } = require("./debugAdapter");
 
 // ─── 状态 ────────────────────────────────────────────────────────────────────
 let outputChannel = null;
@@ -420,6 +421,71 @@ async function startLspClient(context) {
     });
 }
 
+// ─── DAP 调试器支持 ───────────────────────────────────────────────────────────
+
+class TzdConfigurationProvider {
+  constructor(context) {
+    this.context = context;
+  }
+
+  resolveDebugConfiguration(folder, config, token) {
+    // 若没有配置 launch.json 则自动生成默认配置
+    if (!config.type && !config.request && !config.name) {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.document.languageId === "tzdlang") {
+        config.type = "tzdlang";
+        config.name = "调试当前 Tzd 脚本";
+        config.request = "launch";
+        config.program = "${file}";
+        config.stopOnEntry = false;
+      }
+    }
+
+    if (config.request === "launch") {
+      if (!config.program || config.program === "${file}") {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document.languageId === "tzdlang") {
+          config.program = editor.document.fileName;
+        } else {
+          vscode.window.showErrorMessage("请在编辑器中打开一个 .tzd 脚本文件再开始调试。");
+          return undefined;
+        }
+      }
+
+      if (!config.toolsPath) {
+        config.toolsPath = findTzdTools(this.context);
+      }
+
+      if (!config.cwd) {
+        config.cwd = folder ? folder.uri.fsPath : path.dirname(config.program);
+      }
+
+      if (!config.debugPort) {
+        config.debugPort = 54321;
+      }
+
+      if (!config.args) {
+        config.args = ["--jit"];
+      }
+    }
+
+    return config;
+  }
+}
+
+class TzdDebugAdapterDescriptorFactory {
+  constructor(context) {
+    this.context = context;
+  }
+
+  createDebugAdapterDescriptor(session) {
+    const toolsPath = findTzdTools(this.context);
+    return new vscode.DebugAdapterInlineImplementation(
+      new TzdDebugSession(this.context, { toolsPath, ...session.configuration })
+    );
+  }
+}
+
 // ─── 激活与停用 ──────────────────────────────────────────────────────────────
 
 /**
@@ -447,6 +513,17 @@ function activate(context) {
   }
   statusBarItem.show();
 
+  // 注册 DAP 调试适配器工厂与配置提供者 (同时支持 tzdlang 与 tzd 类型)
+  const configProvider = new TzdConfigurationProvider(context);
+  const debugFactory = new TzdDebugAdapterDescriptorFactory(context);
+
+  context.subscriptions.push(
+    vscode.debug.registerDebugConfigurationProvider("tzdlang", configProvider),
+    vscode.debug.registerDebugConfigurationProvider("tzd", configProvider),
+    vscode.debug.registerDebugAdapterDescriptorFactory("tzdlang", debugFactory),
+    vscode.debug.registerDebugAdapterDescriptorFactory("tzd", debugFactory)
+  );
+
   // 注册命令
   const disposables = [
     vscode.commands.registerCommand("tzdlang.helloWorld", helloWorld),
@@ -457,6 +534,28 @@ function activate(context) {
         return;
       }
       runCurrentFile(context);
+    }),
+
+    vscode.commands.registerCommand("tzdlang.debugCurrentFile", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showErrorMessage("请先在编辑器中打开一个 .tzd 脚本文件");
+        return;
+      }
+      const doc = editor.document;
+      if (doc.languageId !== "tzdlang") {
+        vscode.window.showErrorMessage("当前打开的文件不是 .tzd 脚本");
+        return;
+      }
+      await doc.save();
+      vscode.debug.startDebugging(undefined, {
+        type: "tzdlang",
+        name: `调试 ${path.basename(doc.fileName)}`,
+        request: "launch",
+        program: doc.fileName,
+        args: ["--jit"],
+        stopOnEntry: false,
+      });
     }),
 
     vscode.commands.registerCommand("tzdlang.resetToolsPath", () => {

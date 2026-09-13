@@ -1,6 +1,26 @@
-﻿# Change Log
+# Change Log
 
 All notable changes to the "tzdlang" extension will be documented in this file.
+
+## [0.2.0] - 2026-09-13
+
+### Added
+- **全功能 DAP 交互式断点调试器**：实现完整的 Debug Adapter Protocol。
+- **可视化行断点设置**：支持编辑器行号槽位（Gutter）点击添加/移除断点，自动同步至解释器内核。
+- **交互式单步控制**：单步跳过 (Step Over `F10`)、单步进入 (Step In `F11`)、单步跳出 (Step Out `Shift+F11`)、继续执行 (`F5`)、暂停与终止。
+- **调用栈展示 (Call Stack)**：实时查看调用栈层级与文件行号。
+- **变量作用域监控 (Variables & Scopes)**：在 VS Code 调试侧边栏实时监控 Locals 局部变量和 Globals 全局变量。
+- **调试控制台与监视表达式 (Debug Console & Watch)**：支持在 VS Code 调试控制台求值表达式与监控变量值。
+- **全格式 Launch 预设与配置**：
+  - 默认 JIT 调试启动 (`launch`)
+  - CPU 极限 NTT 高性能大数计算调试启动 (`--experimental-compute --bigTime`)
+  - GPU 加速 NTT 大数计算调试启动 (`--forceGPU --bigTime`)
+  - 附加到正在运行的调试服务器 (`attach`)
+- **快捷键与动作**：
+  - `F5` 快速启动当前脚本调试
+  - `Ctrl+F5` 普通免调试运行
+  - 编辑器右上角一键调试与运行按钮
+- **自动化回归测试**：添加完整的 DAP 端到端测试套件 (`test/dap_test.js`)。
 
 ## [0.1.0] - 2026-06-05
 
