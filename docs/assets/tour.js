@@ -464,8 +464,8 @@ var x = torch_randn(2, 4);
 var w = torch_ones(4, 3);
 
 // 零装箱矩阵乘法与 ReLU 激活
-var out = torch_matmul(x, w);
-var act = torch_relu(out);
+var pred = torch_matmul(x, w);
+var act = torch_relu(pred);
 
 // 组装前向传播网络
 var model = new Sequential();

@@ -218,8 +218,8 @@ print("Callback Cube: " + MathToolkit.apply(cube, 3));`,
     raw: `// 创建张量与执行矩阵乘法
 var x = torch_randn(3, 4);
 var w = torch_ones(4, 2);
-var out = torch_matmul(x, w);
-var act = torch_relu(out);
+var pred = torch_matmul(x, w);
+var act = torch_relu(pred);
 
 // 构建 Sequential 神经网络拓扑
 var net = new Sequential();
@@ -233,8 +233,8 @@ print("Inference model exported with zero Python runtime dependency.");`,
     code: `<span class="tzd-comment">// 创建张量与执行矩阵乘法</span>
 <span class="tzd-keyword">var</span> x = <span class="tzd-fun">torch_randn</span>(<span class="tzd-number">3</span>, <span class="tzd-number">4</span>);
 <span class="tzd-keyword">var</span> w = <span class="tzd-fun">torch_ones</span>(<span class="tzd-number">4</span>, <span class="tzd-number">2</span>);
-<span class="tzd-keyword">var</span> out = <span class="tzd-fun">torch_matmul</span>(x, w);
-<span class="tzd-keyword">var</span> act = <span class="tzd-fun">torch_relu</span>(out);
+<span class="tzd-keyword">var</span> pred = <span class="tzd-fun">torch_matmul</span>(x, w);
+<span class="tzd-keyword">var</span> act = <span class="tzd-fun">torch_relu</span>(pred);
 
 <span class="tzd-comment">// 构建 Sequential 神经网络拓扑</span>
 <span class="tzd-keyword">var</span> net = <span class="tzd-keyword">new</span> <span class="tzd-class">Sequential</span>();

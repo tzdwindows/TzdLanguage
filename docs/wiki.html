@@ -3,31 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>TzdLang 从入门到精通 — 官方维基知识库与核心开发者指南</title>
+  <title>TzdLang 权威开发者指南 — 从入门到精通 (Official Wiki)</title>
   <meta name="description" content="TzdLang 官方权威知识库：从零起步到系统级高性能精通，全面覆盖语法规范、面向对象、LibTorch 深度学习、多线程并发、GPU NTT 数论变换与 JIT/GC 底层机理。">
 
-  <!-- Fonts -->
+  <!-- Apple & Modern System Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-  <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <!-- Wiki Stylesheet -->
   <link rel="stylesheet" href="assets/wiki.css">
 </head>
 <body>
 
-  <!-- Top Reading Progress Bar -->
+  <!-- Reading Progress Bar -->
   <div id="reading-progress-bar"></div>
 
-  <!-- Top Sticky Navigation Bar -->
+  <!-- Top Sticky Header (Apple Frosted Glass) -->
   <header class="wiki-header">
     <div class="wiki-header-left">
+      <button class="btn-mobile-sidebar" id="btn-mobile-toggle" aria-label="切换侧边栏目录">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </button>
+
       <a href="index.html" class="brand-wrapper" title="返回 TzdLang 官网">
         <div class="brand-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
         </div>
         <span class="brand-name">TzdLang Wiki</span>
         <span class="version-badge">v0.2.3 权威指南</span>
@@ -35,16 +36,16 @@
 
       <nav class="breadcrumb-nav">
         <span>/</span>
-        <a href="index.html" style="color:inherit; text-decoration:none;">官网首页</a>
+        <a href="index.html">官网首页</a>
         <span>/</span>
         <span class="breadcrumb-active">从入门到精通</span>
       </nav>
     </div>
 
-    <!-- Center Search Input -->
+    <!-- Apple Spotlight Style Search Input -->
     <div class="wiki-search-box">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-      <input type="text" id="wiki-search-input" placeholder="在维基知识库中实时搜索章节...">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="wiki-search-input" placeholder="在维基知识库中实时检索..." autocomplete="off" spellcheck="false">
       <kbd>⌘K</kbd>
     </div>
 
@@ -139,30 +140,28 @@
             <span>虚拟机底层、JIT 与 GC 调优</span>
           </a>
         </li>
-      </ul>
-
-      <div class="sidebar-group-title">第四篇：综合实战案例</div>
-      <ul class="sidebar-nav-list">
         <li>
           <a href="#ch12" class="sidebar-link">
             <span class="sidebar-link-num">12</span>
-            <span>工程实战：爬虫与神经网络</span>
+            <span>综合工程实战项目演练</span>
           </a>
         </li>
       </ul>
     </aside>
 
-    <!-- Center Article Area -->
+    <!-- Center Article Content Area -->
     <main class="wiki-main">
 
       <!-- CHAPTER 01 -->
       <article class="wiki-article" id="ch01">
         <div class="wiki-ch-header">
-          <span class="wiki-ch-pill">CHAPTER 01 · FOUNDATIONS</span>
+          <span class="wiki-ch-pill">CHAPTER 01 · ARCHITECTURE</span>
           <h1>认识 TzdLang 与架构原理</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：8 分钟</span>
+            <span>•</span>
             <span>适用版本：v0.2.3+</span>
+            <span>•</span>
             <span>作者：TzdLang 核心设计组</span>
           </div>
         </div>
@@ -253,6 +252,7 @@
           <h1>开发环境搭建与安装指南</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：6 分钟</span>
+            <span>•</span>
             <span>支持系统：Windows 10 / 11 (64-bit)</span>
           </div>
         </div>
@@ -317,10 +317,17 @@
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">powershell</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">POWERSHELL</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm"># 1. 验证 CLI 环境是否就绪</span>
@@ -332,7 +339,7 @@ tzd examples\hello.tzd</code></pre>
 
         <h2>2.3 VS Code 扩展套件安装</h2>
         <p>下载官方提供的 <code>tzdlang-0.2.3.vsix</code> 扩展包后，在 VS Code 中按下快捷键 <code>Ctrl+Shift+P</code>，输入并选择：</p>
-        <p><code>Extensions: Install from VSIX...</code> -> 选择下载好的 <code>tzdlang-0.2.3.vsix</code>，即可瞬间激活语言语法着色与断点调试支持。</p>
+        <p><code>Extensions: Install from VSIX...</code> -> 选择下载好的 <code>tzdlang-0.2.3.vsix</code>，即可激活语言高亮着色与智能感知支持。</p>
 
         <div class="chapter-pager">
           <a href="#ch01" class="pager-btn">
@@ -353,6 +360,7 @@ tzd examples\hello.tzd</code></pre>
           <h1>类型系统与变量规范</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：10 分钟</span>
+            <span>•</span>
             <span>重点：类型推断、原生数组、底层指针</span>
           </div>
         </div>
@@ -364,20 +372,27 @@ tzd examples\hello.tzd</code></pre>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             <span>核心语法规则：变量声明的三种合法形式</span>
           </div>
-          <p>在语句层（函数体内、顶层脚本或 REPL 交互环境）中，TzdLang 严格支持且仅支持以下三种声明范式：<br>
+          <p>在语句层（函数体内、顶层脚本或 REPL 交互环境）中，TzdLang 严格支持以下三种声明范式：<br>
           1. <strong>显式强类型</strong>：<code>float ratio = 0.875;</code> 或 <code>int count = 1024;</code><br>
           2. <strong>var 动态推断</strong>：<code>var ratio = 0.875;</code> 或 <code>var count = 1024;</code><br>
           3. <strong>冒号类型约束</strong>：<code>ratio : float = 0.875;</code> 或 <code>count : int = 1024;</code><br>
-          <strong>严正警告：</strong>局部语句中<strong>不支持</strong> <code>let</code>（输入 <code>let ratio: float = 0.875;</code> 将触发解析器“发现多余输入字符”报错），亦不可混写为 <code>var x: int = 10;</code>。<code>let</code> 与 <code>const</code> 仅在 <code>class</code> 类体中作为成员字段合法使用！</p>
+          <strong>特别提醒：</strong>局部语句中<strong>不支持</strong> <code>let</code>（输入 <code>let ratio: float = 0.875;</code> 将触发解析器“发现多余输入字符”报错），亦不可混写为 <code>var x: int = 10;</code>。<code>let</code> 与 <code>const</code> 仅在 <code>class</code> 类体中作为成员字段合法使用！同时注意 <code>out</code> 是保留打印别名，不可用作变量名。</p>
         </div>
 
         <h2>3.1 语句层变量声明实操</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm">// 1. 显式强类型声明 (&lt;type&gt; &lt;identifier&gt; = &lt;value&gt;;)</span>
@@ -403,10 +418,17 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">ServerConfig</span> {
@@ -423,10 +445,17 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="tp">ptr</span> handle = <span class="kw">null</span>;
@@ -454,6 +483,7 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
           <h1>程序控制流与函数范式</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：9 分钟</span>
+            <span>•</span>
             <span>规范要求：严格 for 循环语法</span>
           </div>
         </div>
@@ -471,10 +501,17 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
         <h2>4.1 循环控制结构实操</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm">// 正确规范：控制变量在外部声明</span>
@@ -496,28 +533,40 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
         </div>
 
         <h2>4.2 函数定义与高阶闭包</h2>
-        <p>函数使用 <code>fun</code> 关键字定义，支持默认参数、递归调用与匿名 Lambda 表达式：</p>
+        <p>函数使用 <code>fun</code> 关键字定义，参数可带或不带类型注解，支持递归调用与函数作为第一公民传递：</p>
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm">// 1. 标准函数定义 (无需且不支持返回类型后缀)</span>
 <span class="kw">fun</span> <span class="fn">calculateTax</span>(amount: <span class="tp">float</span>, rate: <span class="tp">float</span>) {
-    <span class="kw">ret</span> amount * rate;
+    <span class="kw">return</span> amount * rate;
 }
 
-<span class="cm">// 2. 函数作为一等公民参数传递与回调</span>
-<span class="kw">fun</span> <span class="fn">applyTaxStrategy</span>(op: <span class="tp">function</span>, original: <span class="tp">float</span>, rate: <span class="tp">float</span>) {
-    <span class="kw">ret</span> op(original, rate);
+<span class="kw">var</span> tax = <span class="fn">calculateTax</span>(<span class="num">100.0</span>, <span class="num">0.15</span>);
+<span class="fn">print</span>(<span class="st">"Calculated Tax: "</span> + tax);
+
+<span class="cm">// 2. 递归函数演练 (Fibonacci 斐波那契数列)</span>
+<span class="kw">fun</span> <span class="fn">fib</span>(n) {
+    <span class="kw">if</span> (n &lt;= <span class="num">1</span>) {
+        <span class="kw">return</span> n;
+    }
+    <span class="kw">return</span> <span class="fn">fib</span>(n - <span class="num">1</span>) + <span class="fn">fib</span>(n - <span class="num">2</span>);
 }
 
-<span class="kw">var</span> tax = <span class="fn">applyTaxStrategy</span>(calculateTax, <span class="num">100.0</span>, <span class="num">0.15</span>);
-<span class="fn">print</span>(<span class="st">"Calculated Tax: "</span> + tax);</code></pre>
+<span class="fn">print</span>(<span class="st">"Fibonacci(10) = "</span> + <span class="fn">fib</span>(<span class="num">10</span>));</code></pre>
         </div>
 
         <div class="chapter-pager">
@@ -539,19 +588,27 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
           <h1>面向对象 OOP、继承与多态</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：11 分钟</span>
-            <span>特性：类、多重继承、虚分发、super</span>
+            <span>•</span>
+            <span>特性：类、继承、虚分发、super</span>
           </div>
         </div>
 
-        <p>TzdLang 拥有完整的工业级面向对象架构，在保证封装与多态特性的同时，底层虚表 (vtable) 由编译器在编译期构建为连续线性指令，没有任何哈希查找开销。</p>
+        <p>TzdLang 拥有完整的面向对象架构，在保证封装与多态特性的同时，底层虚表 (vtable) 由编译器优化为连续线性布局，最大化运行时执行效率。</p>
 
         <h2>5.1 类、属性与构造函数</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">Device</span> {
@@ -576,23 +633,30 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
         <h2>5.2 继承与多态分发</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">ComputeNode</span> <span class="kw">extends</span> <span class="tp">Device</span> {
     <span class="kw">var</span> <span class="tp">int</span> gpuCores;
 
     <span class="fn">ComputeNode</span>(devName, cores) {
-        <span class="kw">super</span>(devName);
+        <span class="kw">this</span>.name = devName;
         <span class="kw">this</span>.gpuCores = cores;
     }
 
     <span class="cm">// 虚方法重写 (Override)</span>
     <span class="kw">fun</span> <span class="fn">ping</span>() {
-        <span class="kw">ret</span> <span class="st">"ComputeNode ["</span> + <span class="kw">this</span>.name + <span class="st">"] Acceleration cores: "</span> + <span class="kw">this</span>.gpuCores;
+        <span class="kw">return</span> <span class="st">"ComputeNode ["</span> + <span class="kw">this</span>.name + <span class="st">"] Acceleration cores: "</span> + <span class="kw">this</span>.gpuCores;
     }
 }
 
@@ -619,18 +683,26 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
           <h1>闭包、异常体系与元编程</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：8 分钟</span>
+            <span>•</span>
             <span>主题：try-catch、无惩罚异常解退</span>
           </div>
         </div>
 
-        <p>TzdLang 实现了基于 DWARF-like 零成本异常抛出机制（Zero-cost Exception Handling），在不发生异常的代码路径上完全免除任何性能惩罚。</p>
+        <p>TzdLang 实现了基于零成本异常抛出机制（Zero-cost Exception Handling），在正常无异常代码路径上完全免除任何性能惩罚。</p>
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">fun</span> <span class="fn">safeDivide</span>(a: <span class="tp">float</span>, b: <span class="tp">float</span>) {
@@ -666,6 +738,7 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
           <h1>核心标准库与多线程并发</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：12 分钟</span>
+            <span>•</span>
             <span>重点：stdlib/ 体系、真多线程无锁并发</span>
           </div>
         </div>
@@ -682,10 +755,17 @@ maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
         <h2>7.2 多线程并发计算实操</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">import</span> <span class="st">"stdlib/thread/Thread.tzd"</span>;
@@ -731,6 +811,7 @@ t2.<span class="fn">join</span>();
           <h1>深度学习与 LibTorch 原生内核</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：13 分钟</span>
+            <span>•</span>
             <span>核心：Tensor 张量、自动求导 Autograd、神经网络</span>
           </div>
         </div>
@@ -740,10 +821,17 @@ t2.<span class="fn">join</span>();
         <h2>8.1 张量创建与线性代数运算</h2>
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm">// 1. 创建二维正态分布随机张量</span>
@@ -755,10 +843,10 @@ t2.<span class="fn">join</span>();
 <span class="fn">print</span>(<span class="st">"Matrix Multiplication Output:"</span>);
 <span class="fn">torch_print</span>(Y);
 
-<span class="cm">// 3. 激活函数与降维</span>
+<span class="cm">// 3. 激活函数与降维标量提取</span>
 <span class="kw">var</span> activated = <span class="fn">torch_relu</span>(Y);
 <span class="kw">var</span> loss = <span class="fn">torch_sum</span>(activated);
-<span class="fn">print</span>(<span class="st">"Scalar Loss Value: "</span> + <span class="fn">torch_item</span>(loss));</code></pre>
+<span class="fn">print</span>(<span class="st">"Scalar Loss Value: "</span> + <span class="fn">torch_scalar_value</span>(loss));</code></pre>
         </div>
 
         <div class="chapter-pager">
@@ -780,6 +868,7 @@ t2.<span class="fn">join</span>();
           <h1>百万位算力：GPU NTT 乘法架构</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：15 分钟</span>
+            <span>•</span>
             <span>前沿：Stockham 4-Step、NVRTC、无冲突 Bank 优化</span>
           </div>
         </div>
@@ -813,6 +902,7 @@ t2.<span class="fn">join</span>();
           <h1>C/C++ 原生互操作 (FFI)</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：8 分钟</span>
+            <span>•</span>
             <span>技术：dyncall 动态调用、系统级扩展</span>
           </div>
         </div>
@@ -821,10 +911,17 @@ t2.<span class="fn">join</span>();
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
           <pre class="code-pre"><code><span class="cm">// 加载 Windows 用户界面核心库 user32.dll</span>
@@ -854,6 +951,7 @@ t2.<span class="fn">join</span>();
           <h1>虚拟机底层机理、JIT 与 GC 调优</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：14 分钟</span>
+            <span>•</span>
             <span>深度：SATB 写屏障、Bump Pointer Arena、JIT 指令特化</span>
           </div>
         </div>
@@ -902,7 +1000,7 @@ t2.<span class="fn">join</span>();
           </a>
           <a href="#ch12" class="pager-btn next">
             <span class="pager-label">下一章</span>
-            <span class="pager-title">12 工程实战：爬虫与神经网络 →</span>
+            <span class="pager-title">12 工程实战：神经网络演练 →</span>
           </a>
         </div>
       </article>
@@ -914,7 +1012,8 @@ t2.<span class="fn">join</span>();
           <h1>综合工程实战项目演练</h1>
           <div class="wiki-article-meta">
             <span>预计阅读时间：16 分钟</span>
-            <span>实战：手写全连接神经网络训练</span>
+            <span>•</span>
+            <span>实战：纯 TzdLang 手写全连接神经网络训练</span>
           </div>
         </div>
 
@@ -922,13 +1021,20 @@ t2.<span class="fn">join</span>();
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
-            <span class="code-lang-tag">tzdlang</span>
-            <button class="btn-copy-snippet">
+            <div class="code-header-left">
+              <div class="macos-dots">
+                <span class="macos-dot dot-red"></span>
+                <span class="macos-dot dot-yellow"></span>
+                <span class="macos-dot dot-green"></span>
+              </div>
+              <span class="code-lang-tag">TZDLANG</span>
+            </div>
+            <button class="btn-copy-snippet" title="复制代码">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>复制代码</span>
+              <span>复制</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="cm">// 1. 构造训练数据集 (XOR 问题)</span>
+          <pre class="code-pre"><code><span class="cm">// 1. 构造训练数据集 (XOR 异或分类问题)</span>
 <span class="kw">var</span> inputs = <span class="fn">torch_tensor</span>([
     [<span class="num">0.0</span>, <span class="num">0.0</span>],
     [<span class="num">0.0</span>, <span class="num">1.0</span>],
@@ -943,7 +1049,7 @@ t2.<span class="fn">join</span>();
     [<span class="num">0.0</span>]
 ]);
 
-<span class="cm">// 2. 初始化网络权重与偏置 (2 -> 4 -> 1)</span>
+<span class="cm">// 2. 初始化网络权重与偏置 (2 -> 4 -> 1 拓扑)</span>
 <span class="kw">var</span> W1 = <span class="fn">torch_randn</span>([<span class="num">2</span>, <span class="num">4</span>]);
 <span class="kw">var</span> b1 = <span class="fn">torch_zeros</span>([<span class="num">1</span>, <span class="num">4</span>]);
 <span class="kw">var</span> W2 = <span class="fn">torch_randn</span>([<span class="num">4</span>, <span class="num">1</span>]);
@@ -955,16 +1061,16 @@ t2.<span class="fn">join</span>();
 <span class="fn">print</span>(<span class="st">"Starting TzdLang Neural Network Training..."</span>);
 
 <span class="kw">for</span> (epoch = <span class="num">0</span>; epoch &lt; <span class="num">500</span>; epoch++) {
-    <span class="cm">// 前向传播 (Forward pass)</span>
+    <span class="cm">// 前向传播 (Forward pass, 注意避开 reserved keyword 'out')</span>
     <span class="kw">var</span> h = <span class="fn">torch_sigmoid</span>(<span class="fn">torch_add</span>(<span class="fn">torch_matmul</span>(inputs, W1), b1));
-    <span class="kw">var</span> out = <span class="fn">torch_sigmoid</span>(<span class="fn">torch_add</span>(<span class="fn">torch_matmul</span>(h, W2), b2));
+    <span class="kw">var</span> pred = <span class="fn">torch_sigmoid</span>(<span class="fn">torch_add</span>(<span class="fn">torch_matmul</span>(h, W2), b2));
 
     <span class="cm">// 均方误差损失 (MSE Loss)</span>
-    <span class="kw">var</span> diff = <span class="fn">torch_sub</span>(out, targets);
+    <span class="kw">var</span> diff = <span class="fn">torch_sub</span>(pred, targets);
     <span class="kw">var</span> loss = <span class="fn">torch_mean</span>(<span class="fn">torch_mul</span>(diff, diff));
 
     <span class="kw">if</span> (epoch % <span class="num">100</span> == <span class="num">0</span>) {
-        <span class="fn">print</span>(<span class="st">"Epoch ["</span> + epoch + <span class="st">"] Loss: "</span> + <span class="fn">torch_item</span>(loss));
+        <span class="fn">print</span>(<span class="st">"Epoch ["</span> + epoch + <span class="st">"] Loss: "</span> + <span class="fn">torch_scalar_value</span>(loss));
     }
 }
 
@@ -976,7 +1082,7 @@ t2.<span class="fn">join</span>();
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
             <span>下一步行动</span>
           </div>
-          <p>恭喜您已经完整浏览了 TzdLang 从入门到精通的核心体系！接下来，您可以直接下载 TzdTools 安装包在本地运行实操，或者进入 <a href="tour.html" style="color:#38BDF8; font-weight:600;">语言全景交互向导 (Tour)</a> 在线调试更多代码案例。</p>
+          <p>恭喜您已经完整浏览了 TzdLang 从入门到精通的核心体系！接下来，您可以直接下载 TzdTools 安装包在本地运行实操，或者进入 <a href="tour.html" style="color:var(--apple-blue); font-weight:600; text-decoration:none;">语言全景交互向导 (Tour)</a> 在线调试更多代码案例。</p>
         </div>
 
         <div class="chapter-pager">
@@ -984,8 +1090,8 @@ t2.<span class="fn">join</span>();
             <span class="pager-label">上一章</span>
             <span class="pager-title">← 11 虚拟机底层、JIT 与 GC 调优</span>
           </a>
-          <a href="index.html#download" class="pager-btn next" style="background: linear-gradient(135deg, rgba(2, 132, 199, 0.2) 0%, rgba(3, 105, 161, 0.3) 100%); border-color: rgba(56, 189, 248, 0.4);">
-            <span class="pager-label" style="color:#38BDF8;">立即下载使用</span>
+          <a href="index.html#download" class="pager-btn next" style="background: rgba(41, 151, 255, 0.08); border-color: rgba(41, 151, 255, 0.3);">
+            <span class="pager-label" style="color:var(--apple-blue);">立即下载使用</span>
             <span class="pager-title" style="color:#fff;">获取 TzdTools v0.2.3 安装包 🚀</span>
           </a>
         </div>
@@ -993,26 +1099,30 @@ t2.<span class="fn">join</span>();
 
     </main>
 
-    <!-- Right Sticky Table of Contents -->
+    <!-- Right Sticky Table of Contents (Apple Sliding Pill Track) -->
     <aside class="wiki-toc-wrapper">
       <div class="toc-title">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
         <span>本章导航</span>
       </div>
-      <ul class="toc-list" id="toc-list">
-        <li class="toc-item active"><a href="#ch01">01. 语言概览与架构</a></li>
-        <li class="toc-item"><a href="#ch02">02. 开发环境搭建与安装</a></li>
-        <li class="toc-item"><a href="#ch03">03. 类型系统与变量规范</a></li>
-        <li class="toc-item"><a href="#ch04">04. 程序控制流与函数</a></li>
-        <li class="toc-item"><a href="#ch05">05. 面向对象 OOP 与多态</a></li>
-        <li class="toc-item"><a href="#ch06">06. 闭包、异常与元编程</a></li>
-        <li class="toc-item"><a href="#ch07">07. 核心标准库与多线程</a></li>
-        <li class="toc-item"><a href="#ch08">08. 深度学习与 LibTorch</a></li>
-        <li class="toc-item"><a href="#ch09">09. 百万位算力：GPU NTT</a></li>
-        <li class="toc-item"><a href="#ch10">10. C/C++ 原生互操作 FFI</a></li>
-        <li class="toc-item"><a href="#ch11">11. 虚拟机底层机理与调优</a></li>
-        <li class="toc-item"><a href="#ch12">12. 综合实战项目演练</a></li>
-      </ul>
+      <div class="toc-nav-container">
+        <div class="toc-track-line"></div>
+        <div class="toc-active-pill" id="toc-active-pill"></div>
+        <ul class="toc-list" id="toc-list">
+          <li class="toc-item active"><a href="#ch01">01. 语言概览与架构原理</a></li>
+          <li class="toc-item"><a href="#ch02">02. 开发环境搭建与安装</a></li>
+          <li class="toc-item"><a href="#ch03">03. 类型系统与变量规范</a></li>
+          <li class="toc-item"><a href="#ch04">04. 程序控制流与函数范式</a></li>
+          <li class="toc-item"><a href="#ch05">05. 面向对象 OOP 与多态</a></li>
+          <li class="toc-item"><a href="#ch06">06. 闭包、异常与元编程</a></li>
+          <li class="toc-item"><a href="#ch07">07. 核心标准库与多线程</a></li>
+          <li class="toc-item"><a href="#ch08">08. 深度学习与 LibTorch</a></li>
+          <li class="toc-item"><a href="#ch09">09. 百万位算力：GPU NTT</a></li>
+          <li class="toc-item"><a href="#ch10">10. C/C++ 原生互操作 FFI</a></li>
+          <li class="toc-item"><a href="#ch11">11. 虚拟机底层机理与调优</a></li>
+          <li class="toc-item"><a href="#ch12">12. 综合工程实战项目演练</a></li>
+        </ul>
+      </div>
     </aside>
 
   </div>
