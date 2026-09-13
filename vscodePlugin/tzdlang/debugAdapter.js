@@ -9,6 +9,17 @@ const fs = require("fs");
 const { EventEmitter } = require("events");
 const { TextDecoder } = require("util");
 
+// ─── 文件日志 (用于VS Code调试诊断) ──────────────────────────────────────────
+const LOG_FILE = require("os").homedir() + "\\tzdadapter.log";
+function flog(...args) {
+  try {
+    const line = new Date().toISOString() + " " + args.join(" ") + "\n";
+    fs.appendFileSync(LOG_FILE, line);
+  } catch(_) {}
+}
+flog("=== debugAdapter.js v0.2.2 loaded ===");
+
+
 class TzdDebugSession {
   constructor(context, config) {
     this.context = context;
@@ -85,6 +96,7 @@ class TzdDebugSession {
 
     const command = message.command;
     const args = message.arguments || {};
+    flog(`REQ ${command}`, JSON.stringify(args).substring(0, 200));
 
     try {
       switch (command) {
@@ -178,6 +190,7 @@ class TzdDebugSession {
     const host = args.debugHost || "127.0.0.1";
     const port = args.debugPort || args.debugServer || 54321;
     const program = args.program;
+    flog(`handleLaunch: program=${program} port=${port} stopOnEntry=${this.stopOnEntry}`);
 
     if (!program || !fs.existsSync(program)) {
       this.sendResponse(request, {}, false, `目标脚本文件不存在: ${program}`);
@@ -381,6 +394,7 @@ class TzdDebugSession {
         }
 
         this.recvBuffer = this.recvBuffer.substring(0, breakIdx) + this.recvBuffer.substring(removeEnd);
+        flog(`BREAK_EVENT: line=${line} file=${file} breakLine=${breakLine.substring(0,80)}`);
         this.handleBreakEvent(breakLine, file, line, frame);
       }
 
@@ -389,6 +403,10 @@ class TzdDebugSession {
     });
 
     this.socket.on("close", () => {
+      while (this.pendingCommands.length > 0) {
+        const cmd = this.pendingCommands.shift();
+        cmd.reject(new Error("Socket closed"));
+      }
       if (!this.isTerminated) {
         this.isTerminated = true;
         this.sendEvent("exited", { exitCode: 0 });
@@ -397,6 +415,10 @@ class TzdDebugSession {
     });
 
     this.socket.on("error", (err) => {
+      while (this.pendingCommands.length > 0) {
+        const cmd = this.pendingCommands.shift();
+        cmd.reject(err);
+      }
       if (err.code === "ECONNRESET" || err.code === "EPIPE") {
         if (!this.isTerminated) {
           this.isTerminated = true;
@@ -409,7 +431,30 @@ class TzdDebugSession {
     });
   }
 
-  handleBreakEvent(breakLine, file, line, frame) {
+  async syncAllBreakpoints() {
+    if (!this.socket || this.socket.destroyed) return;
+    flog(`syncAllBreakpoints: starting sync for ${this.breakpointsMap.size} files`);
+    for (const [fPath, bps] of this.breakpointsMap.entries()) {
+      flog(`syncAllBreakpoints: clearing ${fPath}`);
+      try {
+        await this.sendDebugCommand(`:bp clear "${fPath}"\n`);
+      } catch (e) {
+        flog(`syncAllBreakpoints :bp clear error: ${e.message}`);
+      }
+      for (const bp of bps) {
+        flog(`syncAllBreakpoints: adding ${fPath}:${bp.line}`);
+        try {
+          await this.sendDebugCommand(`:bp add "${fPath}" ${bp.line}\n`);
+        } catch (e) {
+          flog(`syncAllBreakpoints :bp add error: ${e.message}`);
+        }
+      }
+    }
+    this.breakpointsSynced = true;
+    flog(`syncAllBreakpoints: completed, breakpointsSynced=true`);
+  }
+
+  async handleBreakEvent(breakLine, file, line, frame) {
     this.isSuspended = true;
 
     // 若 C++ 未发送独立的 *FILE* / *LINE*，使用兼容正则回退解析
@@ -435,13 +480,26 @@ class TzdDebugSession {
 
     const isStartup = breakLine.includes("Attached") || breakLine.includes("Paused at startup");
     const isStep = breakLine.includes("step");
+    flog(`handleBreakEvent: isStartup=${isStartup} isStep=${isStep} configured=${this.configured} stopOnEntry=${this.stopOnEntry} isSuspended=${this.isSuspended} breakpointsSynced=${this.breakpointsSynced}`);
 
     if (isStartup) {
       this.isStartupPaused = true;
       if (!this.hasReportedEntry) {
         this.hasReportedEntry = true;
+
+        // ⭐ 关键：程序在启动第一条语句挂起时，必须先将所有断点全部同步给 C++！
+        if (!this.breakpointsSynced) {
+          flog("handleBreakEvent: startup pause reached, syncing all breakpoints before resuming...");
+          try {
+            await this.syncAllBreakpoints();
+          } catch (e) {
+            flog("handleBreakEvent: syncAllBreakpoints EXCEPTION " + e.message);
+          }
+        }
+
         if (this.stopOnEntry) {
           // 用户明确要求在程序入口暂停
+          flog("handleBreakEvent: sending stopped(entry)");
           this.sendEvent("stopped", {
             reason: "entry",
             threadId: 1,
@@ -450,13 +508,16 @@ class TzdDebugSession {
           });
         } else if (this.configured) {
           // 已完成配置且无需入口暂停，直接继续执行
+          flog("handleBreakEvent: already configured and breakpoints synced, sending :c to resume");
           this.sendRawCommand(":c\n");
           this.isSuspended = false;
           this.isStartupPaused = false;
+        } else {
+          flog("handleBreakEvent: not yet configured, waiting for configurationDone");
         }
-        // 若尚未收到 configurationDone，保持挂起等待断点同步完毕后在 handleConfigurationDone 中继续
       }
     } else {
+      flog(`handleBreakEvent: sending stopped(${isStep ? "step" : "breakpoint"}) at line ${this.currentLine}`);
       this.sendEvent("stopped", {
         reason: isStep ? "step" : "breakpoint",
         threadId: 1,
@@ -498,9 +559,30 @@ class TzdDebugSession {
     }
   }
 
-  sendDebugCommand(cmd) {
+  sendDebugCommand(cmd, timeoutMs = 8000) {
     return new Promise((resolve, reject) => {
-      const item = { cmd: cmd.endsWith("\n") ? cmd : cmd + "\n", resolve, reject };
+      let timer = null;
+      const item = {
+        cmd: cmd.endsWith("\n") ? cmd : cmd + "\n",
+        resolve: (val) => {
+          if (timer) clearTimeout(timer);
+          resolve(val);
+        },
+        reject: (err) => {
+          if (timer) clearTimeout(timer);
+          reject(err);
+        },
+      };
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          const idx = this.pendingCommands.indexOf(item);
+          if (idx !== -1) {
+            this.pendingCommands.splice(idx, 1);
+            flog(`sendDebugCommand TIMEOUT for: ${item.cmd.trim()}`);
+            reject(new Error(`Command timed out: ${item.cmd.trim()}`));
+          }
+        }, timeoutMs);
+      }
       this.pendingCommands.push(item);
       if (this.pendingCommands.length === 1) {
         // 清理当前缓冲区残留的历史提示符，确保本次指令匹配到的是 C++ 后端执行本次指令产生的响应
@@ -529,16 +611,26 @@ class TzdDebugSession {
 
     const normPath = filePath.replace(/\\/g, "/");
     this.breakpointsMap.set(normPath, breakpoints);
+    flog(`handleSetBreakpoints: file=${normPath} bps=${JSON.stringify(breakpoints)} socketOk=${!!(this.socket && !this.socket.destroyed)} isSuspended=${this.isSuspended}`);
 
-    // 如果 Socket 已经建立，立即与 TzdTools 进行断点同步并消费响应
-    if (this.socket && !this.socket.destroyed) {
+    // 如果 Socket 已经建立且当前处于挂起状态，立即同步断点并消费响应
+    if (this.socket && !this.socket.destroyed && this.isSuspended) {
       try {
+        flog(`handleSetBreakpoints: sending :bp clear...`);
         await this.sendDebugCommand(`:bp clear "${normPath}"\n`);
         for (const bp of breakpoints) {
+          flog(`handleSetBreakpoints: sending :bp add line ${bp.line}`);
           await this.sendDebugCommand(`:bp add "${normPath}" ${bp.line}\n`);
         }
+        flog(`handleSetBreakpoints: breakpointsSynced=true`);
         this.breakpointsSynced = true;
-      } catch (_) {}
+      } catch (e) {
+        flog(`handleSetBreakpoints: EXCEPTION ${e.message}`);
+      }
+    } else {
+      // 标记尚未同步，稍后由 startup pause 或 configurationDone 触发同步
+      this.breakpointsSynced = false;
+      flog(`handleSetBreakpoints: deferred sync until startup pause/configDone`);
     }
 
     const responseBreakpoints = breakpoints.map((bp, index) => ({
@@ -555,25 +647,25 @@ class TzdDebugSession {
 
   async handleConfigurationDone(request) {
     this.configured = true;
+    flog(`handleConfigurationDone: breakpointsSynced=${this.breakpointsSynced} isSuspended=${this.isSuspended} stopOnEntry=${this.stopOnEntry}`);
 
-    // 若尚未在 setBreakpoints 中同步，在此处集中同步所有断点
+    // 若尚未在 setBreakpoints 中同步，且 socket 已就绪，在此处集中同步所有断点
     if (!this.breakpointsSynced && this.socket && !this.socket.destroyed) {
       try {
-        for (const [fPath, bps] of this.breakpointsMap.entries()) {
-          await this.sendDebugCommand(`:bp clear "${fPath}"\n`);
-          for (const bp of bps) {
-            await this.sendDebugCommand(`:bp add "${fPath}" ${bp.line}\n`);
-          }
-        }
-        this.breakpointsSynced = true;
-      } catch (_) {}
+        await this.syncAllBreakpoints();
+      } catch (e) {
+        flog(`handleConfigurationDone: syncAllBreakpoints EXCEPTION ${e.message}`);
+      }
     }
 
-    // 若非停在入口模式，继续执行
+    // 若非停在入口模式，且当前处于暂停状态，继续执行
     if (this.isSuspended && !this.stopOnEntry) {
+      flog(`handleConfigurationDone: sending :c to resume`);
       this.sendRawCommand(":c\n");
       this.isSuspended = false;
       this.isStartupPaused = false;
+    } else {
+      flog(`handleConfigurationDone: NOT sending :c (isSuspended=${this.isSuspended} stopOnEntry=${this.stopOnEntry})`);
     }
 
     this.sendResponse(request, {});
@@ -594,7 +686,9 @@ class TzdDebugSession {
     let rawStack = "";
     try {
       rawStack = await this.sendDebugCommand(":stack\n");
-    } catch (_) {
+      flog(`handleStackTrace: rawStack=${rawStack.replace(/\r?\n/g, ' -- ')}`);
+    } catch (e) {
+      flog(`handleStackTrace: EXCEPTION ${e.message}`);
       rawStack = "";
     }
 
@@ -700,7 +794,9 @@ class TzdDebugSession {
     let rawVars = "";
     try {
       rawVars = await this.sendDebugCommand(cmd);
-    } catch (_) {
+      flog(`handleVariables: cmd=${cmd.trim()} rawVars=${rawVars.replace(/\r?\n/g, ' -- ')}`);
+    } catch (e) {
+      flog(`handleVariables: EXCEPTION ${e.message}`);
       rawVars = "";
     }
 
