@@ -907,7 +907,14 @@ t2.<span class="fn">join</span>();
           </div>
         </div>
 
-        <p>TzdLang 内置了经过深度定制的 <strong>dyncall</strong> 动态调用引擎与原生 MASM 汇编胶水层，可以在运行期无需预编译直接调用任意 Windows DLL 导出的 C 风格 API。</p>
+        <p>TzdLang 内置了经过深度定制的 <strong>dyncall</strong> 动态外部函数调用引擎与原生 MASM 汇编胶水层。与传统手动跟踪句柄的 <code>loadLibrary</code> / <code>getProcAddress</code> 机制不同，TzdLang 采用<strong>声明式原生函数语法 (<code>native fun</code>)</strong>，由编译器与虚拟机在底层自动装载动态库并由 dyncall 完成 ABI 栈帧转换。</p>
+
+        <div class="wiki-note-box" style="background: rgba(255, 255, 255, 0.04); border-left: 3px solid #ededed; padding: 1rem 1.25rem; margin: 1.5rem 0; border-radius: 0 8px 8px 0;">
+          <strong>语法规范提示：</strong>TzdLang 不使用 <code>loadLibrary()</code>、<code>getProcAddress()</code> 或 <code>callNative()</code>，请统一使用语言原生支持的 <code>native fun</code> 语法。声明后该函数即成为一等公民原生函数对象，可直接调用。
+        </div>
+
+        <h3>1. 原生 API 声明与直接调用</h3>
+        <p>语法由双括号结构组成：第一括号为参数列表，第二括号为属性映射表（支持 <code>dll</code>、<code>fun</code>、<code>prototype = 1</code>、<code>type</code>、<code>return</code>）：</p>
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
@@ -924,13 +931,71 @@ t2.<span class="fn">join</span>();
               <span>复制</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="cm">// 加载 Windows 用户界面核心库 user32.dll</span>
-<span class="kw">var</span> user32 = <span class="fn">loadLibrary</span>(<span class="st">"user32.dll"</span>);
-<span class="kw">var</span> msgBox = <span class="fn">getProcAddress</span>(user32, <span class="st">"MessageBoxA"</span>);
+          <pre class="code-pre"><code><span class="cm">// 1. 声明 Windows 内核 API (kernel32.dll)</span>
+<span class="kw">native fun</span> <span class="fn">GetCurrentProcessId</span>()(dll = <span class="st">"kernel32.dll"</span>, fun = <span class="st">"GetCurrentProcessId"</span>, prototype = <span class="num">1</span>, type = <span class="st">""</span>, return = <span class="st">"int"</span>);
+<span class="kw">native fun</span> <span class="fn">SetConsoleTitleA</span>(title)(dll = <span class="st">"kernel32.dll"</span>, fun = <span class="st">"SetConsoleTitleA"</span>, prototype = <span class="num">1</span>, type = <span class="st">"string"</span>, return = <span class="st">"int"</span>);
 
-<span class="cm">// 原生弹窗调用 (HWND, LPCSTR, LPCSTR, UINT)</span>
-<span class="fn">callNative</span>(msgBox, [<span class="num">0</span>, <span class="st">"Hello from Native TzdLang FFI!"</span>, <span class="st">"System Notification"</span>, <span class="num">0</span>]);</code></pre>
+<span class="cm">// 2. 直接像普通函数一样调用</span>
+<span class="kw">var</span> pid = <span class="fn">GetCurrentProcessId</span>();
+<span class="kw">var</span> titleStatus = <span class="fn">SetConsoleTitleA</span>(<span class="st">"TzdLang Native FFI Console"</span>);
+
+<span class="fn">print</span>(<span class="st">"Current Process ID: "</span> + pid);
+<span class="fn">print</span>(<span class="st">"Set title status: "</span> + titleStatus);
+
+<span class="cm">// 3. 声明 Windows 用户界面弹窗 API (user32.dll)</span>
+<span class="kw">native fun</span> <span class="fn">MessageBoxA</span>(hwnd, text, caption, uType)(dll = <span class="st">"user32.dll"</span>, fun = <span class="st">"MessageBoxA"</span>, prototype = <span class="num">1</span>, type = <span class="st">"hwnd,string,string,int"</span>, return = <span class="st">"int"</span>);
+
+<span class="cm">// 触发系统弹窗 (null 对应空窗口句柄，0 对应 MB_OK)</span>
+<span class="fn">MessageBoxA</span>(<span class="kw">null</span>, <span class="st">"Hello from Native TzdLang FFI!"</span>, <span class="st">"TzdLang Interop"</span>, <span class="num">0</span>);</code></pre>
         </div>
+
+        <h3>2. FFI 参数与返回类型对照表</h3>
+        <table class="wiki-table">
+          <thead>
+            <tr>
+              <th>FFI <code>type</code> 属性标识</th>
+              <th>C/C++ 原生类型</th>
+              <th>自动转换规则</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>"string"</code></td>
+              <td><code>const char*</code> (LPCSTR)</td>
+              <td>UTF-8 脚本字符串自动转换传参为 ANSI 字节序列</td>
+            </tr>
+            <tr>
+              <td><code>"wstring"</code></td>
+              <td><code>const wchar_t*</code> (LPCWSTR)</td>
+              <td>UTF-8 脚本字符串自动转换传参为 UTF-16 宽字符序列</td>
+            </tr>
+            <tr>
+              <td><code>"ptr"</code> / <code>"hwnd"</code></td>
+              <td><code>void*</code> / <code>HWND</code></td>
+              <td>系统原生裸指针或窗口句柄</td>
+            </tr>
+            <tr>
+              <td><code>"int"</code></td>
+              <td><code>int32_t</code> / <code>DWORD</code></td>
+              <td>32 位带符号整型</td>
+            </tr>
+            <tr>
+              <td><code>"long"</code> / <code>"longlong"</code></td>
+              <td><code>int64_t</code> / <code>QWORD</code></td>
+              <td>64 位整型数值</td>
+            </tr>
+            <tr>
+              <td><code>"float"</code> / <code>"double"</code></td>
+              <td><code>float</code> / <code>double</code></td>
+              <td>32 位单精度 / 64 位双精度浮点数</td>
+            </tr>
+            <tr>
+              <td><code>"bool"</code></td>
+              <td><code>bool</code> / <code>BOOL</code></td>
+              <td>布尔值映射</td>
+            </tr>
+          </tbody>
+        </table>
 
         <div class="chapter-pager">
           <a href="#ch09" class="pager-btn">
