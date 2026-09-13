@@ -25,30 +25,36 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
    - 片上共享内存 Stockham 蝶形核函数与无冲突交错填充
    - 两轮进位规约与三阶段并行 Kogge-Stone 进位链
    - 实测 474 万位 29.20 ms 性能基准（对比 GMP 6.3.0 与 Python）
-4. [**JIT 编译器核心技术与实现**](JIT-Compiler-Internals-zh.md)
+4. [**CPU NTT 极限计算引擎底层剖析 (--experimental-compute)**](CPU-NTT-BigInt-zh.md)
+   - 三素数 Montgomery AVX2 向量化模乘（单指令并发 8 通道）
+   - 缓存友好的 4-Step 2D 矩阵分解与 $64 \times 64$ L1/L2 分块转置
+   - CPU 级 Direct Garner CRT 重构与多线程进位扫描
+   - 高性能定点数倒数无除法十进制转换（fast_div_1e9）
+   - 实测：474 万位仅需 175 ms，纯乘法超越单核 GMP 2.07 倍，全流程领先 14.5 倍
+5. [**JIT 编译器核心技术与实现**](JIT-Compiler-Internals-zh.md)
    - Tier 0：紧凑型堆栈式字节码虚拟机
    - Tier 1：异步 LLVM ORC JIT 实时编译引擎
    - 函数特化（原生 double worker）与部分求值（Partial Evaluation）
    - 深度优化 Pass（mem2reg、CSE、DCE、侵略性内联）
    - 循环与调用开销基准（超越 JDK 20 HotSpot C2）
-5. [**LibTorch 深度学习引擎集成**](Deep-Learning-and-PyTorch-zh.md)
+6. [**LibTorch 深度学习引擎集成**](Deep-Learning-and-PyTorch-zh.md)
    - 一等公民 Tensor 抽象与无锁引用计数生命周期（`c10::intrusive_ptr`）
    - 反向模式自动微分（Autograd）
    - 常用神经网络层（`nn_Linear`, `nn_Sequential`）与优化器（SGD, Adam, AdamW）
    - GPU 显存直通加速
-6. [**构建指南与工具链环境搭建**](Building-and-Toolchain-zh.md)
+7. [**构建指南与工具链环境搭建**](Building-and-Toolchain-zh.md)
    - 独立 CMake 构建系统与智能路径探寻
    - Visual Studio 2022 / 2026 MSBuild 编译步骤
    - 外部依赖配置（CUDA, LibTorch, LLVM, vcpkg）
-7. [**VS Code 扩展与 DAP 调试器**](VSCode-Extension-and-Debugger-zh.md)
+8. [**VS Code 扩展与 DAP 调试器**](VSCode-Extension-and-Debugger-zh.md)
    - Debug Adapter Protocol (DAP) 调试协议对接
    - 断点控制、单步执行、变量监视与调用栈查看
-8. [**标准库开发与参考手册**](Standard-Library-Reference-zh.md)
+9. [**标准库开发与参考手册**](Standard-Library-Reference-zh.md)
    - `core/`：错误处理、I/O 与反射
    - `thread/`：操作系统多线程与同步机制
    - `torch/`：深度学习高层算子与神经网络模块
-9. [**自带内置函数自查大全**](Builtin-Functions-Reference-zh.md)
-   - 涵盖 350+ 个核心系统、初等数学、方程求解、大数数论、矩阵、字符串正则、数组高阶、容器与 LibTorch 算子全量速查
+10. [**自带内置函数自查大全**](Builtin-Functions-Reference-zh.md)
+    - 涵盖 350+ 个核心系统、初等数学、方程求解、大数数论、矩阵、字符串正则、数组高阶、容器与 LibTorch 算子全量速查
 
 ---
 
@@ -72,7 +78,8 @@ graph TD
     VM <--> Runtime["Tzd 语言运行时"]
     LLJIT <--> Runtime
     
-    Runtime --> BigInt["CUDA GPU NTT 大数乘法算子 (三素数 CRT, Stockham, Kogge-Stone)"]
+    Runtime --> BigIntGPU["CUDA GPU NTT 大数乘法算子 (29ms, 三素数 CRT, Stockham, Kogge-Stone)"]
+    Runtime --> BigIntCPU["CPU AVX2 NTT 大数乘法算子 (--experimental-compute, 175ms, 4-Step 转置)"]
     Runtime --> LibTorch["LibTorch 原生深度学习引擎 (CUDA & CPU 张量)"]
     Runtime --> GC["分代 SATB 垃圾回收器"]
     Runtime --> DAP["DAP 交互式调试器服务"]

@@ -22,7 +22,9 @@
 
 **TzdLang (TZD)** is an independently designed, modern object-oriented programming language with high-performance hybrid execution pipelines. It seamlessly integrates a lightweight bytecode virtual machine, an asynchronous tiered LLVM ORC JIT compiler, native PyTorch tensor operations, ultra-fast GPU-accelerated BigInt arithmetic, and a full-featured VS Code IDE development ecosystem.
 
-- ⚡ **World-Class GPU BigInt Multiplication**: Powered by a custom 3-prime Chinese Remainder Theorem (CRT) Number Theoretic Transform (NTT) on CUDA. Multiplies **4.74-million-digit** integers in **29.20 ms** GPU computation time (**>10x faster than single-core GMP**).
+- ⚡ **World-Class BigInt Multiplication (GPU & CPU NTT Engines)**:
+  - **CUDA GPU NTT**: Powered by a custom 3-prime Chinese Remainder Theorem (CRT) NTT on CUDA. Multiplies **4.74-million-digit** integers in **29.20 ms** pure GPU time (**>3.8x faster pure compute, 45.1x faster end-to-end than GMP**).
+  - **CPU AVX2 NTT (`--experimental-compute`)**: Engineered to physical hardware limits with 3-prime Montgomery vectorization, cache-blocked 4-step 2D matrix transposition, and direct Garner CRT. Multiplies **4.74M digits in 54.02 ms pure / 175.41 ms end-to-end**, **crushing single-core GMP (111.78 ms pure / 2,549 ms end-to-end) and multi-threaded GMP (~519 ms end-to-end)**!
 - 🚀 **Tiered Hybrid Compilation**:
   - **Tier 0**: Low-latency, compact stack-based Bytecode VM.
   - **Tier 1**: Asynchronous LLVM ORC JIT compiler featuring function specialization (native double workers), partial evaluation, `mem2reg`, CSE, and aggressive inlining. **Outperforms JDK 20 HotSpot** in function call overhead and tight loop benchmarks.
@@ -36,21 +38,23 @@
 
 ## ⚡ Performance Benchmarks
 
-### 1. Multi-Million-Digit BigInt Multiplication: TzdLang GPU NTT vs GMP
+### 1. Multi-Million-Digit BigInt Multiplication: TzdLang vs GMP vs Python
 
-Benchmark multiplying two $4,741,006$-digit numbers on an NVIDIA P106-090 GPU (Pascal CC 6.1, 192 GB/s bandwidth):
+Benchmark multiplying two $4,741,006$-digit numbers on an Intel Core i7-4790 CPU (4C/8T @ 3.60GHz) and NVIDIA P106-090 GPU (Pascal CC 6.1, 192 GB/s bandwidth):
 
 | Engine / Implementation | Digit Count | Pure Multiply Time | Total End-to-End Time | Pure Speedup vs GMP | End-to-End Speedup |
 |---|---|---|---|---|---|
 | **TzdLang GPU NTT (CUDA)** | **4,741,006** | **29.20 ms** | **56.52 ms** | **3.83x** | **45.1x** |
+| **TzdLang CPU NTT (`--experimental-compute`)** | **4,741,006** | **54.02 ms** | **175.41 ms** | **2.07x** | **14.5x** |
 | Multi-Threaded GMP (8T Karatsuba) | 4,741,006 | 84.58 ms | 2,522.09 ms | 1.32x | 1.01x |
 | Single-core GMP 6.3.0 (`mpz_mul`) | 4,741,006 | 111.78 ms | 2,549.30 ms | 1.0x (Baseline) | 1.0x (Baseline) |
 | Python 3.12 (`int * int`) | 4,741,006 | >3,800 ms | >3,800 ms | ~0.03x | ~0.01x |
 
-> **Key Architectural Features of TzdLang GPU NTT:**
+> **Key Architectural Features of TzdLang NTT Engines:**
 > - **Three 32-bit NTT Primes**: $P_1 = 469762049$, $P_2 = 167772161$, $P_3 = 754974721$.
-> - **Bailey's 4-Step 2D NTT**: Decomposes $N = 2^{21}$ limbs into $2048 \times 1024$ 2D matrix transforms, utilizing on-chip shared-memory bank-conflict-free padding (`PAD(idx) = idx + (idx >> 5)`).
-> - **Parallel Kogge-Stone Carry Chain**: 2-round carry reduction eliminating overflow before intra- and inter-block prefix scanning.
+> - **Bailey's 4-Step 2D NTT Decomposition**: Decomposes $N = 2^{21}$ limbs into $2048 \times 1024$ 2D matrix transforms. On CPU, utilizes $64 \times 64$ L1/L2 cache-blocked tiling with AVX2 SIMD; on GPU, utilizes on-chip shared memory with bank-conflict-free padding (`PAD(idx) = idx + (idx >> 5)`).
+> - **Parallel Kogge-Stone Carry Chain & Garner CRT**: Direct mixed-radix reconstruction with 2-round carry reduction eliminating overflow.
+> - **Reciprocal Fast Division**: Division-free Base-$10^9$ conversions via fixed-point multiplication (`fast_div_1e9`), parsing 4.74M digits in 10ms and formatting in 13ms.
 
 ### 2. JIT Microbenchmarks: TzdLang vs JDK 20 HotSpot
 
@@ -106,6 +110,9 @@ TzdTools.exe --jit --runMainTzd="bench.tzd"
 
 :: Run large number multiplication with GPU acceleration and detailed timing
 TzdTools.exe --runMainTzd="大数.tzd" --forceGPU --bigTime
+
+:: Run large number multiplication with CPU high-performance NTT engine (--experimental-compute)
+TzdTools.exe --runMainTzd="大数.tzd" --experimental-compute --bigTime
 ```
 
 ---
@@ -200,11 +207,13 @@ Comprehensive technical documentation and deep-dive design guides are available 
 - 📑 [**Wiki Home & Architecture Overview**](wiki/Home.md) - System-level architectural design and execution tiers.
 - 📐 [**Language Specification & Syntax Guide**](wiki/Language-Specification.md) - Types, control flow, functions, OOP, and exceptions.
 - 🚀 [**GPU NTT BigInt Multiplication Deep-Dive**](wiki/GPU-NTT-BigInt.md) - Mathematical formulation, CRT, 2D Stockham kernels, Kogge-Stone carry scan.
+- 🏎️ [**CPU NTT High-Performance Engine (--experimental-compute)**](wiki/CPU-NTT-BigInt.md) - 3-Prime Montgomery AVX2 SIMD, 4-step cache-blocked matrix transpose, Garner CRT, Kogge-Stone carry chain.
 - ⚡ [**JIT Compiler Internals**](wiki/JIT-Compiler-Internals.md) - Tier 0 VM, Tier 1 LLVM ORC JIT, specialization passes, and optimizations.
 - 🧠 [**Deep Learning with LibTorch**](wiki/Deep-Learning-and-PyTorch.md) - Tensor APIs, autograd, neural networks, CUDA acceleration.
 - 🔨 [**Build & Toolchain Guide**](wiki/Building-and-Toolchain.md) - Detailed build instructions for MSBuild and CMake.
 - 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Language Server and Debug Adapter Protocol integration.
 - 📚 [**Standard Library Reference**](wiki/Standard-Library-Reference.md) - Core, Math, Thread, and Torch libraries.
+- 📖 [**Built-in Functions Reference**](wiki/Builtin-Functions-Reference.md) - Comprehensive 350+ function reference manual.
 
 ---
 
@@ -220,6 +229,8 @@ TzdTools/
 ├── wiki/                      # Complete technical Wiki documentation
 ├── Generated/                 # ANTLR4 parser, AST visitors, VM, JIT, PyTorch
 │   ├── TzdInterpreter.cpp     # AST & VM execution engine
+│   ├── TzdExperimentalCompute.cpp # High-performance CPU AVX2 Montgomery NTT engine
+│   ├── TzdExperimentalCompute.h   # Experimental compute headers & interfaces
 │   ├── TzdJit.cpp             # LLVM ORC JIT compiler
 │   ├── TzdPyTorch.cpp         # LibTorch binding & GPU NTT BigInt multiplication
 │   └── ...

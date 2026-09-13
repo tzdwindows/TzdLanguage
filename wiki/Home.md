@@ -25,30 +25,36 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - Shared-memory Stockham kernels with bank-conflict-free padding
    - 2-Round carry reduction & parallel Kogge-Stone prefix scan
    - Performance benchmarks vs GNU MP (GMP) & Python
-4. [**JIT Compiler Internals & Execution Tiers**](JIT-Compiler-Internals.md)
+4. [**CPU NTT High-Performance Engine (--experimental-compute)**](CPU-NTT-BigInt.md)
+   - 3-Prime Montgomery AVX2 SIMD vectorization (8 lanes per instruction)
+   - Cache-aware 4-step 2D matrix decomposition with 64x64 L1/L2 tile blocking
+   - Direct Garner CRT reconstruction & OpenMP multi-threading
+   - Reciprocal division-free base-10^9 conversion (fast_div_1e9)
+   - Benchmark: 175 ms on 4.74M digits, beating GMP by up to 14.5x
+5. [**JIT Compiler Internals & Execution Tiers**](JIT-Compiler-Internals.md)
    - Tier 0: Compact Bytecode Virtual Machine
    - Tier 1: Asynchronous LLVM ORC JIT Engine
    - Native double worker specialization & Partial Evaluation
    - Optimization passes (mem2reg, CSE, DCE, inlining)
    - Benchmark comparisons against JDK 20 HotSpot
-5. [**Deep Learning Engine (LibTorch Integration)**](Deep-Learning-and-PyTorch.md)
+6. [**Deep Learning Engine (LibTorch Integration)**](Deep-Learning-and-PyTorch.md)
    - First-class Tensor types & zero-lock memory lifecycle
    - Automatic differentiation (Autograd)
    - Neural network layers & optimizers (SGD, Adam, AdamW)
    - GPU tensor offloading
-6. [**Building & Toolchain Guide**](Building-and-Toolchain.md)
+7. [**Building & Toolchain Guide**](Building-and-Toolchain.md)
    - Standalone CMake build configuration
    - Visual Studio 2022 / 2026 MSBuild setup
    - Dependency management (CUDA, LibTorch, LLVM, vcpkg)
-7. [**VS Code Extension & DAP Debugger**](VSCode-Extension-and-Debugger.md)
+8. [**VS Code Extension & DAP Debugger**](VSCode-Extension-and-Debugger.md)
    - Debug Adapter Protocol (DAP) architecture
    - Setting breakpoints, stepping, variable inspection, stack traces
-8. [**Standard Library Reference**](Standard-Library-Reference.md)
+9. [**Standard Library Reference**](Standard-Library-Reference.md)
    - `core/`: Error handling, reflection, I/O
    - `thread/`: OS thread primitives, synchronization
    - `torch/`: Neural network layers and deep learning utilities
-9. [**Built-in Functions Reference Manual**](Builtin-Functions-Reference.md)
-   - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
+10. [**Built-in Functions Reference Manual**](Builtin-Functions-Reference.md)
+    - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
 
 ---
 
@@ -72,7 +78,8 @@ graph TD
     VM <--> Runtime["Tzd Runtime System"]
     LLJIT <--> Runtime
     
-    Runtime --> BigInt["CUDA GPU NTT BigInt Engine (3-Prime CRT, Stockham, Kogge-Stone)"]
+    Runtime --> BigIntGPU["CUDA GPU NTT BigInt Engine (29ms, 3-Prime CRT, Stockham, Kogge-Stone)"]
+    Runtime --> BigIntCPU["CPU AVX2 NTT BigInt Engine (--experimental-compute, 175ms, 4-Step Transpose)"]
     Runtime --> LibTorch["LibTorch Deep Learning Engine (CUDA & CPU Tensors)"]
     Runtime --> GC["Generational SATB Garbage Collector"]
     Runtime --> DAP["DAP Interactive Debugger Server"]
@@ -83,6 +90,7 @@ graph TD
 ## 🎯 Quick Navigation
 
 - **Writing your first script?** Check the [Language Specification](Language-Specification.md).
-- **Curious about 29ms 4.74M-digit multiplication?** Read the [GPU NTT Deep-Dive](GPU-NTT-BigInt.md).
+- **Curious about 29ms GPU 4.74M-digit multiplication?** Read the [GPU NTT Deep-Dive](GPU-NTT-BigInt.md).
+- **Need hardware-limit CPU BigInt without GPU?** See [CPU NTT Engine (--experimental-compute)](CPU-NTT-BigInt.md).
 - **Wondering how JIT beats Java HotSpot?** See [JIT Compiler Internals](JIT-Compiler-Internals.md).
 - **Building the project?** Head over to the [Building & Toolchain Guide](Building-and-Toolchain.md).

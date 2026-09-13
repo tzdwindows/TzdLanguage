@@ -151,6 +151,7 @@ In real applications, arbitrary-precision integers start and finish as decimal t
 |---|---|---|---|---|---|
 | **Single-Threaded GMP 6.3.0** | 686.85 ms | 111.78 ms | 1,750.67 ms | **2,549.30 ms** (~2.55 s) | 1.0x (Baseline) |
 | **Multi-Threaded GMP (8T Karatsuba)** | 686.85 ms | 84.58 ms | 1,750.67 ms | **2,522.09 ms** (~2.52 s) | 1.01x |
+| **TzdTools CPU NTT (`--experimental-compute`)** | **10.64 ms** | **54.02 ms** (pure kernel) | **13.67 ms** | **175.41 ms** (0.175 s) | **14.5x faster (pure 2.07x vs GMP)** |
 | **TzdTools GPU NTT Pipeline** | **8.31 ms** | **42.01 ms** (29.20 ms pure kernel) | **6.20 ms** | **56.52 ms** (0.056 s) | **45.1x faster** |
 
 ```text
@@ -161,3 +162,5 @@ In real applications, arbitrary-precision integers start and finish as decimal t
 > **Root Cause of the 45x End-to-End Gap**:
 > - **GMP Binary Limb Bottleneck**: GMP represents numbers in base-$2^{64}$. Converting a 4.74-million-digit decimal string to binary limbs requires thousands of multi-limb divisions, taking **686.85 ms**. Converting binary limbs back to a decimal string (`mpz_get_str`) takes **1.75 seconds**!
 > - **TzdTools Base-$10^9$ Architecture**: TzdLang natively operates in Base-$10^9$. Parsing strings requires only direct 9-digit chunking (**8.31 ms**), and outputting strings requires trivial concatenation (**6.20 ms**). Together with GPU NTT parallel compute, the entire pipeline completes in **56.52 ms**!
+> - **Pure CPU Environments?**: Read [CPU High-Performance NTT BigInt Engine (--experimental-compute)](CPU-NTT-BigInt.md) to explore how AVX2 vectorization and 4-step cache-blocked transposition bring GMP-crushing performance to commodity CPUs.
+

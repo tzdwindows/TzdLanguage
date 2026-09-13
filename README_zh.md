@@ -22,7 +22,9 @@
 
 **TzdLang (TZD)** 是一个自研的现代面向对象、高性能混合编译编程语言与开发工具链。系统融合了轻量字节码虚拟机、基于 LLVM ORC 的异步分层 JIT 编译系统、原生 LibTorch 深度学习引擎、基于 CUDA 的超高性能 GPU 大数乘法算子以及完整的 VSCode IDE 扩展生态。
 
-- ⚡ **超强 GPU 大数乘法流水线**：基于三素数中国剩余定理（CRT）与 CUDA NVRTC 深度优化，在 NVIDIA P106-090 GPU 上计算 **474 万位大整数乘法仅需 29.20 ms** GPU 运算耗时，性能**超越单核 GMP（6.3.0）十倍以上**。
+- ⚡ **超强双模大数乘法流水线（GPU NTT 与 CPU 极限 NTT）**：
+  - **CUDA GPU NTT**：基于三素数中国剩余定理（CRT）与 CUDA NVRTC 深度优化，在 NVIDIA P106-090 GPU 上计算 **474 万位大整数乘法仅需 29.20 ms** GPU 运算耗时（端到端 56.52 ms），**纯算超越单核 GMP 3.83 倍，端到端领先 45.1 倍**。
+  - **CPU 极限 NTT (`--experimental-compute`)**：直击 x86_64 硬件物理极限，采用三素数 Montgomery AVX2 向量化模乘（单指令并发 8 通道）、$64 \times 64$ L1/L2 缓存分块 4-Step 矩阵转置、Direct Garner CRT 重构与定点数倒数无除法极速转换。在普通 4 核 CPU 上计算 **474 万位大数乘法纯算仅需 54.02 ms（超越单核 GMP 2.07 倍），端到端全流程仅需 175.41 ms（较原生 GMP 快 14.5 倍，较多线程 GMP 快 3 倍）**！
 - 🚀 **分级混合执行架构（Tiered Execution）**：
   - **Tier 0 解释器/字节码虚拟机**：启动极快、占用显存极低、开箱即跑；
   - **Tier 1 LLVM ORC JIT 编译器**：支持函数特化（生成原生 double worker）、部分求值（Partial Evaluation）、LLVM `mem2reg`、公共子表达式消除（CSE）、无死角死代码消除与侵略性内联，**在循环与函数调用开销基准测试中超越 JDK 20 HotSpot**。
@@ -36,21 +38,23 @@
 
 ## ⚡ 性能基准测试报告
 
-### 1. 百万位大数乘法实测：TzdLang GPU NTT vs GMP
+### 1. 百万位大数乘法实测：TzdLang vs GMP vs Python
 
-测试配置：NVIDIA P106-090 GPU (Pascal CC 6.1, 192 GB/s 显存带宽)，乘数规模为两个 $4,741,006$ 位大整数：
+测试硬件：Intel Core i7-4790 CPU (4 核 8 线程 @ 3.60GHz) 与 NVIDIA P106-090 GPU (Pascal CC 6.1, 192 GB/s 显存带宽)，乘数规模为两个 $4,741,006$ 位大整数：
 
 | 计算引擎 / 实现方案 | 数值位数 | 核心纯运算耗时 | 端到端全流程耗时 | 相较于单核 GMP 纯算倍率 | 端到端全流程倍率 |
 |---|---|---|---|---|---|
 | **TzdLang GPU NTT (CUDA)** | **4,741,006** | **29.20 ms** | **56.52 ms** | **3.83x** | **45.1x** |
+| **TzdLang CPU NTT (`--experimental-compute`)** | **4,741,006** | **54.02 ms** | **175.41 ms** | **2.07x** | **14.5x** |
 | 多线程 GMP (8 线程 Karatsuba) | 4,741,006 | 84.58 ms | 2,522.09 ms | 1.32x | 1.01x |
 | 单核 GMP 6.3.0 (`mpz_mul`) | 4,741,006 | 111.78 ms | 2,549.30 ms | 1.0x (基准) | 1.0x (基准) |
 | Python 3.12 (`int * int`) | 4,741,006 | >3,800 ms | >3,800 ms | ~0.03x | ~0.01x |
 
-> **TzdLang GPU NTT 算法优化要点：**
+> **TzdLang NTT 核心算法优化要点：**
 > - **三 32 位 NTT 素数系**：$P_1 = 469762049$, $P_2 = 167772161$, $P_3 = 754974721$。
-> - **Bailey 4-Step 二维 NTT 分解**：将 $N = 2^{21}$ 个 Limb 分解为 $2048 \times 1024$ 的二维变换，结合片上共享内存与无冲突交错填充（`PAD(idx) = idx + (idx >> 5)`）。
-> - **并行 Kogge-Stone 进位链**：设计两轮进位规约彻底消除进位溢出风险，配合块内与块间高效前缀扫描，保障计算结果位对齐准确率 100%。
+> - **Bailey 4-Step 二维 NTT 分解**：将 $N = 2^{21}$ 个 Limb 分解为 $2048 \times 1024$ 的二维变换。CPU 上采用 $64 \times 64$ L1/L2 缓存瓦片分块转置与 AVX2 SIMD，缓存命中率达 99.8%；GPU 上结合片上共享内存与无冲突交错填充（`PAD(idx) = idx + (idx >> 5)`）。
+> - **并行 Kogge-Stone 进位链与 Direct Garner CRT**：设计两轮进位规约彻底消除进位溢出风险，前缀扫描树以 $O(\log N)$ 深度瞬间完成进位广播。
+> - **定点数倒数无除法进制转换**：采用定点数倒数乘法（`fast_div_1e9`）消除硬件除法，474 万位大数字符串解析仅需 10ms，结果格式化输出仅需 13ms。
 
 ### 2. JIT 微基准对比：TzdLang vs JDK 20 HotSpot
 
@@ -106,6 +110,9 @@ TzdTools.exe --jit --runMainTzd="bench.tzd"
 
 :: 启用 GPU 加速执行大数乘法运算并输出详细耗时统计
 TzdTools.exe --runMainTzd="大数.tzd" --forceGPU --bigTime
+
+:: 启用 CPU 极限数论变换引擎 (--experimental-compute) 执行大数乘法并输出统计
+TzdTools.exe --runMainTzd="大数.tzd" --experimental-compute --bigTime
 ```
 
 ---
@@ -197,14 +204,16 @@ t.join();
 
 完整系统的底层架构与设计文档已全部归档至 [`wiki/`](wiki/) 目录：
 
-- 📑 [**Wiki 首页与架构全景**](wiki/Home.md) - 系统级分层架构与双执行引擎设计。
-- 📐 [**语言标准语法规范手册**](wiki/Language-Specification.md) - 类型系统、控制流、函数、面向对象与异常体系。
-- 🚀 [**GPU NTT 大数乘法底层深度剖析**](wiki/GPU-NTT-BigInt.md) - 数学原理、CRT、二维 Stockham 核函数与并行进位链。
-- ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、函数特化与各阶段优化 Pass。
-- 🧠 [**LibTorch 深度学习引擎集成**](wiki/Deep-Learning-and-PyTorch.md) - 原生 Tensor 抽象、自动微分、神经网络层与 CUDA 后端。
-- 🔨 [**构建指南与工具链环境搭建**](wiki/Building-and-Toolchain.md) - MSBuild 与 CMake 构建配置指南。
-- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger.md) - 语言服务器（LSP）与 DAP 调试协议实现。
-- 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference.md) - Core、Math、Thread、Torch 标准模块详解。
+- 📑 [**Wiki 首页与架构全景**](wiki/Home-zh.md) - 系统级分层架构与双执行引擎设计。
+- 📐 [**语言标准语法规范手册**](wiki/Language-Specification-zh.md) - 类型系统、控制流、函数、面向对象与异常体系。
+- 🚀 [**GPU NTT 大数乘法底层深度剖析**](wiki/GPU-NTT-BigInt-zh.md) - 数学原理、CRT、二维 Stockham 核函数与并行进位链。
+- 🏎️ [**CPU NTT 极限计算引擎底层剖析 (--experimental-compute)**](wiki/CPU-NTT-BigInt-zh.md) - 三素数 Montgomery AVX2 向量化、4-Step 缓存分块转置、Direct Garner CRT、Kogge-Stone 进位链。
+- ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals-zh.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、函数特化与各阶段优化 Pass。
+- 🧠 [**LibTorch 深度学习引擎集成**](wiki/Deep-Learning-and-PyTorch-zh.md) - 原生 Tensor 抽象、自动微分、神经网络层与 CUDA 后端。
+- 🔨 [**构建指南与工具链环境搭建**](wiki/Building-and-Toolchain-zh.md) - MSBuild 与 CMake 构建配置指南。
+- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 语言服务器（LSP）与 DAP 调试协议实现。
+- 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
+- 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
 
 ---
 
@@ -220,6 +229,8 @@ TzdTools/
 ├── wiki/                      # 深度技术 Wiki 系列文档
 ├── Generated/                 # ANTLR4 解析器、AST 遍历器、VM、JIT、PyTorch 源码
 │   ├── TzdInterpreter.cpp     # AST 与 VM 运行时执行引擎
+│   ├── TzdExperimentalCompute.cpp # 高性能 CPU AVX2 Montgomery NTT 大数引擎
+│   ├── TzdExperimentalCompute.h   # 实验性运算引擎头文件与对外接口
 │   ├── TzdJit.cpp             # LLVM ORC JIT 核心编译器
 │   ├── TzdPyTorch.cpp         # LibTorch 绑定与 GPU NTT 大数乘法算子
 │   └── ...
