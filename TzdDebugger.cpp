@@ -1,6 +1,7 @@
 #define _WINSOCKAPI_
 
 #include "Generated/TzdInterpreter.h"
+#include "Generated/TzdJit.h"
 #include "TzdDebugger.h"
 
 #include <winsock2.h>
@@ -476,6 +477,131 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
                   << "  Active Breakpoints: " << g_DebugState.breakpoints.size() << "\n";
             sendStr(clientSocket, reply.str());
         }
+        else if (action == "jit") {
+            std::string subAction;
+            if (ss >> subAction) {
+                if (subAction == "info" || subAction == "status") {
+                    std::stringstream reply;
+                    const auto& cfg = TzdJitEngine::getConfig();
+                    reply << "=== JIT Engine Status ===\n"
+                          << "  Optimization Level: -O" << cfg.optLevel << "\n"
+                          << "  AST Inlining: " << (cfg.enableAstInlining ? "Enabled" : "Disabled") << "\n"
+                          << "  LLVM Inlining Threshold: " << cfg.inlineThreshold << "\n"
+                          << "  Math Intrinsics: " << (cfg.enableMathIntrinsics ? "Enabled" : "Disabled") << "\n"
+                          << "  Loop Unroll Pass: " << (cfg.enableLoopUnroll ? "Enabled" : "Disabled") << "\n"
+                          << "  JIT Debug Interface: " << (cfg.enableJitDebug ? "Active" : "Inactive") << " (Zero runtime overhead)\n"
+                          << "  Max Inlining Depth: " << cfg.maxInlineDepth << "\n"
+                          << "  Max Inlined Statements: " << cfg.maxInlineStmts << "\n"
+                          << "  JIT Compiled Functions: " << TzdJitEngine::getJitCompiledCount() << "\n"
+                          << "  Total Inlined AST Calls: " << TzdJitEngine::getTotalInlinedCalls() << "\n";
+                    sendStr(clientSocket, reply.str());
+                }
+                else if (subAction == "list") {
+                    std::stringstream reply;
+                    auto list = TzdJitEngine::getJittedFunctions();
+                    reply << "=== JIT Compiled Functions (" << list.size() << ") ===\n";
+                    if (list.empty()) {
+                        reply << "  (No JIT functions compiled yet)\n";
+                    } else {
+                        for (size_t i = 0; i < list.size(); ++i) {
+                            const auto& f = list[i];
+                            char addrBuf[64];
+                            if (f.nativeAddress) {
+                                snprintf(addrBuf, sizeof(addrBuf), "0x%p", f.nativeAddress);
+                            } else {
+                                snprintf(addrBuf, sizeof(addrBuf), "unresolved");
+                            }
+                            reply << "  [" << i << "] " << f.functionName 
+                                  << " (sym: " << f.internalSymbolName << ")"
+                                  << " | args: " << f.paramCount
+                                  << " | -O" << f.optLevel
+                                  << " | inlined: " << (f.isInlined ? "yes" : "no")
+                                  << " | addr: " << addrBuf << "\n";
+                        }
+                    }
+                    sendStr(clientSocket, reply.str());
+                }
+                else if (subAction == "ir") {
+                    std::string funcName;
+                    if (ss >> funcName) {
+                        std::string ir = TzdJitEngine::dumpJitIR(funcName);
+                        if (ir.empty()) {
+                            sendStr(clientSocket, "No LLVM IR found for JIT function: '" + funcName + "'\n");
+                        } else {
+                            std::stringstream reply;
+                            reply << "=== LLVM IR: " << funcName << " ===\n" << ir << "\n";
+                            sendStr(clientSocket, reply.str());
+                        }
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit ir <function_name>\n");
+                    }
+                }
+                else if (subAction == "opt") {
+                    int lvl = -1;
+                    if (ss >> lvl && lvl >= 0 && lvl <= 3) {
+                        TzdJitEngine::setOptLevel(lvl);
+                        sendStr(clientSocket, "JIT optimization level set to: -O" + std::to_string(lvl) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit opt <0|1|2|3>\n");
+                    }
+                }
+                else if (subAction == "inlining") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::setAstInliningEnabled(enable);
+                        sendStr(clientSocket, std::string("AST inlining is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit inlining <on|off>\n");
+                    }
+                }
+                else if (subAction == "threshold") {
+                    int th = -1;
+                    if (ss >> th && th >= 0) {
+                        TzdJitEngine::setInlineThreshold(th);
+                        sendStr(clientSocket, "Inlining threshold set to: " + std::to_string(th) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit threshold <number>\n");
+                    }
+                }
+                else if (subAction == "unroll") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::getConfig().enableLoopUnroll = enable;
+                        sendStr(clientSocket, std::string("Loop unrolling is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit unroll <on|off>\n");
+                    }
+                }
+                else if (subAction == "intrinsics") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::getConfig().enableMathIntrinsics = enable;
+                        sendStr(clientSocket, std::string("Math intrinsics inlining is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit intrinsics <on|off>\n");
+                    }
+                }
+                else {
+                    sendStr(clientSocket, "Usage: :jit [status|list|ir <name>|opt <0-3>|inlining <on|off>|threshold <N>|unroll <on|off>|intrinsics <on|off>]\n");
+                }
+            } else {
+                std::stringstream reply;
+                const auto& cfg = TzdJitEngine::getConfig();
+                reply << "=== JIT Engine Status ===\n"
+                      << "  Optimization Level: -O" << cfg.optLevel << "\n"
+                      << "  AST Inlining: " << (cfg.enableAstInlining ? "Enabled" : "Disabled") << "\n"
+                      << "  LLVM Inlining Threshold: " << cfg.inlineThreshold << "\n"
+                      << "  Math Intrinsics: " << (cfg.enableMathIntrinsics ? "Enabled" : "Disabled") << "\n"
+                      << "  Loop Unroll Pass: " << (cfg.enableLoopUnroll ? "Enabled" : "Disabled") << "\n"
+                      << "  JIT Debug Interface: " << (cfg.enableJitDebug ? "Active" : "Inactive") << "\n"
+                      << "  JIT Compiled Functions: " << TzdJitEngine::getJitCompiledCount() << "\n"
+                      << "  Total Inlined AST Calls: " << TzdJitEngine::getTotalInlinedCalls() << "\n";
+                sendStr(clientSocket, reply.str());
+            }
+        }
         else {
             sendStr(clientSocket, "Unknown debug command: :" + action + "\n");
         }
@@ -518,7 +644,9 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
     g_DebugActive = true;
     g_DebugState.interpreter = interpreter;
     if (interpreter) {
-        interpreter->m_noJit = true;
+        if (!TzdJitEngine::isJitDebugEnabled()) {
+            interpreter->m_noJit = true;
+        }
         interpreter->m_useBytecodeVM = false;
         interpreter->m_forceInterpreter = true;
     }

@@ -24,10 +24,15 @@
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Inliner.h"
+#include "llvm/Analysis/InlineCost.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/TargetParser/Host.h"
@@ -61,6 +66,107 @@ static std::unordered_map<std::string, void*> s_workerPointers;
 static std::shared_mutex s_workerPointersMutex;
 static thread_local std::vector<std::tuple<llvm::Value*, llvm::Value*, int>> s_tryJmpBufStack;
 static thread_local int s_loopLevel = 0;
+
+// ======= JIT 全局配置与内联/调试接口 =======
+static TzdJitConfig s_jitConfig;
+static std::vector<JittedFunctionInfo> s_registeredJitFunctions;
+static std::unordered_map<std::string, JittedFunctionInfo> s_registeredJitMap;
+static std::shared_mutex s_jitRegistryMutex;
+static std::atomic<size_t> s_totalInlinedCalls{0};
+static std::atomic<bool> s_jitDebugHookActive{false};
+
+struct InlineReturnTarget {
+    llvm::BasicBlock* returnBB = nullptr;
+    llvm::AllocaInst* retNativeDouble = nullptr;
+    llvm::AllocaInst* retBoxed = nullptr;
+};
+static thread_local std::vector<InlineReturnTarget> s_inlineReturnStack;
+static thread_local std::unordered_set<std::string> s_inlinedFunctionsInStack;
+static thread_local int s_currentInlineDepth = 0;
+static thread_local size_t s_inlineUid = 0;
+
+TzdJitConfig& TzdJitEngine::getConfig() { return s_jitConfig; }
+
+void TzdJitEngine::setOptLevel(int level) {
+    s_jitConfig.optLevel = std::clamp(level, 0, 3);
+    if (s_jitConfig.optLevel == 0) {
+        s_jitConfig.enableAstInlining = false;
+        s_jitConfig.inlineThreshold = 0;
+        s_jitConfig.enableLoopUnroll = false;
+    } else if (s_jitConfig.optLevel == 1) {
+        s_jitConfig.enableAstInlining = true;
+        s_jitConfig.inlineThreshold = 100;
+        s_jitConfig.maxInlineStmts = 10;
+        s_jitConfig.maxInlineDepth = 2;
+        s_jitConfig.enableLoopUnroll = false;
+    } else if (s_jitConfig.optLevel == 2) {
+        s_jitConfig.enableAstInlining = true;
+        s_jitConfig.inlineThreshold = 250;
+        s_jitConfig.maxInlineStmts = 25;
+        s_jitConfig.maxInlineDepth = 4;
+        s_jitConfig.enableLoopUnroll = true;
+    } else { // 3
+        s_jitConfig.enableAstInlining = true;
+        s_jitConfig.inlineThreshold = 500;
+        s_jitConfig.maxInlineStmts = 60;
+        s_jitConfig.maxInlineDepth = 8;
+        s_jitConfig.enableLoopUnroll = true;
+    }
+}
+
+int TzdJitEngine::getOptLevel() { return s_jitConfig.optLevel; }
+void TzdJitEngine::setInlineThreshold(int threshold) { s_jitConfig.inlineThreshold = threshold; }
+int TzdJitEngine::getInlineThreshold() { return s_jitConfig.inlineThreshold; }
+void TzdJitEngine::setJitDebugEnabled(bool enabled) { s_jitConfig.enableJitDebug = enabled; s_jitDebugHookActive.store(enabled, std::memory_order_relaxed); }
+bool TzdJitEngine::isJitDebugEnabled() { return s_jitConfig.enableJitDebug; }
+void TzdJitEngine::setAstInliningEnabled(bool enabled) { s_jitConfig.enableAstInlining = enabled; }
+bool TzdJitEngine::isAstInliningEnabled() { return s_jitConfig.enableAstInlining; }
+
+void TzdJitEngine::registerJittedFunction(const JittedFunctionInfo& info) {
+    std::unique_lock<std::shared_mutex> lock(s_jitRegistryMutex);
+    s_registeredJitMap[info.name] = info;
+    s_registeredJitMap[info.internalName] = info;
+    s_registeredJitFunctions.push_back(info);
+}
+
+std::vector<JittedFunctionInfo> TzdJitEngine::getJittedFunctions() {
+    std::shared_lock<std::shared_mutex> lock(s_jitRegistryMutex);
+    return s_registeredJitFunctions;
+}
+
+JittedFunctionInfo* TzdJitEngine::getJittedFunction(const std::string& name) {
+    std::shared_lock<std::shared_mutex> lock(s_jitRegistryMutex);
+    auto it = s_registeredJitMap.find(name);
+    if (it != s_registeredJitMap.end()) return &it->second;
+    return nullptr;
+}
+
+std::string TzdJitEngine::dumpJitIR(const std::string& name) {
+    std::shared_lock<std::shared_mutex> lock(s_jitRegistryMutex);
+    auto it = s_registeredJitMap.find(name);
+    if (it != s_registeredJitMap.end() && !it->second.irDump.empty()) {
+        return it->second.irDump;
+    }
+    for (const auto& [k, info] : s_registeredJitMap) {
+        if ((k.find(name) != std::string::npos || info.name == name || info.internalName == name) && !info.irDump.empty()) {
+            return info.irDump;
+        }
+    }
+    return "; No IR dump available for " + name + "\n";
+}
+
+size_t TzdJitEngine::getJitCompiledCount() {
+    std::shared_lock<std::shared_mutex> lock(s_jitRegistryMutex);
+    return s_registeredJitFunctions.size();
+}
+
+size_t TzdJitEngine::getTotalInlinedCalls() {
+    return s_totalInlinedCalls.load(std::memory_order_relaxed);
+}
+
+void TzdJitEngine::recordInlinedCall() {
+    s_totalInlinedCalls.fetch_add(1, std::memory_order_relaxed);
+}
 
 std::string formatSourcePath(const std::string& fullPath);
 std::string unescapeString(const std::string& input);
@@ -2379,6 +2485,7 @@ void TzdJitEngine::addModule(ThreadSafeModule TSM) {
     // destroys the Module after compilation — that destruction overflows the
     // stack due to a CRT ABI mismatch (/MT in TzdTools vs /MD in LLVM SDK).
     std::unique_ptr<MemoryBuffer> objBuffer;
+    std::vector<std::string> definedFuncSymbols;
 
     {
         // Lock the ThreadSafeContext to safely access the Module
@@ -2408,17 +2515,99 @@ void TzdJitEngine::addModule(ThreadSafeModule TSM) {
                 PB.registerLoopAnalyses(*LAM);
                 PB.crossRegisterProxies(*LAM, *FAM, *CGAM, *MAM);
             }
-            // Phase C: AlwaysInliner (module pass) + function passes
-            llvm::ModulePassManager MPM;
-            MPM.addPass(llvm::AlwaysInlinerPass());
 
-            llvm::FunctionPassManager FPM;
-            FPM.addPass(llvm::PromotePass());         // mem2reg
-            FPM.addPass(llvm::EarlyCSEPass(true));    // common subexpression elimination
-            FPM.addPass(llvm::DCEPass());             // dead code elimination
-            MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
-            MPM.run(*M, *MAM);
-            MPM.run(*M, *MAM);
+            int optLvl = s_jitConfig.optLevel;
+            llvm::ModulePassManager MPM;
+
+            if (optLvl <= 0) {
+                // -O0: Minimal passes (mem2reg only)
+                llvm::FunctionPassManager FPM;
+                FPM.addPass(llvm::PromotePass());
+                MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+                MPM.run(*M, *MAM);
+            } else if (optLvl == 1) {
+                // -O1: AlwaysInliner + basic scalar optimizations
+                MPM.addPass(llvm::AlwaysInlinerPass());
+                llvm::FunctionPassManager FPM;
+                FPM.addPass(llvm::PromotePass());
+                FPM.addPass(llvm::EarlyCSEPass(true));
+                FPM.addPass(llvm::DCEPass());
+                MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+                MPM.run(*M, *MAM);
+            } else if (optLvl == 2) {
+                // -O2: Inliner + standard scalar optimization pipeline
+                MPM.addPass(llvm::AlwaysInlinerPass());
+                MPM.addPass(llvm::ModuleInlinerWrapperPass(llvm::getInlineParams(s_jitConfig.inlineThreshold)));
+                llvm::FunctionPassManager FPM;
+                FPM.addPass(llvm::PromotePass());
+                FPM.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+                FPM.addPass(llvm::EarlyCSEPass(true));
+                FPM.addPass(llvm::InstCombinePass());
+                FPM.addPass(llvm::SimplifyCFGPass());
+                FPM.addPass(llvm::GVNPass());
+                FPM.addPass(llvm::DCEPass());
+                MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+                MPM.run(*M, *MAM);
+            } else {
+                // -O3: Aggressive inlining, loop unrolling, deep scalar optimization
+                MPM.addPass(llvm::AlwaysInlinerPass());
+                int threshold = s_jitConfig.inlineThreshold > 0 ? s_jitConfig.inlineThreshold : 500;
+                MPM.addPass(llvm::ModuleInlinerWrapperPass(llvm::getInlineParams(threshold)));
+                llvm::FunctionPassManager FPM;
+                FPM.addPass(llvm::PromotePass());
+                FPM.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+                FPM.addPass(llvm::EarlyCSEPass(true));
+                FPM.addPass(llvm::InstCombinePass());
+                FPM.addPass(llvm::SimplifyCFGPass());
+                FPM.addPass(llvm::GVNPass());
+                if (s_jitConfig.enableLoopUnroll) {
+                    FPM.addPass(llvm::LoopUnrollPass());
+                }
+                FPM.addPass(llvm::DCEPass());
+                MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+                MPM.run(*M, *MAM);
+                MPM.run(*M, *MAM);
+            }
+        }
+
+        // Record Jitted Function Info for all defined functions in M (for debugger & inspection)
+        for (auto& F : *M) {
+            if (!F.isDeclaration()) {
+                std::string sym = F.getName().str();
+                definedFuncSymbols.push_back(sym);
+
+                JittedFunctionInfo info;
+                info.internalName = sym;
+                info.internalSymbolName = sym;
+
+                // Derive human-readable name: strip _worker, _worker_native, _vX, etc.
+                std::string base = sym;
+                if (base.size() > 14 && base.substr(base.size() - 14) == "_worker_native") {
+                    base = base.substr(0, base.size() - 14);
+                } else if (base.size() > 7 && base.substr(base.size() - 7) == "_worker") {
+                    base = base.substr(0, base.size() - 7);
+                }
+                size_t us = base.find_last_of('_');
+                if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v') {
+                    base = base.substr(0, us);
+                }
+                info.name = base;
+                info.functionName = base;
+                info.paramCount = (int)F.arg_size();
+                info.optLevel = s_jitConfig.optLevel;
+                info.inlined = F.hasFnAttribute(llvm::Attribute::AlwaysInline);
+                info.isInlined = info.inlined;
+
+                std::string irStr;
+                llvm::raw_string_ostream rso(irStr);
+                F.print(rso);
+                info.irDump = rso.str();
+                info.llvmIR = rso.str();
+                info.entryAddress = nullptr;
+                info.nativeAddress = nullptr;
+
+                registerJittedFunction(info);
+            }
         }
 
         // Use the JIT's own compiler to compile IR to object code
@@ -2438,6 +2627,24 @@ void TzdJitEngine::addModule(ThreadSafeModule TSM) {
     if (auto Err = m_lljit->addObjectFile(std::move(objBuffer))) {
         errs() << "addObjectFile failed: " << toString(std::move(Err)) << "\n";
         consumeError(std::move(Err));
+    }
+
+    // Now resolve symbols for registered functions and update nativeAddress
+    for (const auto& sym : definedFuncSymbols) {
+        if (void* ptr = lookupSymbolAsPtr(sym)) {
+            std::unique_lock<std::shared_mutex> regLock(s_jitRegistryMutex);
+            if (auto it = s_registeredJitMap.find(sym); it != s_registeredJitMap.end()) {
+                it->second.nativeAddress = ptr;
+                it->second.entryAddress = ptr;
+            }
+            for (auto& fInfo : s_registeredJitFunctions) {
+                if (fInfo.internalSymbolName == sym || fInfo.internalName == sym) {
+                    fInfo.nativeAddress = ptr;
+                    fInfo.entryAddress = ptr;
+                    break;
+                }
+            }
+        }
     }
 
     // Leak the ThreadSafeModule (and the IR Module + LLVMContext inside it)
@@ -3433,6 +3640,24 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
     }
     // =========================================================================
 
+    // 若当前处于 AST 内联展开上下文中，直接将返回值写回内联目标插槽并跳转至内联汇合块
+    if (!s_inlineReturnStack.empty()) {
+        auto& frame = s_inlineReturnStack.back();
+        if (retValRaw) {
+            if (retValRaw->getType()->isDoubleTy()) {
+                m_builder.CreateStore(retValRaw, frame.retNativeDouble);
+            } else {
+                Value* boxed = boxToTzdValue(retValRaw);
+                m_builder.CreateStore(boxed, frame.retBoxed);
+            }
+        }
+        m_builder.CreateBr(frame.returnBB);
+        Function* curF = m_builder.GetInsertBlock()->getParent();
+        BasicBlock* deadBB = BasicBlock::Create(m_context, "after_inl_ret", curF);
+        m_builder.SetInsertPoint(deadBB);
+        return std::any((Value*)nullptr);
+    }
+
     if (m_currentRetPtr) {
         if (retValRaw && retValRaw->getType()->isDoubleTy()) {
             // 如果是原生数字，直接写值 (rt_store_native_to_ptr has runtime NULL check
@@ -3902,11 +4127,213 @@ std::any TzdCompiler::visitSuperExpr(TzdLangParser::SuperExprContext* ctx) {
     return (Value*)m_builder.CreateCall(getRtFunc("rt_call_super"), callParams);
 }
 
+bool TzdCompiler::tryInlineMathIntrinsic(const std::string& funcName,
+                                        const std::vector<TzdLangParser::ExpressionContext*>& exprs,
+                                        llvm::Value*& result) {
+    if (!TzdJitEngine::getConfig().enableMathIntrinsics) return false;
+    int argCount = (int)exprs.size();
+
+    if (argCount == 1) {
+        Intrinsic::ID intrinId = Intrinsic::not_intrinsic;
+        if (funcName == "sqrt") intrinId = Intrinsic::sqrt;
+        else if (funcName == "abs") intrinId = Intrinsic::fabs;
+        else if (funcName == "floor") intrinId = Intrinsic::floor;
+        else if (funcName == "ceil") intrinId = Intrinsic::ceil;
+        else if (funcName == "round") intrinId = Intrinsic::round;
+        else if (funcName == "trunc") intrinId = Intrinsic::trunc;
+        else if (funcName == "sin") intrinId = Intrinsic::sin;
+        else if (funcName == "cos") intrinId = Intrinsic::cos;
+        else if (funcName == "exp") intrinId = Intrinsic::exp;
+        else if (funcName == "log") intrinId = Intrinsic::log;
+        else if (funcName == "log10") intrinId = Intrinsic::log10;
+        else if (funcName == "log2") intrinId = Intrinsic::log2;
+
+        if (intrinId != Intrinsic::not_intrinsic) {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* argVal = std::any_cast<Value*>(visit(exprs[0]));
+            s_inTailPosition = oldTail;
+
+            Value* argD = castToNativeDouble(argVal);
+            Function* intrin = Intrinsic::getDeclaration(m_module.get(), intrinId, { m_doubleTy });
+            result = m_builder.CreateCall(intrin, { argD });
+            return true;
+        }
+    } else if (argCount == 2) {
+        if (funcName == "pow") {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* a0 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[0])));
+            Value* a1 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[1])));
+            s_inTailPosition = oldTail;
+
+            Function* intrin = Intrinsic::getDeclaration(m_module.get(), Intrinsic::pow, { m_doubleTy });
+            result = m_builder.CreateCall(intrin, { a0, a1 });
+            return true;
+        } else if (funcName == "min") {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* a0 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[0])));
+            Value* a1 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[1])));
+            s_inTailPosition = oldTail;
+
+            Function* intrin = Intrinsic::getDeclaration(m_module.get(), Intrinsic::minnum, { m_doubleTy });
+            result = m_builder.CreateCall(intrin, { a0, a1 });
+            return true;
+        } else if (funcName == "max") {
+            bool oldTail = s_inTailPosition;
+            s_inTailPosition = false;
+            Value* a0 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[0])));
+            Value* a1 = castToNativeDouble(std::any_cast<Value*>(visit(exprs[1])));
+            s_inTailPosition = oldTail;
+
+            Function* intrin = Intrinsic::getDeclaration(m_module.get(), Intrinsic::maxnum, { m_doubleTy });
+            result = m_builder.CreateCall(intrin, { a0, a1 });
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TzdCompiler::tryInlineFunction(const std::string& funcName,
+                                   const std::vector<TzdLangParser::ExpressionContext*>& exprs,
+                                   llvm::Value*& result) {
+    if (!TzdJitEngine::isAstInliningEnabled() || TzdJitEngine::getOptLevel() <= 0) {
+        return false;
+    }
+
+    if (s_currentInlineDepth >= TzdJitEngine::getConfig().maxInlineDepth) {
+        return false;
+    }
+
+    if (s_inlinedFunctionsInStack.count(funcName)) {
+        return false; // 防止递归循环调用引发死循环内联
+    }
+
+    Function* currentFunc = m_builder.GetInsertBlock()->getParent();
+    std::string currentName = currentFunc->getName().str();
+    if (currentName.find(funcName) != std::string::npos) {
+        return false;
+    }
+
+    if (!g_CurrentInterpreter) return false;
+
+    // 在当前解释器作用域中查找目标函数的 AST
+    TzdValue calleeVal;
+    bool found = false;
+    for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it) {
+        auto vIt = it->find(funcName);
+        if (vIt != it->end() && vIt->second.type == TzdValue::FUNCTION && vIt->second.funcBody) {
+            calleeVal = vIt->second;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found || !calleeVal.funcBody) return false;
+
+    // 参数数量匹配校验
+    if (calleeVal.params.size() != exprs.size()) return false;
+
+    // 语句行数阈值校验（小函数才内联）
+    size_t stmtCount = calleeVal.funcBody->statement().size();
+    if ((int)stmtCount > TzdJitEngine::getConfig().maxInlineStmts) {
+        return false;
+    }
+
+    // --- 执行 AST 级直接内联 ---
+    TzdJitEngine::recordInlinedCall();
+    s_inlinedFunctionsInStack.insert(funcName);
+    s_currentInlineDepth++;
+
+    // 1. 在调用方上下文中计算实参
+    std::vector<Value*> evaluatedArgs;
+    evaluatedArgs.reserve(exprs.size());
+    for (size_t i = 0; i < exprs.size(); ++i) {
+        bool oldTail = s_inTailPosition;
+        s_inTailPosition = false;
+        Value* argVal = std::any_cast<Value*>(visit(exprs[i]));
+        s_inTailPosition = oldTail;
+        evaluatedArgs.push_back(argVal);
+    }
+
+    // 2. 保存调用方的局部变量作用域
+    auto savedNamedValues = m_namedValues;
+    auto savedNativeDoubleLocals = m_nativeDoubleLocals;
+    auto savedDeclaredLocals = m_declaredLocals;
+    auto savedParamNames = s_currentFuncParamNames;
+
+    // 3. 为被调用函数形参创建局部变量插槽 (Alloca) 并写入实参
+    s_currentFuncParamNames.clear();
+    for (size_t i = 0; i < calleeVal.params.size(); ++i) {
+        std::string pName = calleeVal.params[i];
+        std::string mangled = "__inl_" + funcName + "_" + std::to_string(s_inlineUid++) + "_" + pName;
+        s_currentFuncParamNames.push_back(pName);
+        m_declaredLocals.insert(pName);
+
+        Value* arg = evaluatedArgs[i];
+        if (arg->getType()->isDoubleTy()) {
+            AllocaInst* alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, mangled + "_d");
+            m_builder.CreateStore(arg, alloc);
+            m_nativeDoubleLocals[pName] = alloc;
+        } else {
+            AllocaInst* alloc = CreateEntryBlockAlloca(m_tzdValueTy, nullptr, mangled);
+            m_builder.CreateStore(boxToTzdValue(arg), alloc);
+            m_namedValues[pName] = alloc;
+        }
+    }
+
+    // 4. 创建内联返回汇合块与返回值槽
+    BasicBlock* inlineRetBB = BasicBlock::Create(m_context, "inlined_ret_" + funcName, currentFunc);
+    AllocaInst* retNativeDouble = CreateEntryBlockAlloca(m_doubleTy, nullptr, "inl_ret_d");
+    AllocaInst* retBoxed = CreateEntryBlockAlloca(m_ptrTy, nullptr, "inl_ret_boxed");
+    m_builder.CreateStore(ConstantFP::get(m_doubleTy, 0.0), retNativeDouble);
+    m_builder.CreateStore(ConstantPointerNull::get(cast<PointerType>(m_ptrTy)), retBoxed);
+
+    s_inlineReturnStack.push_back({ inlineRetBB, retNativeDouble, retBoxed });
+
+    // 5. 遍历并生成被内联函数体 IR
+    visit(calleeVal.funcBody);
+
+    // 6. 如果未显式 return 导致自然执行到底部，分支到汇合块
+    if (m_builder.GetInsertBlock() && !m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateBr(inlineRetBB);
+    }
+
+    // 7. 恢复内联栈与调用方作用域
+    s_inlineReturnStack.pop_back();
+    s_inlinedFunctionsInStack.erase(funcName);
+    s_currentInlineDepth--;
+
+    m_namedValues = savedNamedValues;
+    m_nativeDoubleLocals = savedNativeDoubleLocals;
+    m_declaredLocals = savedDeclaredLocals;
+    s_currentFuncParamNames = savedParamNames;
+
+    // 8. 汇合点加载返回值
+    m_builder.SetInsertPoint(inlineRetBB);
+    Value* resD = m_builder.CreateLoad(m_doubleTy, retNativeDouble, "inl_res_d");
+    result = resD;
+    return true;
+}
+
 std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     std::string funcName = ctx->atom()->getText();
     auto exprs = ctx->exprList() ? ctx->exprList()->expression()
         : std::vector<TzdLangParser::ExpressionContext*>();
     int argCount = (int)exprs.size();
+
+    // 0a. 数学内建指令硬件级极速内联 (sqrt, abs, min, max, sin, cos 等)
+    Value* intrinsicResult = nullptr;
+    if (tryInlineMathIntrinsic(funcName, exprs, intrinsicResult)) {
+        return std::any((Value*)intrinsicResult);
+    }
+
+    // 0b. AST 级别超强小函数内联展开 (消除一切调用开销)
+    Value* inlinedResult = nullptr;
+    if (tryInlineFunction(funcName, exprs, inlinedResult)) {
+        return std::any((Value*)inlinedResult);
+    }
 
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();

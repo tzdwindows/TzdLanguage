@@ -24,8 +24,37 @@
 // (TzdOop.h includes TzdInterpreter.h which includes TzdJit.h which includes TzdOop.h)
 class TzdClassDef;
 
+struct TzdJitConfig {
+    int optLevel = 2;                  // 0 = Off/Debug, 1 = Basic, 2 = Standard (Default), 3 = Aggressive
+    int inlineThreshold = 250;         // Inlining threshold (0 = disable, 250 = default, 500 = aggressive)
+    bool enableAstInlining = true;     // AST-level small function inlining
+    bool enableMathIntrinsics = true;  // Direct LLVM math intrinsics
+    bool enableLoopUnroll = true;      // Loop unrolling for O2/O3
+    bool enableJitDebug = false;       // JIT debugging interface / safepoints
+    int maxInlineDepth = 4;            // Max nested inlining depth
+    int maxInlineStmts = 25;           // Max statements in inlined function
+};
+
+struct JittedFunctionInfo {
+    std::string name;
+    std::string internalName;
+    std::string functionName;
+    std::string internalSymbolName;
+    void* entryAddress = nullptr;
+    void* workerAddress = nullptr;
+    void* nativeWorkerAddress = nullptr;
+    void* nativeAddress = nullptr;
+    int optLevel = 2;
+    int paramCount = 0;
+    size_t irInstructionCount = 0;
+    std::string irDump;
+    std::string llvmIR;
+    bool inlined = false;
+    bool isInlined = false;
+};
+
 /**
- * TzdJitEngine: ???? LLVM ?????????????????????????
+ * TzdJitEngine: LLVM ORC JIT Engine with Multi-Tier Optimization & Debug Interface
  */
 class TzdJitEngine {
 public:
@@ -48,6 +77,26 @@ public:
     std::string getTargetTriple() const;
     void executeFunction(const std::string& name, void* interp = nullptr, void* retVal = nullptr);
 
+    // --- Optimization Level & Inlining Configuration ---
+    static TzdJitConfig& getConfig();
+    static void setOptLevel(int level);
+    static int getOptLevel();
+    static void setInlineThreshold(int threshold);
+    static int getInlineThreshold();
+    static void setJitDebugEnabled(bool enabled);
+    static bool isJitDebugEnabled();
+    static void setAstInliningEnabled(bool enabled);
+    static bool isAstInliningEnabled();
+
+    // --- JIT Debug & Inspection Registry ---
+    static void registerJittedFunction(const JittedFunctionInfo& info);
+    static std::vector<JittedFunctionInfo> getJittedFunctions();
+    static JittedFunctionInfo* getJittedFunction(const std::string& name);
+    static std::string dumpJitIR(const std::string& name);
+    static size_t getJitCompiledCount();
+    static size_t getTotalInlinedCalls();
+    static void recordInlinedCall();
+
 private:
     void initLLJIT();
 
@@ -67,6 +116,10 @@ public:
     void inlineStoreNativeToPtr(llvm::Value* dest, llvm::Value* nativeDouble);
     // Inline rt_to_double_fast: direct GEP+Load on TzdValue.dVal
     llvm::Value* inlineToDoubleFast(llvm::Value* src);
+
+    // Advanced Inlining (AST-level small function inlining & math intrinsics)
+    bool tryInlineFunction(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result);
+    bool tryInlineMathIntrinsic(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result);
 
     std::unique_ptr<llvm::Module> getModule();
      std::unique_ptr<llvm::Module> extractModule();

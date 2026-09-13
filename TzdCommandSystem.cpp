@@ -20,6 +20,7 @@
 
 #include "Generated/TzdConsole.h"
 #include "Generated/TzdBytecode.h"
+#include "Generated/TzdJit.h"
 
 TzdInterpreter* TzdCommandSystem::interpreter = nullptr;
 
@@ -531,6 +532,8 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
     std::string debugHost = "127.0.0.1";
     int debugPort = 0;
     bool enableDebug = false;
+    bool explicitJit = false;
+    bool jitDebugRequested = false;
 
     // 清理尾部引号的 Lambda
     auto stripQuotes = [](const std::string& s) -> std::string {
@@ -614,9 +617,69 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         // 4b. JIT 控制模式
         else if (arg == "--jit") {
             interpreter->m_noJit = false;
+            explicitJit = true;
         }
         else if (arg == "--noJit" || arg == "--no-jit") {
             interpreter->m_noJit = true;
+            explicitJit = false;
+        }
+        // JIT 优化级别: -O0, -O1, -O2, -O3, --opt-level=N, --opt=N, -O=N
+        else if (arg == "-O0" || arg == "--opt-level=0" || arg == "--opt=0" || arg == "-O=0") {
+            TzdJitEngine::setOptLevel(0);
+            interpreter->m_noJit = false;
+            explicitJit = true;
+        }
+        else if (arg == "-O1" || arg == "--opt-level=1" || arg == "--opt=1" || arg == "-O=1") {
+            TzdJitEngine::setOptLevel(1);
+            interpreter->m_noJit = false;
+            explicitJit = true;
+        }
+        else if (arg == "-O2" || arg == "--opt-level=2" || arg == "--opt=2" || arg == "-O=2") {
+            TzdJitEngine::setOptLevel(2);
+            interpreter->m_noJit = false;
+            explicitJit = true;
+        }
+        else if (arg == "-O3" || arg == "--opt-level=3" || arg == "--opt=3" || arg == "-O=3") {
+            TzdJitEngine::setOptLevel(3);
+            interpreter->m_noJit = false;
+            explicitJit = true;
+        }
+        else if (arg.rfind("--opt-level=", 0) == 0 || arg.rfind("--opt=", 0) == 0 || arg.rfind("-O=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            int lvl = std::stoi(arg.substr(eqPos + 1));
+            TzdJitEngine::setOptLevel(lvl);
+            interpreter->m_noJit = false;
+            explicitJit = true;
+        }
+        // 内联优化控制: --inline-threshold=N, --no-inline, --inline-depth=N, --inline-stmts=N
+        else if (arg.rfind("--inline-threshold=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            int th = std::stoi(arg.substr(eqPos + 1));
+            TzdJitEngine::setInlineThreshold(th);
+        }
+        else if (arg == "--no-inline" || arg == "--no-ast-inline") {
+            TzdJitEngine::setAstInliningEnabled(false);
+            TzdJitEngine::setInlineThreshold(0);
+        }
+        else if (arg.rfind("--inline-depth=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            TzdJitEngine::getConfig().maxInlineDepth = std::stoi(arg.substr(eqPos + 1));
+        }
+        else if (arg.rfind("--inline-stmts=", 0) == 0) {
+            size_t eqPos = arg.find('=');
+            TzdJitEngine::getConfig().maxInlineStmts = std::stoi(arg.substr(eqPos + 1));
+        }
+        // JIT 调试控制与内在函数
+        else if (arg == "--jit-debug" || arg == "--debug-jit") {
+            TzdJitEngine::setJitDebugEnabled(true);
+            interpreter->m_noJit = false;
+            jitDebugRequested = true;
+        }
+        else if (arg == "--no-jit-intrinsics" || arg == "--no-math-intrinsics") {
+            TzdJitEngine::getConfig().enableMathIntrinsics = false;
+        }
+        else if (arg == "--no-unroll" || arg == "--no-loop-unroll") {
+            TzdJitEngine::getConfig().enableLoopUnroll = false;
         }
         // 4c. 纯解释器模式 (--interpreter / --tree-walk)：禁用 JIT 且禁用字节码 VM
         else if (arg == "--interpreter" || arg == "--tree-walk") {
@@ -713,7 +776,12 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
 
     // 启动调试服务器
     if (enableDebug && debugPort > 0) {
-        interpreter->m_noJit = true;
+        if (jitDebugRequested || explicitJit) {
+            interpreter->m_noJit = false;
+            TzdJitEngine::setJitDebugEnabled(true);
+        } else {
+            interpreter->m_noJit = true;
+        }
         interpreter->m_useBytecodeVM = false;
         interpreter->m_forceInterpreter = true;
         TzdDebugger::g_DebugActive = true;

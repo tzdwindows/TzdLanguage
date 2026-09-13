@@ -3,6 +3,7 @@
 #include "TzdGC.h"
 #include "TzdTieringEngine.h"
 #include "TzdBytecode.h"
+#include "TzdJit.h"
 
 bool tzdStackNearOverflow() {
     static thread_local ULONG_PTR s_low = 0;
@@ -2830,7 +2831,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     // --- 分支 C: JIT 机器码执行 (如果已生成机器码且未被禁用，最高优先级直接执行) ---
     // Note: m_noJit blocks EAGER compilation, but if jittedPtr is already set
     // (by tryJitCompile/bytecode JIT bridge), we should use it regardless.
-    if (func.jittedPtr && !TzdDebugger::g_DebugActive) {
+    if (func.jittedPtr && (!TzdDebugger::g_DebugActive || TzdJitEngine::isJitDebugEnabled())) {
         return callScriptFunction(func.name, func.params, func.paramTypes,
             func.funcBody, func.jittedPtr, func.instanceVal, args,
             func.sourceFile, func.line);
@@ -2920,8 +2921,8 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
     // before dispatching to this core, so that the bytecode VM and native
     // paths also honour them consistently.
 
-    // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行) ---
-    if (jittedPtr && !TzdDebugger::g_DebugActive) {
+    // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行，除非启用JIT调试) ---
+    if (jittedPtr && (!TzdDebugger::g_DebugActive || TzdJitEngine::isJitDebugEnabled())) {
         this->clearJitError();
         this->m_jitUnhandledThrow.reset(); // 清除上一次遗留的异常
         g_CurrentInterpreter = this;
