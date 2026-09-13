@@ -400,4 +400,8 @@ bd.txt
 test_out.txt
 test_input.txt
 free_crash_log.txt
-compile_commands.json
+compile_commands.json
+
+# Installer artifacts and staging
+dist/
+installer/*.7z

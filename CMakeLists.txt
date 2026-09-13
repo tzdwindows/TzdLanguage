@@ -462,16 +462,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
     )
 endif()
 
-# Optionally copy NVRTC DLL if present
+# Optionally copy NVRTC and NVRTC-builtins DLLs if present
 if(HAVE_CUDA)
-    file(GLOB NVRTC_DLLS "${CUDA_ROOT_DIR}/bin/nvrtc64_*.dll")
+    file(GLOB NVRTC_DLLS "${CUDA_ROOT_DIR}/bin/nvrtc*.dll")
     if(NVRTC_DLLS)
-        list(GET NVRTC_DLLS 0 NVRTC_FIRST_DLL)
         add_custom_command(TARGET TzdTools POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${NVRTC_FIRST_DLL}"
+                ${NVRTC_DLLS}
                 "$<TARGET_FILE_DIR:TzdTools>/"
-            COMMENT "Copying NVRTC runtime DLL..."
+            COMMENT "Copying NVRTC and NVRTC builtins runtime DLLs..."
         )
     endif()
 endif()

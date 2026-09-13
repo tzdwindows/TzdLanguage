@@ -149,9 +149,10 @@
       <AdditionalOptions>/WHOLEARCHIVE:LLVMX86CodeGen.lib /WHOLEARCHIVE:LLVMX86Desc.lib /WHOLEARCHIVE:LLVMX86Info.lib /WHOLEARCHIVE:LLVMX86AsmParser.lib /WHOLEARCHIVE:LLVMOrcJIT.lib /WHOLEARCHIVE:LLVMExecutionEngine.lib %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
-      <Command>robocopy "$(SolutionDir)stdlib" "$(SolutionDir)TzdTools\stdlib" /XO /E /NDL /NFL /NJH /NJS
-copy "$(SolutionDir)External\libtorch\lib\*.dll" "$(OutDir)" /Y >nul 2&gt;&amp;1
-copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc64_120_0.dll" "$(OutDir)" /Y >nul 2&gt;&amp;1
+      <Command>robocopy "$(SolutionDir)stdlib" "$(OutDir)stdlib" /XO /E /NDL /NFL /NJH /NJS
+copy "$(SolutionDir)External\libtorch\lib\*.dll" "$(OutDir)" /Y >nul 2>&amp;1
+copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc64_120_0.dll" "$(OutDir)" /Y >nul 2>&amp;1
+copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc-builtins64_126.dll" "$(OutDir)" /Y >nul 2>&amp;1
 if %ERRORLEVEL% LEQ 7 exit 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
