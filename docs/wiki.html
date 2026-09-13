@@ -357,15 +357,49 @@ tzd examples\hello.tzd</code></pre>
           </div>
         </div>
 
-        <p>TzdLang 采用了兼具极高灵活度与编译期零开销特化的<strong>混合类型系统</strong>。既支持类似 JavaScript/Swift 的现代动态推断，又支持像 C++ 一样的底层静态强类型与系统级指针。</p>
+        <p>TzdLang 采用了兼具极高灵活度与编译期零开销特化的<strong>混合类型系统</strong>。既支持现代动态推断，又支持 C/C++ 级别的底层静态强类型与系统级指针。</p>
 
-        <h2>3.1 变量声明与常量</h2>
-        <p>TzdLang 提供三种声明关键字：</p>
-        <ul>
-          <li><code>var</code>：可变变量，支持声明时自动类型推断。</li>
-          <li><code>let</code>：局部变量，推荐配合显式类型注释使用。</li>
-          <li><code>const</code>：不可变常量，编译期执行常数折叠优化。</li>
-        </ul>
+        <div class="callout callout-warning">
+          <div class="callout-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span>核心语法规则：变量声明的三种合法形式</span>
+          </div>
+          <p>在语句层（函数体内、顶层脚本或 REPL 交互环境）中，TzdLang 严格支持且仅支持以下三种声明范式：<br>
+          1. <strong>显式强类型</strong>：<code>float ratio = 0.875;</code> 或 <code>int count = 1024;</code><br>
+          2. <strong>var 动态推断</strong>：<code>var ratio = 0.875;</code> 或 <code>var count = 1024;</code><br>
+          3. <strong>冒号类型约束</strong>：<code>ratio : float = 0.875;</code> 或 <code>count : int = 1024;</code><br>
+          <strong>严正警告：</strong>局部语句中<strong>不支持</strong> <code>let</code>（输入 <code>let ratio: float = 0.875;</code> 将触发解析器“发现多余输入字符”报错），亦不可混写为 <code>var x: int = 10;</code>。<code>let</code> 与 <code>const</code> 仅在 <code>class</code> 类体中作为成员字段合法使用！</p>
+        </div>
+
+        <h2>3.1 语句层变量声明实操</h2>
+        <div class="code-block-wrapper">
+          <div class="code-block-header">
+            <span class="code-lang-tag">tzdlang</span>
+            <button class="btn-copy-snippet">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>复制代码</span>
+            </button>
+          </div>
+          <pre class="code-pre"><code><span class="cm">// 1. 显式强类型声明 (&lt;type&gt; &lt;identifier&gt; = &lt;value&gt;;)</span>
+<span class="tp">float</span> ratio = <span class="num">0.875</span>;
+<span class="tp">string</span> message = <span class="st">"Hello, TzdLang!"</span>;
+<span class="tp">bool</span> isDebug = <span class="kw">false</span>;
+
+<span class="cm">// 2. var 动态推断声明 (var &lt;identifier&gt; = &lt;value&gt;;)</span>
+<span class="kw">var</span> totalCount = <span class="num">1024</span>;
+<span class="kw">var</span> appTitle = <span class="st">"TzdTools Native Engine"</span>;
+
+<span class="cm">// 3. 冒号类型约束声明 (&lt;identifier&gt; : &lt;type&gt; = &lt;value&gt;;)</span>
+threshold : <span class="tp">float</span> = <span class="num">99.5</span>;
+maxBuffer : <span class="tp">int</span> = <span class="num">65536</span>;
+
+<span class="cm">// 4. 原生数组声明与索引</span>
+<span class="kw">var</span> numbers = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>];
+<span class="fn">print</span>(<span class="st">"Array element at index 2: "</span> + numbers[<span class="num">2</span>]);</code></pre>
+        </div>
+
+        <h2>3.2 类成员字段中的 let 与 const</h2>
+        <p>在面向对象 <code>class</code> 类体内部，<code>let</code> 用于声明实例字段，<code>const</code> 用于定义常数字段，<code>var</code> 用于通用类型字段：</p>
 
         <div class="code-block-wrapper">
           <div class="code-block-header">
@@ -375,21 +409,16 @@ tzd examples\hello.tzd</code></pre>
               <span>复制代码</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="cm">// 1. 动态类型推断</span>
-<span class="kw">var</span> message = <span class="st">"Hello, TzdLang!"</span>;
-<span class="kw">var</span> totalCount = <span class="num">1024</span>;
+          <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">ServerConfig</span> {
+    <span class="kw">const</span> MAX_CONNECTIONS = <span class="num">10000</span>; <span class="cm">// 类常量</span>
+    <span class="kw">let</span> <span class="tp">float</span> keepAliveRatio = <span class="num">0.875</span>; <span class="cm">// 类实例字段 (let &lt;type&gt; &lt;name&gt;)</span>
+    <span class="kw">var</span> <span class="tp">string</span> host = <span class="st">"127.0.0.1"</span>;   <span class="cm">// 类实例字段 (var &lt;type&gt; &lt;name&gt;)</span>
 
-<span class="cm">// 2. 静态显式类型约束</span>
-<span class="kw">let</span> ratio: <span class="tp">float</span> = <span class="num">0.875</span>;
-<span class="kw">const</span> MAX_BUFFER_SIZE: <span class="tp">int</span> = <span class="num">65536</span>;
-<span class="kw">const</span> IS_DEBUG: <span class="tp">bool</span> = <span class="kw">false</span>;
-
-<span class="cm">// 3. 原生数组</span>
-<span class="kw">var</span> numbers: <span class="tp">int[]</span> = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>];
-<span class="fn">print</span>(<span class="st">"Array element at index 2: "</span> + numbers[<span class="num">2</span>]);</code></pre>
+    <span class="fn">ServerConfig</span>() {}
+}</code></pre>
         </div>
 
-        <h2>3.2 系统级原生指针与内存布局</h2>
+        <h2>3.3 系统级原生指针与内存布局</h2>
         <p>在涉及操作系统 Win32 API 交互或高性能共享内存时，TzdLang 原生支持 <code>ptr</code>（或 <code>hwnd</code> 窗口句柄）类型，不经过任何对象封箱，与原生机器字长（64位）保持 1:1 对齐：</p>
 
         <div class="code-block-wrapper">
@@ -400,7 +429,7 @@ tzd examples\hello.tzd</code></pre>
               <span>复制代码</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="kw">var</span> handle: <span class="tp">ptr</span> = <span class="kw">null</span>;
+          <pre class="code-pre"><code><span class="tp">ptr</span> handle = <span class="kw">null</span>;
 <span class="kw">if</span> (handle == <span class="kw">null</span>) {
     <span class="fn">print</span>(<span class="st">"Pointer is uninitialized, allocating..."</span>);
 }</code></pre>
@@ -477,21 +506,18 @@ tzd examples\hello.tzd</code></pre>
               <span>复制代码</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="cm">// 1. 标准函数定义</span>
-<span class="kw">fun</span> <span class="fn">calculateTax</span>(amount: <span class="tp">float</span>, rate: <span class="tp">float</span>): <span class="tp">float</span> {
+          <pre class="code-pre"><code><span class="cm">// 1. 标准函数定义 (无需且不支持返回类型后缀)</span>
+<span class="kw">fun</span> <span class="fn">calculateTax</span>(amount: <span class="tp">float</span>, rate: <span class="tp">float</span>) {
     <span class="kw">ret</span> amount * rate;
 }
 
-<span class="cm">// 2. 高阶函数与闭包传参</span>
-<span class="kw">fun</span> <span class="fn">makeMultiplier</span>(factor: <span class="tp">int</span>) {
-    <span class="kw">ret</span> <span class="kw">fun</span>(val: <span class="tp">int</span>) {
-        <span class="kw">ret</span> val * factor;
-    };
+<span class="cm">// 2. 函数作为一等公民参数传递与回调</span>
+<span class="kw">fun</span> <span class="fn">applyTaxStrategy</span>(op: <span class="tp">function</span>, original: <span class="tp">float</span>, rate: <span class="tp">float</span>) {
+    <span class="kw">ret</span> op(original, rate);
 }
 
-<span class="kw">var</span> doubleIt = <span class="fn">makeMultiplier</span>(<span class="num">2</span>);
-<span class="kw">var</span> res = doubleIt(<span class="num">21</span>); <span class="cm">// 输出: 42</span>
-<span class="fn">print</span>(<span class="st">"Closure result: "</span> + res);</code></pre>
+<span class="kw">var</span> tax = <span class="fn">applyTaxStrategy</span>(calculateTax, <span class="num">100.0</span>, <span class="num">0.15</span>);
+<span class="fn">print</span>(<span class="st">"Calculated Tax: "</span> + tax);</code></pre>
         </div>
 
         <div class="chapter-pager">
@@ -529,15 +555,15 @@ tzd examples\hello.tzd</code></pre>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">Device</span> {
-    <span class="kw">var</span> name: <span class="tp">string</span>;
-    <span class="kw">var</span> isOnline: <span class="tp">bool</span>;
+    <span class="kw">var</span> <span class="tp">string</span> name;
+    <span class="kw">var</span> <span class="tp">bool</span> isOnline;
 
-    <span class="kw">fun</span> <span class="fn">init</span>(devName: <span class="tp">string</span>) {
+    <span class="fn">Device</span>(devName) {
         <span class="kw">this</span>.name = devName;
         <span class="kw">this</span>.isOnline = <span class="kw">true</span>;
     }
 
-    <span class="kw">fun</span> <span class="fn">ping</span>(): <span class="tp">string</span> {
+    <span class="kw">fun</span> <span class="fn">ping</span>() {
         <span class="kw">ret</span> <span class="st">"Device ["</span> + <span class="kw">this</span>.name + <span class="st">"] is alive."</span>;
     }
 }
@@ -557,16 +583,16 @@ tzd examples\hello.tzd</code></pre>
             </button>
           </div>
           <pre class="code-pre"><code><span class="kw">class</span> <span class="tp">ComputeNode</span> <span class="kw">extends</span> <span class="tp">Device</span> {
-    <span class="kw">var</span> gpuCores: <span class="tp">int</span>;
+    <span class="kw">var</span> <span class="tp">int</span> gpuCores;
 
-    <span class="kw">fun</span> <span class="fn">init</span>(devName: <span class="tp">string</span>, cores: <span class="tp">int</span>) {
-        <span class="kw">super</span>.init(devName);
+    <span class="fn">ComputeNode</span>(devName, cores) {
+        <span class="kw">super</span>(devName);
         <span class="kw">this</span>.gpuCores = cores;
     }
 
     <span class="cm">// 虚方法重写 (Override)</span>
-    <span class="kw">fun</span> <span class="fn">ping</span>(): <span class="tp">string</span> {
-        <span class="kw">ret</span> <span class="kw">super</span>.ping() + <span class="st">" Compute Acceleration cores: "</span> + <span class="kw">this</span>.gpuCores;
+    <span class="kw">fun</span> <span class="fn">ping</span>() {
+        <span class="kw">ret</span> <span class="st">"ComputeNode ["</span> + <span class="kw">this</span>.name + <span class="st">"] Acceleration cores: "</span> + <span class="kw">this</span>.gpuCores;
     }
 }
 
@@ -607,7 +633,7 @@ tzd examples\hello.tzd</code></pre>
               <span>复制代码</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="kw">fun</span> <span class="fn">safeDivide</span>(a: <span class="tp">float</span>, b: <span class="tp">float</span>): <span class="tp">float</span> {
+          <pre class="code-pre"><code><span class="kw">fun</span> <span class="fn">safeDivide</span>(a: <span class="tp">float</span>, b: <span class="tp">float</span>) {
     <span class="kw">if</span> (b == <span class="num">0.0</span>) {
         <span class="kw">throw</span> <span class="st">"DivisionByZeroException: divisor cannot be 0.0"</span>;
     }
@@ -662,23 +688,27 @@ tzd examples\hello.tzd</code></pre>
               <span>复制代码</span>
             </button>
           </div>
-          <pre class="code-pre"><code><span class="cm">// 派生原生系统线程并行工作</span>
-<span class="kw">var</span> t1 = <span class="fn">spawn</span>(<span class="kw">fun</span>() {
+          <pre class="code-pre"><code><span class="kw">import</span> <span class="st">"stdlib/thread/Thread.tzd"</span>;
+
+<span class="cm">// 派生原生系统线程并行工作</span>
+<span class="kw">fun</span> <span class="fn">computeTask</span>() {
     <span class="kw">var</span> i = <span class="num">0</span>;
     <span class="kw">var</span> acc = <span class="num">0</span>;
     <span class="kw">for</span> (i = <span class="num">0</span>; i &lt; <span class="num">1000000</span>; i++) {
-        acc = acc + i;
+        acc = acc + (i % <span class="num">7</span>);
     }
-    <span class="fn">print</span>(<span class="st">"Worker Thread 1 Done. Acc: "</span> + acc);
-});
+    <span class="fn">print</span>(<span class="st">"Worker Thread computation finished. Acc: "</span> + acc);
+}
 
-<span class="kw">var</span> t2 = <span class="fn">spawn</span>(<span class="kw">fun</span>() {
-    <span class="fn">print</span>(<span class="st">"Worker Thread 2 running simultaneously on separate CPU Core."</span>);
-});
+<span class="kw">var</span> t1 = <span class="kw">new</span> <span class="tp">Thread</span>(computeTask);
+<span class="kw">var</span> t2 = <span class="kw">new</span> <span class="tp">Thread</span>(computeTask);
+
+t1.<span class="fn">start</span>();
+t2.<span class="fn">start</span>();
 
 <span class="cm">// 汇聚等待线程</span>
-t1.join();
-t2.join();
+t1.<span class="fn">join</span>();
+t2.<span class="fn">join</span>();
 <span class="fn">print</span>(<span class="st">"All threads completed seamlessly!"</span>);</code></pre>
         </div>
 

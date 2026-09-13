@@ -11,35 +11,35 @@ const WORKBENCH_DATA = {
     file: "01_variables_and_types.tzd",
     title: "变量声明与混合类型系统",
     tag: "Core Syntax",
-    desc: "支持 var/let/const 动态类型推断，原生深度内建静态强类型（int, float, string, bool, void, ptr/hwnd, type[]）。",
-    rule: "规范提示：声明类型使用冒号语法 var x: int = 10; 支持零开销原生指针与数组索引。",
-    raw: `// 1. 动态声明与静态强类型推断
-var count = 42;
-let name: string = "TzdLang";
-const PI: float = 3.1415926535;
+    desc: "支持三种变量声明范式：C 风格强类型（如 float ratio = 0.875;）、var 动态类型推断（如 var count = 42;）、冒号类型约束（如 ratio : float = 0.875;）；类体内支持 let/const 字段。",
+    rule: "规范提示：局部语句层严禁使用 let/const（let/const 用于类成员）。声明类型支持 float ratio = 0.875; 或 var x = 10; 或 x : int = 10;。",
+    raw: `// 1. 三种声明范式：显式强类型、var 动态推断与冒号类型
+int count = 42;
+var name = "TzdLang";
+ratio : float = 0.875;
 
 // 2. 原生数组与底层系统指针
-var scores: int[] = [98, 95, 100];
-var buffer: ptr = null;
+var scores = [98, 95, 100];
+ptr buffer = null;
 
 // 3. 混合运算与字符串内建拼接
-var isActive: bool = true;
+bool isActive = true;
 if (isActive) {
-    print("Welcome to " + name + "! System counter: " + count);
+    print("Welcome to " + name + "! Ratio: " + ratio + ", Score: " + scores[0]);
 }`,
-    code: `<span class="tzd-comment">// 1. 动态声明与静态强类型推断</span>
-<span class="tzd-keyword">var</span> count = <span class="tzd-number">42</span>;
-<span class="tzd-keyword">let</span> name: <span class="tzd-type">string</span> = <span class="tzd-string">"TzdLang"</span>;
-<span class="tzd-keyword">const</span> PI: <span class="tzd-type">float</span> = <span class="tzd-number">3.1415926535</span>;
+    code: `<span class="tzd-comment">// 1. 三种声明范式：显式强类型、var 动态推断与冒号类型</span>
+<span class="tzd-type">int</span> count = <span class="tzd-number">42</span>;
+<span class="tzd-keyword">var</span> name = <span class="tzd-string">"TzdLang"</span>;
+ratio : <span class="tzd-type">float</span> = <span class="tzd-number">0.875</span>;
 
 <span class="tzd-comment">// 2. 原生数组与底层系统指针</span>
-<span class="tzd-keyword">var</span> scores: <span class="tzd-type">int[]</span> = [<span class="tzd-number">98</span>, <span class="tzd-number">95</span>, <span class="tzd-number">100</span>];
-<span class="tzd-keyword">var</span> buffer: <span class="tzd-type">ptr</span> = <span class="tzd-keyword">null</span>;
+<span class="tzd-keyword">var</span> scores = [<span class="tzd-number">98</span>, <span class="tzd-number">95</span>, <span class="tzd-number">100</span>];
+<span class="tzd-type">ptr</span> buffer = <span class="tzd-keyword">null</span>;
 
 <span class="tzd-comment">// 3. 混合运算与字符串内建拼接</span>
-<span class="tzd-keyword">var</span> isActive: <span class="tzd-type">bool</span> = <span class="tzd-keyword">true</span>;
+<span class="tzd-type">bool</span> isActive = <span class="tzd-keyword">true</span>;
 <span class="tzd-keyword">if</span> (isActive) {
-    <span class="tzd-fun">print</span>(<span class="tzd-string">"Welcome to "</span> + name + <span class="tzd-string">"! System counter: "</span> + count);
+    <span class="tzd-fun">print</span>(<span class="tzd-string">"Welcome to "</span> + name + <span class="tzd-string">"! Ratio: "</span> + ratio + <span class="tzd-string">", Score: "</span> + scores[<span class="tzd-number">0</span>]);
 }`
   },
 
@@ -99,112 +99,114 @@ switch (code) {
     file: "03_oop_classes.tzd",
     title: "面向对象与继承架构",
     tag: "OOP Paradigm",
-    desc: "支持类封装、单继承、访问修饰符（public/private/protected）、构造函数级联 : super(...) 与匿名派生块。",
-    rule: "设计原则：基类构造函数调用通过 : super(...) 显式传递，成员变量由 Bump Arena 零碎片对齐分配。",
+    desc: "支持类封装、单继承（extends）、构造函数与 super 继承链，方法调用由虚分发快速执行。",
+    rule: "设计规范：构造函数使用类名同名构造 ClassName(params) { ... }，父类构造通过 super(...) 调用；成员使用 var/let/const 声明。",
     raw: `// 声明基类
 class TensorLayer {
-    protected var units: int;
+    var int units;
 
-    public fun TensorLayer(units: int) {
+    TensorLayer(units) {
         this.units = units;
     }
 
-    public fun forward(x: float): float {
+    fun forward(x) {
         return x * 1.5;
     }
 }
 
 // 继承与构造函数级联
 class Dense extends TensorLayer {
-    private var bias: float;
+    var float bias;
 
-    public fun Dense(units: int, bias: float) : super(units) {
+    Dense(units, bias) {
+        super(units);
         this.bias = bias;
     }
 
-    public fun forward(x: float): float {
-        return super.forward(x) + this.bias;
+    fun forward(x) {
+        return x * 1.5 + this.bias;
     }
 }
 
 var layer = new Dense(64, 0.05);
-print("Forward result: " + layer.forward(2.0));`,
+print("Layer units: " + layer.units + ", Forward result: " + layer.forward(2.0));`,
     code: `<span class="tzd-comment">// 声明基类</span>
 <span class="tzd-keyword">class</span> <span class="tzd-class">TensorLayer</span> {
-    <span class="tzd-keyword">protected</span> <span class="tzd-keyword">var</span> units: <span class="tzd-type">int</span>;
+    <span class="tzd-keyword">var</span> <span class="tzd-type">int</span> units;
 
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">TensorLayer</span>(units: <span class="tzd-type">int</span>) {
+    <span class="tzd-fun">TensorLayer</span>(units) {
         <span class="tzd-keyword">this</span>.units = units;
     }
 
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">forward</span>(x: <span class="tzd-type">float</span>): <span class="tzd-type">float</span> {
+    <span class="tzd-keyword">fun</span> <span class="tzd-fun">forward</span>(x) {
         <span class="tzd-keyword">return</span> x * <span class="tzd-number">1.5</span>;
     }
 }
 
 <span class="tzd-comment">// 继承与构造函数级联</span>
 <span class="tzd-keyword">class</span> <span class="tzd-class">Dense</span> <span class="tzd-keyword">extends</span> <span class="tzd-class">TensorLayer</span> {
-    <span class="tzd-keyword">private</span> <span class="tzd-keyword">var</span> bias: <span class="tzd-type">float</span>;
+    <span class="tzd-keyword">var</span> <span class="tzd-type">float</span> bias;
 
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">Dense</span>(units: <span class="tzd-type">int</span>, bias: <span class="tzd-type">float</span>) : <span class="tzd-keyword">super</span>(units) {
+    <span class="tzd-fun">Dense</span>(units, bias) {
+        <span class="tzd-keyword">super</span>(units);
         <span class="tzd-keyword">this</span>.bias = bias;
     }
 
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">forward</span>(x: <span class="tzd-type">float</span>): <span class="tzd-type">float</span> {
-        <span class="tzd-keyword">return</span> <span class="tzd-keyword">super</span>.<span class="tzd-fun">forward</span>(x) + <span class="tzd-keyword">this</span>.bias;
+    <span class="tzd-keyword">fun</span> <span class="tzd-fun">forward</span>(x) {
+        <span class="tzd-keyword">return</span> x * <span class="tzd-number">1.5</span> + <span class="tzd-keyword">this</span>.bias;
     }
 }
 
 <span class="tzd-keyword">var</span> layer = <span class="tzd-keyword">new</span> <span class="tzd-class">Dense</span>(<span class="tzd-number">64</span>, <span class="tzd-number">0.05</span>);
-<span class="tzd-fun">print</span>(<span class="tzd-string">"Forward result: "</span> + layer.<span class="tzd-fun">forward</span>(<span class="tzd-number">2.0</span>));`
+<span class="tzd-fun">print</span>(<span class="tzd-string">"Layer units: "</span> + layer.units + <span class="tzd-string">", Forward result: "</span> + layer.<span class="tzd-fun">forward</span>(<span class="tzd-number">2.0</span>));`
   },
 
   "04_closures_meta": {
     file: "04_closures_meta.tzd",
-    title: "一等闭包与元编程注解",
-    tag: "Metaprogramming",
-    desc: "函数作为一等公民（First-Class Citizens），原生支持匿名 Lambda、环境捕获闭包、类/方法级元编程注解与枚举声明。",
-    rule: "底层支持：闭包上下文由逃逸分析自动决定分配于快速执行栈或持久化堆区。",
-    raw: `// 1. 高阶函数与捕获闭包
-fun makeMultiplier(factor: int) {
-    return fun(val: int) {
-        return val * factor;
-    };
+    title: "静态成员与函数一等公民",
+    tag: "Functional & Static",
+    desc: "支持类静态方法（static fun）与静态常数（const），支持将函数作为第一公民（First-Class Citizens）传递与回调执行。",
+    rule: "设计规范：函数使用 fun 关键字声明，无需标注返回类型；静态方法直接通过 Class.method(...) 访问。",
+    raw: `// 1. 类静态方法与常数成员
+class MathToolkit {
+    const PI = 3.1415926535;
+
+    static fun square(x) {
+        return x * x;
+    }
+
+    static fun apply(op: function, val) {
+        return op(val);
+    }
 }
 
-var triple = makeMultiplier(3);
-print("Triple of 9: " + triple(9)); // 27
-
-// 2. 枚举定义与元编程注解
-enum ComputeBackend { CPU, CUDA, MPS }
-
-class @Optimized(tier = 1)
-class Pipeline {
-    @Route(path = "/predict")
-    public fun predict(backend: ComputeBackend) {
-        print("Executing on backend: " + backend);
-    }
-}`,
-    code: `<span class="tzd-comment">// 1. 高阶函数与捕获闭包</span>
-<span class="tzd-keyword">fun</span> <span class="tzd-fun">makeMultiplier</span>(factor: <span class="tzd-type">int</span>) {
-    <span class="tzd-keyword">return</span> <span class="tzd-keyword">fun</span>(val: <span class="tzd-type">int</span>) {
-        <span class="tzd-keyword">return</span> val * factor;
-    };
+// 2. 函数作为一等公民传递与回调
+fun cube(n) {
+    return n * n * n;
 }
 
-<span class="tzd-keyword">var</span> triple = <span class="tzd-fun">makeMultiplier</span>(<span class="tzd-number">3</span>);
-<span class="tzd-fun">print</span>(<span class="tzd-string">"Triple of 9: "</span> + <span class="tzd-fun">triple</span>(<span class="tzd-number">9</span>)); <span class="tzd-comment">// 27</span>
+print("Square: " + MathToolkit.square(6));
+print("Callback Cube: " + MathToolkit.apply(cube, 3));`,
+    code: `<span class="tzd-comment">// 1. 类静态方法与常数成员</span>
+<span class="tzd-keyword">class</span> <span class="tzd-class">MathToolkit</span> {
+    <span class="tzd-keyword">const</span> PI = <span class="tzd-number">3.1415926535</span>;
 
-<span class="tzd-comment">// 2. 枚举定义与元编程注解</span>
-<span class="tzd-keyword">enum</span> <span class="tzd-class">ComputeBackend</span> { CPU, CUDA, MPS }
-
-<span class="tzd-keyword">class</span> <span class="tzd-annot">@Optimized</span>(tier = <span class="tzd-number">1</span>)
-<span class="tzd-keyword">class</span> <span class="tzd-class">Pipeline</span> {
-    <span class="tzd-annot">@Route</span>(path = <span class="tzd-string">"/predict"</span>)
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">predict</span>(backend: <span class="tzd-class">ComputeBackend</span>) {
-        <span class="tzd-fun">print</span>(<span class="tzd-string">"Executing on backend: "</span> + backend);
+    <span class="tzd-keyword">static</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">square</span>(x) {
+        <span class="tzd-keyword">return</span> x * x;
     }
-}`
+
+    <span class="tzd-keyword">static</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">apply</span>(op: <span class="tzd-type">function</span>, val) {
+        <span class="tzd-keyword">return</span> op(val);
+    }
+}
+
+<span class="tzd-comment">// 2. 函数作为一等公民传递与回调</span>
+<span class="tzd-keyword">fun</span> <span class="tzd-fun">cube</span>(n) {
+    <span class="tzd-keyword">return</span> n * n * n;
+}
+
+<span class="tzd-fun">print</span>(<span class="tzd-string">"Square: "</span> + <span class="tzd-class">MathToolkit</span>.<span class="tzd-fun">square</span>(<span class="tzd-number">6</span>));
+<span class="tzd-fun">print</span>(<span class="tzd-string">"Callback Cube: "</span> + <span class="tzd-class">MathToolkit</span>.<span class="tzd-fun">apply</span>(cube, <span class="tzd-number">3</span>));`
   },
 
   "05_libtorch_dl": {
@@ -249,47 +251,49 @@ net.<span class="tzd-fun">save</span>(<span class="tzd-string">"model_checkpoint
     file: "06_multithreading.tzd",
     title: "原生操作系统多线程 (No GIL)",
     tag: "Concurrency",
-    desc: "摆脱传统解释型脚本语言的 GIL（全局解释器锁）瓶颈，映射到底层 OS 原生线程并提供高效线程池调度。",
-    rule: "并发设计：各线程独立运行于无锁内存分配泳道中，数据汇合处支持高效原子操作与 join() 同步。",
-    raw: `fun workerTask(id: int) {
+    desc: "摆脱传统解释型脚本语言的 GIL（全局解释器锁）瓶颈，标准库 stdlib/thread 映射到底层 OS 原生线程。",
+    rule: "并发设计：通过 Thread 类封装工作函数，调用 start() 派生系统线程，join() 完成汇聚等待。",
+    raw: `import "stdlib/thread/Thread.tzd";
+
+fun workerTask() {
     var acc = 0;
     var k = 0;
     for (k = 0; k < 500000; k++) {
-        acc = acc + k;
+        acc = acc + (k % 7);
     }
-    print("Worker [" + id + "] computation finished. Result: " + acc);
+    print("Worker computation finished. Acc: " + acc);
 }
 
-// 并行派生 4 个原生工作线程
-var t1 = new Thread(workerTask, 1);
-var t2 = new Thread(workerTask, 2);
-var t3 = new Thread(workerTask, 3);
-var t4 = new Thread(workerTask, 4);
+// 并行派生原生工作线程
+var t1 = new Thread(workerTask);
+var t2 = new Thread(workerTask);
+
+t1.start();
+t2.start();
 
 t1.join();
 t2.join();
-t3.join();
-t4.join();
 print("All native worker threads joined successfully.");`,
-    code: `<span class="tzd-keyword">fun</span> <span class="tzd-fun">workerTask</span>(id: <span class="tzd-type">int</span>) {
+    code: `<span class="tzd-keyword">import</span> <span class="tzd-string">"stdlib/thread/Thread.tzd"</span>;
+
+<span class="tzd-keyword">fun</span> <span class="tzd-fun">workerTask</span>() {
     <span class="tzd-keyword">var</span> acc = <span class="tzd-number">0</span>;
     <span class="tzd-keyword">var</span> k = <span class="tzd-number">0</span>;
     <span class="tzd-keyword">for</span> (k = <span class="tzd-number">0</span>; k &lt; <span class="tzd-number">500000</span>; k++) {
-        acc = acc + k;
+        acc = acc + (k % <span class="tzd-number">7</span>);
     }
-    <span class="tzd-fun">print</span>(<span class="tzd-string">"Worker ["</span> + id + <span class="tzd-string">"] computation finished. Result: "</span> + acc);
+    <span class="tzd-fun">print</span>(<span class="tzd-string">"Worker computation finished. Acc: "</span> + acc);
 }
 
-<span class="tzd-comment">// 并行派生 4 个原生工作线程</span>
-<span class="tzd-keyword">var</span> t1 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask, <span class="tzd-number">1</span>);
-<span class="tzd-keyword">var</span> t2 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask, <span class="tzd-number">2</span>);
-<span class="tzd-keyword">var</span> t3 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask, <span class="tzd-number">3</span>);
-<span class="tzd-keyword">var</span> t4 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask, <span class="tzd-number">4</span>);
+<span class="tzd-comment">// 并行派生原生工作线程</span>
+<span class="tzd-keyword">var</span> t1 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask);
+<span class="tzd-keyword">var</span> t2 = <span class="tzd-keyword">new</span> <span class="tzd-class">Thread</span>(workerTask);
+
+t1.<span class="tzd-fun">start</span>();
+t2.<span class="tzd-fun">start</span>();
 
 t1.<span class="tzd-fun">join</span>();
 t2.<span class="tzd-fun">join</span>();
-t3.<span class="tzd-fun">join</span>();
-t4.<span class="tzd-fun">join</span>();
 <span class="tzd-fun">print</span>(<span class="tzd-string">"All native worker threads joined successfully."</span>);`
   },
 
@@ -299,13 +303,17 @@ t4.<span class="tzd-fun">join</span>();
     tag: "Error Handling",
     desc: "使用 try-catch-throw 机制捕获异常，并使用 in 关键字执行精确的类型层次模式匹配。",
     rule: "最佳实践：继承自核心 Error 基类，结合模式匹配避免泛型异常吞噬。",
-    raw: `class NetworkError extends Error {
-    public fun NetworkError(msg: string) : super(msg) {}
+    raw: `import "stdlib/core/Error.tzd";
+
+class NetworkError extends Error {
+    NetworkError(msg) {
+        super(msg, "NETWORK_ERROR");
+    }
 }
 
 try {
-    var client = connectPeer("192.168.1.100", 9000);
-    if (client == null) {
+    var isConnected = false;
+    if (!isConnected) {
         throw new NetworkError("Connection timed out (10000ms)");
     }
 } catch (err) {
@@ -315,13 +323,17 @@ try {
         print("[Fatal System Error]: Unexpected crash");
     }
 }`,
-    code: `<span class="tzd-keyword">class</span> <span class="tzd-class">NetworkError</span> <span class="tzd-keyword">extends</span> <span class="tzd-class">Error</span> {
-    <span class="tzd-keyword">public</span> <span class="tzd-keyword">fun</span> <span class="tzd-fun">NetworkError</span>(msg: <span class="tzd-type">string</span>) : <span class="tzd-keyword">super</span>(msg) {}
+    code: `<span class="tzd-keyword">import</span> <span class="tzd-string">"stdlib/core/Error.tzd"</span>;
+
+<span class="tzd-keyword">class</span> <span class="tzd-class">NetworkError</span> <span class="tzd-keyword">extends</span> <span class="tzd-class">Error</span> {
+    <span class="tzd-fun">NetworkError</span>(msg) {
+        <span class="tzd-keyword">super</span>(msg, <span class="tzd-string">"NETWORK_ERROR"</span>);
+    }
 }
 
 <span class="tzd-keyword">try</span> {
-    <span class="tzd-keyword">var</span> client = <span class="tzd-fun">connectPeer</span>(<span class="tzd-string">"192.168.1.100"</span>, <span class="tzd-number">9000</span>);
-    <span class="tzd-keyword">if</span> (client == <span class="tzd-keyword">null</span>) {
+    <span class="tzd-keyword">var</span> isConnected = <span class="tzd-keyword">false</span>;
+    <span class="tzd-keyword">if</span> (!isConnected) {
         <span class="tzd-keyword">throw</span> <span class="tzd-keyword">new</span> <span class="tzd-class">NetworkError</span>(<span class="tzd-string">"Connection timed out (10000ms)"</span>);
     }
 } <span class="tzd-keyword">catch</span> (err) {
@@ -340,29 +352,39 @@ try {
     desc: "双轨内存体系：新生代采用 64KB Bump Pointer Arena 碰撞指针分配，老年代采用带 SATB 写屏障的三色标记清除算法。",
     rule: "技术原理：SATB（原始快照）在并发标记阶段拦截指针写入，确保垃圾回收过程对象引用绝不丢失。",
     raw: `// 1. 新生代：Bump Pointer Arena 快速碰撞分配
-// 无需遍历空闲链表，O(1) 批量清空，彻底消除碎片
+class Point {
+    var float x;
+    var float y;
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
 var i = 0;
-for (i = 0; i < 100000; i++) {
+for (i = 0; i < 10000; i++) {
     var pt = new Point(i, i * 2);
 }
 
 // 2. 老年代：SATB (Snapshot-At-The-Beginning) 写屏障
-// 并发写屏障保护全局长生命周期对象图
-var rootRegistry = new GlobalRegistry();
-rootRegistry.bind("engine", new InferenceEngine());
-print("Arena batch cleaned. SATB concurrent cycle completed.");`,
+print("Arena batch allocated 10000 instances. GC cycle healthy.");`,
     code: `<span class="tzd-comment">// 1. 新生代：Bump Pointer Arena 快速碰撞分配</span>
-<span class="tzd-comment">// 无需遍历空闲链表，O(1) 批量清空，彻底消除碎片</span>
+<span class="tzd-keyword">class</span> <span class="tzd-class">Point</span> {
+    <span class="tzd-keyword">var</span> <span class="tzd-type">float</span> x;
+    <span class="tzd-keyword">var</span> <span class="tzd-type">float</span> y;
+    <span class="tzd-fun">Point</span>(x, y) {
+        <span class="tzd-keyword">this</span>.x = x;
+        <span class="tzd-keyword">this</span>.y = y;
+    }
+}
+
 <span class="tzd-keyword">var</span> i = <span class="tzd-number">0</span>;
-<span class="tzd-keyword">for</span> (i = <span class="tzd-number">0</span>; i &lt; <span class="tzd-number">100000</span>; i++) {
+<span class="tzd-keyword">for</span> (i = <span class="tzd-number">0</span>; i &lt; <span class="tzd-number">10000</span>; i++) {
     <span class="tzd-keyword">var</span> pt = <span class="tzd-keyword">new</span> <span class="tzd-class">Point</span>(i, i * <span class="tzd-number">2</span>);
 }
 
 <span class="tzd-comment">// 2. 老年代：SATB (Snapshot-At-The-Beginning) 写屏障</span>
-<span class="tzd-comment">// 并发写屏障保护全局长生命周期对象图</span>
-<span class="tzd-keyword">var</span> rootRegistry = <span class="tzd-keyword">new</span> <span class="tzd-class">GlobalRegistry</span>();
-rootRegistry.<span class="tzd-fun">bind</span>(<span class="tzd-string">"engine"</span>, <span class="tzd-keyword">new</span> <span class="tzd-class">InferenceEngine</span>());
-<span class="tzd-fun">print</span>(<span class="tzd-string">"Arena batch cleaned. SATB concurrent cycle completed."</span>);`
+<span class="tzd-fun">print</span>(<span class="tzd-string">"Arena batch allocated 10000 instances. GC cycle healthy."</span>);`
   }
 };
 

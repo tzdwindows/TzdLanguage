@@ -43,7 +43,7 @@ const TOUR_DATA = {
               <span class="lang-badge badge-tzd">TzdLang</span>
               <span style="font-size:0.7rem; color:#34D399;">0ms 模板样板</span>
             </div>
-            <pre class="comparison-snippet"><code>var greeting: string = "Hello World";
+            <pre class="comparison-snippet"><code>string greeting = "Hello World";
 var sum = 0;
 var i = 0;
 for (i = 0; i &lt; 1000; i++) {
@@ -96,8 +96,8 @@ print(f"{s}: {sum_val}")</code></pre>
     `,
     defaultCode: `// 01_quickstart.tzd
 // TzdLang 极速起步与基准运算验证
-var greeting: string = "Hello, TzdLang!";
-var version: float = 1.0;
+string greeting = "Hello, TzdLang!";
+float version = 1.0;
 print(greeting + " Running on version " + version);
 
 // 简短的高性能计算验证
@@ -128,7 +128,7 @@ Sum of even numbers (0..9999) = 24995000
         <span>类型系统与核心控制流</span>
       </h3>
       <p class="doc-body-text">
-        TzdLang 采用双轨类型系统：既允许通过 <code>var</code> 进行敏捷的动态推断，又支持使用冒号语法 <code>var a: int = 10;</code> 进行强类型限定。在编译到 Tier 1 原生层时，静态类型将直接映射为 LLVM 原生标量类型（如 <code>i64</code>、<code>double</code>），实现真正的<strong>零装箱（Zero-Boxing）</strong>开销。
+        TzdLang 采用双轨类型系统：既允许通过 <code>var</code> 进行敏捷的动态推断，又支持使用强类型语法 <code>int a = 10;</code> 或冒号约束 <code>a : int = 10;</code> 进行类型限定。在编译到 Tier 1 原生层时，静态类型将直接映射为 LLVM 原生标量类型（如 <code>i64</code>、<code>double</code>），实现真正的<strong>零装箱（Zero-Boxing）</strong>开销。
       </p>
 
       <div class="apple-info-callout">
@@ -152,15 +152,16 @@ Sum of even numbers (0..9999) = 24995000
               <span class="lang-badge badge-tzd">TzdLang</span>
               <span style="font-size:0.7rem; color:#34D399;">一等公民闭包</span>
             </div>
-            <pre class="comparison-snippet"><code>fun makeMultiplier(factor: int) {
-    return fun(val: int) {
-        return val * factor;
-    };
+            <pre class="comparison-snippet"><code>fun doubleVal(val) {
+    return val * 2;
 }
-var doubleFn = makeMultiplier(2);
-print(doubleFn(15)); // 30</code></pre>
+fun applyOp(op: function, val) {
+    return op(val);
+}
+var res = applyOp(doubleVal, 15);
+print(res); // 30</code></pre>
             <div class="comparison-verdict">
-              <strong>机制：</strong>自动逃逸分析判断：未逃逸分配于极速栈帧，逃逸则由 Bump Pointer Arena 批量托管。
+              <strong>机制：</strong>函数作为一等公民直接传递与回调，零装箱开销。
             </div>
           </div>
 
@@ -202,8 +203,8 @@ print(double_fn(15))</code></pre>
       </div>
     `,
     defaultCode: `// 02_syntax_control.tzd
-// 类型声明、标准循环与闭包运用
-let maxLimit: int = 500;
+// 类型声明、标准循环与函数运用
+int maxLimit = 500;
 var sum = 0;
 var i = 0;
 
@@ -214,16 +215,17 @@ for (i = 0; i < maxLimit; i++) {
     }
 }
 
-// 高阶函数与捕获闭包
-fun makeFilter(scale: int) {
-    return fun(inputVal: int) {
-        return inputVal * scale;
-    };
+// 高阶函数与一等公民回调
+fun triple(val) {
+    return val * 3;
 }
 
-var triple = makeFilter(3);
+fun applyScale(op: function, inputVal) {
+    return op(inputVal);
+}
+
 print("Computed sum = " + sum);
-print("Closure result triple(20) = " + triple(20));`,
+print("Callback result triple(20) = " + applyScale(triple, 20));`,
     terminalOutput: `[TzdVM Tier 0] AST parsed successfully.
 Computed sum = 4750
 Closure result triple(20) = 60
@@ -243,7 +245,7 @@ Closure result triple(20) = 60
         <span>类声明与构造级联</span>
       </h3>
       <p class="doc-body-text">
-        支持标准的 <code>class</code> 声明与继承（<code>extends</code>），支持 <code>public</code>、<code>private</code>、<code>protected</code> 访问修饰符。子类构造函数使用 <code>: super(...)</code> 语法显式触发父类初始化逻辑，与 C++ 初始化列表和 C# 构造体系心智完全统一。
+        支持标准的 <code>class</code> 声明与继承（<code>extends</code>），支持 <code>public</code>、<code>private</code>、<code>protected</code> 访问修饰符。子类构造函数使用 <code>super(...)</code> 触发父类初始化逻辑，与 C++ 初始化列表和 C# 构造体系心智完全统一。
       </p>
 
       <div class="apple-info-callout">
@@ -268,14 +270,15 @@ Closure result triple(20) = 60
               <span style="font-size:0.7rem; color:#34D399;">级联构造 & PIC 虚分发</span>
             </div>
             <pre class="comparison-snippet"><code>class Shape {
-    protected var name: string;
-    public fun Shape(n: string) {
+    var string name;
+    Shape(n) {
         this.name = n;
     }
 }
 class Circle extends Shape {
-    private var r: float;
-    public fun Circle(r: float) : super("Circle") {
+    var float r;
+    Circle(r) {
+        super("Circle");
         this.r = r;
     }
 }</code></pre>
@@ -331,27 +334,28 @@ class Circle(Shape):
     defaultCode: `// 03_oop_paradigm.tzd
 // 面向对象继承与构造级联
 class Shape {
-    protected var name: string;
+    var string name;
 
-    public fun Shape(name: string) {
+    Shape(name) {
         this.name = name;
     }
 
-    public fun area(): float {
+    fun area() {
         return 0.0;
     }
 }
 
 class Rectangle extends Shape {
-    private var width: float;
-    private var height: float;
+    var float width;
+    var float height;
 
-    public fun Rectangle(w: float, h: float) : super("Rectangle") {
+    Rectangle(w, h) {
+        super("Rectangle");
         this.width = w;
         this.height = h;
     }
 
-    public fun area(): float {
+    fun area() {
         return this.width * this.height;
     }
 }
@@ -515,12 +519,13 @@ Input shape: [2, 4], MatMul result ready.
               <span class="lang-badge badge-tzd">TzdLang</span>
               <span style="font-size:0.7rem; color:#34D399;">真并行 · 独立泳道</span>
             </div>
-            <pre class="comparison-snippet"><code>fun worker(id: int) {
+            <pre class="comparison-snippet"><code>fun worker() {
     var k = 0;
     for (k = 0; k &lt; 500000; k++) {}
 }
-var t1 = new Thread(worker, 1);
-var t2 = new Thread(worker, 2);
+var t1 = new Thread(worker);
+var t2 = new Thread(worker);
+t1.start(); t2.start();
 t1.join(); t2.join();</code></pre>
             <div class="comparison-verdict">
               <strong>优势：</strong>硬件级满核计算，无锁吞吐率提升 400%，多线程计算耗时呈线性下降。
@@ -570,19 +575,25 @@ t1.join(); t2.join();</code></pre>
     `,
     defaultCode: `// 05_multithreading.tzd
 // 原生操作系统多线程与无锁调度
-fun computeTask(workerId: int, iterations: int) {
+import "stdlib/thread/Thread.tzd";
+
+fun computeTask() {
     var acc = 0;
     var j = 0;
-    for (j = 0; j < iterations; j++) {
+    for (j = 0; j < 200000; j++) {
         acc = acc + (j % 5);
     }
-    print("Worker [" + workerId + "] finished. Acc: " + acc);
+    print("Worker finished. Acc: " + acc);
 }
 
 // 并发启动 3 个原生工作线程
-var t1 = new Thread(computeTask, 1, 200000);
-var t2 = new Thread(computeTask, 2, 200000);
-var t3 = new Thread(computeTask, 3, 200000);
+var t1 = new Thread(computeTask);
+var t2 = new Thread(computeTask);
+var t3 = new Thread(computeTask);
+
+t1.start();
+t2.start();
+t3.start();
 
 t1.join();
 t2.join();
