@@ -561,7 +561,8 @@ void __launch_bounds__(256, 6) stockham_row_ntt_1024(u32* __restrict__ dst, cons
         row_out[tid + 768] = y3;
     }
 }
-
+)CUDA";
+    s += R"CUDA(
 // ----------------------------------------------------------------------------
 // Fused Pointwise Multiply + Radix-4 Stockham Row NTT for R = 1024
 // ----------------------------------------------------------------------------
@@ -717,7 +718,8 @@ void __launch_bounds__(256, 6) stockham_row_ntt_1024_mul(u32* __restrict__ dst, 
         row_out[tid + 768] = y3;
     }
 }
-
+)CUDA";
+    s += R"CUDA(
 // ----------------------------------------------------------------------------
 // Ultra-Optimized Radix-4 + Radix-2 Row NTT for R = 2048 (512 threads)
 // - Shared memory dropped to 16.8 KB (DOUBLES SM occupancy from 1 to 2 blocks!)
@@ -855,7 +857,8 @@ void __launch_bounds__(512, 3) stockham_row_ntt_2048(u32* __restrict__ dst, cons
         row_out[tid + 1536] = r2B;
     }
 }
-
+)CUDA";
+    s += R"CUDA(
 // ----------------------------------------------------------------------------
 // Fused Pointwise Multiply + Radix-4 + Radix-2 Row NTT for R = 2048
 // ----------------------------------------------------------------------------
@@ -1180,7 +1183,8 @@ void __launch_bounds__(1024, 2) transpose_twiddle(u32* dst, const u32* src,
         dst[(size_t)ty * Rows + tx] = tile[threadIdx.x][threadIdx.y];
     }
 }
-
+)CUDA";
+    s += R"CUDA(
 extern "C" __global__
 void pointwise_mul(u32* a, const u32* b, int n, u32 P, u64 M) {
     for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
