@@ -228,7 +228,8 @@
         "lint": "eslint .",
         "pretest": "npm run lint",
         "test": "vscode-test",
-        "test:dap": "node test/dap_test.js"
+        "test:dap": "node test/dap_test.js",
+        "test:main": "node test/dap_main_func_test.js"
     },
     "devDependencies": {
         "@types/mocha": "^10.0.10",

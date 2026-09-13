@@ -304,7 +304,19 @@ class TzdDebugSession {
       const text = data.toString("utf8");
       this.recvBuffer += text;
 
-      // 1. 抽取并处理所有的 *BREAK* 事件行，避免污染命令响应缓冲区
+      // 1. 抽取并处理所有的 *EXIT* 与 *BREAK* 事件行，避免污染命令响应缓冲区
+      let exitIdx;
+      while ((exitIdx = this.recvBuffer.indexOf("*EXIT*")) !== -1) {
+        const lineEnd = this.recvBuffer.indexOf("\n", exitIdx);
+        if (lineEnd === -1) break;
+        this.recvBuffer = this.recvBuffer.substring(0, exitIdx) + this.recvBuffer.substring(lineEnd + 1);
+        if (!this.isTerminated) {
+          this.isTerminated = true;
+          this.sendEvent("exited", { exitCode: 0 });
+          this.sendEvent("terminated");
+        }
+      }
+
       let breakIdx;
       while ((breakIdx = this.recvBuffer.indexOf("*BREAK*")) !== -1) {
         const lineEnd = this.recvBuffer.indexOf("\n", breakIdx);
@@ -322,10 +334,22 @@ class TzdDebugSession {
     });
 
     this.socket.on("close", () => {
-      this.sendEvent("terminated");
+      if (!this.isTerminated) {
+        this.isTerminated = true;
+        this.sendEvent("exited", { exitCode: 0 });
+        this.sendEvent("terminated");
+      }
     });
 
     this.socket.on("error", (err) => {
+      if (err.code === "ECONNRESET" || err.code === "EPIPE") {
+        if (!this.isTerminated) {
+          this.isTerminated = true;
+          this.sendEvent("exited", { exitCode: 0 });
+          this.sendEvent("terminated");
+        }
+        return;
+      }
       this.sendOutput(`[TzdDebugger Socket 错误] ${err.message}`, "stderr");
     });
   }

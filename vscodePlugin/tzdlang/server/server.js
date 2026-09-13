@@ -1,4 +1,4 @@
-﻿// ─── TzdLang Language Server ─────────────────────────────────────────────
+// ─── TzdLang Language Server ─────────────────────────────────────────────
 // 修复：局部变量带类型声明（var int a）和构造函数参数（Thread(target)）误报未声明的问题
 // 新增：动态加载 C++ 解释器系统自带的 Native 类和函数
 
@@ -74,7 +74,16 @@ function fileExistsSafe(filePath) {
 // ──────────────────────────────────────────────────────────────────────────
 const classCache = new Map();
 const globalFunctionsCache = new Set();
-const cachedRuntimeSymbols = { classes: [], functions: [] };
+
+let defaultBuiltins = { classes: ["Runtime"], functions: [] };
+try {
+  defaultBuiltins = require("./builtins.json");
+} catch (_) {}
+
+const cachedRuntimeSymbols = {
+  classes: Array.isArray(defaultBuiltins.classes) ? [...defaultBuiltins.classes] : ["Runtime"],
+  functions: Array.isArray(defaultBuiltins.functions) ? [...defaultBuiltins.functions] : [],
+};
 
 const KEYWORDS = new Set([
   "var",
@@ -148,8 +157,8 @@ function fetchRuntimeSymbolsFromCpp(toolsPath) {
   execFile(toolsPath, args, (error, stdout, stderr) => {
     fs.unlink(tempFilePath, () => {});
 
-    if (error || stderr) {
-      connection.console.error("[TzdLang] 动态同步 C++ 符号失败。");
+    if (error) {
+      connection.console.error("[TzdLang] 动态同步 C++ 符号失败: " + error.message);
       return;
     }
 
@@ -163,23 +172,38 @@ function fetchRuntimeSymbolsFromCpp(toolsPath) {
       );
 
       if (classesMatch && classesMatch[1]) {
-        cachedRuntimeSymbols.classes = classesMatch[1]
+        const parsedClasses = classesMatch[1]
           .replace(/"/g, "")
           .split(",")
           .map((item) => item.trim())
           .filter((item) => item.length > 0);
+        for (const c of parsedClasses) {
+          if (!cachedRuntimeSymbols.classes.includes(c)) {
+            cachedRuntimeSymbols.classes.push(c);
+          }
+        }
       }
       if (functionsMatch && functionsMatch[1]) {
-        cachedRuntimeSymbols.functions = functionsMatch[1]
+        const parsedFunctions = functionsMatch[1]
           .replace(/"/g, "")
           .split(",")
           .map((item) => item.trim())
           .filter((item) => item.length > 0);
+        for (const f of parsedFunctions) {
+          if (!cachedRuntimeSymbols.functions.includes(f)) {
+            cachedRuntimeSymbols.functions.push(f);
+          }
+        }
       }
 
       connection.console.log(
         `[TzdLang] 成功同步 C++ 符号！加载系统函数: ${cachedRuntimeSymbols.functions.length} 个, 系统类: ${cachedRuntimeSymbols.classes.length} 个`,
       );
+
+      // 同步完成后重新校验所有已打开的文档，立即清除误报的未声明错误
+      for (const doc of documents.all()) {
+        validateDocument(doc);
+      }
     } catch (e) {
       connection.console.error("[TzdLang] 解析 C++ 符号失败: " + e);
     }

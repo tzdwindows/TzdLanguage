@@ -713,6 +713,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
 
     // 启动调试服务器
     if (enableDebug && debugPort > 0) {
+        interpreter->m_noJit = true;
+        interpreter->m_useBytecodeVM = false;
+        interpreter->m_forceInterpreter = true;
+        TzdDebugger::g_DebugActive = true;
         TzdDebugger::startDebugServer(interpreter, debugHost, debugPort);
     }
 
@@ -735,6 +739,10 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         catch (const std::exception& e) {
             std::fprintf(stderr, TzdErr::EXECUTION, e.what());
             std::cerr << std::endl;
+        }
+
+        if (enableDebug && debugPort > 0) {
+            TzdDebugger::shutdownServer();
         }
 
         fflush(stdout); fflush(stderr);

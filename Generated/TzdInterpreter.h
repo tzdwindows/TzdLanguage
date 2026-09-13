@@ -559,6 +559,7 @@ public:
     bool m_hadRuntimeError = false;
     std::vector<std::string> m_callStackFrames;
     std::vector<std::string> m_debugFileStack;
+    std::string m_currentExecutingFile;
     bool m_silentMode = false;
     bool m_noJit = false; // When true, disable all JIT compilation (interpreter-only mode)
     bool m_antlrTiming = false; // --antlrTime: print ANTLR4 parse timings per script

@@ -2455,10 +2455,7 @@ void TzdInterpreter::loadScript(std::string code) {
     loadedModules.push_back(mod);
     initNativeFunctions(); // 确保内建函数可用
 
-    // Compile to bytecode for faster function execution (non-JIT path).
-    // When m_forceInterpreter (--interpreter / --tree-walk) is set, the
-    // bytecode VM must NOT engage; loadScript() must not reset the flag.
-    if (m_forceInterpreter) {
+    if (m_forceInterpreter || TzdDebugger::g_DebugActive) {
         m_useBytecodeVM = false;
     } else {
         try {
@@ -2543,6 +2540,7 @@ void TzdInterpreter::loadScriptFromFile(const std::string& filePath) {
     ss << file.rdbuf();
     std::string code = ss.str();
 
+    m_currentExecutingFile = fs::absolute(filePath).string();
     m_scriptPathStack.push_back(fs::absolute(filePath));
 
     if (code.size() > 50000 && bigint_gpu_suitable(0)) {
@@ -2843,7 +2841,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     // method (instanceVal != nullptr) must never be routed to an unrelated
     // free function that happens to share its name — it falls through to the
     // script-function core which executes func.funcBody directly.
-    if (m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr) {
+    if (!TzdDebugger::g_DebugActive && m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr) {
         auto it = m_bytecodeModule->funcIndex.find(func.name);
         if (it != m_bytecodeModule->funcIndex.end()) {
             return m_bytecodeVM->callFunction(*m_bytecodeModule, func.name, args);

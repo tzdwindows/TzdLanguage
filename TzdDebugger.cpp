@@ -80,11 +80,6 @@ std::string formatTzdValue(const TzdValue& val) {
 }
 
 void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& file, int line) {
-    {
-        std::ofstream logFile("C:\\Users\\tzdwindows 7\\debug.log", std::ios::app);
-        logFile << "[DEBUG_HOOK] File: " << file << ", Line: " << line << ", Depth: " << interpreter->m_callStackFrames.size() << "\n";
-    }
-
     if (g_DebugState.isEvaluating) return;
 
     // Check if we need to wait for debugger connection at startup
@@ -510,6 +505,11 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
 void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int port) {
     g_DebugActive = true;
     g_DebugState.interpreter = interpreter;
+    if (interpreter) {
+        interpreter->m_noJit = true;
+        interpreter->m_useBytecodeVM = false;
+        interpreter->m_forceInterpreter = true;
+    }
     
     std::thread([host, port]() {
         WSADATA wsaData;
@@ -612,6 +612,20 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
     }).detach();
 }
 
+void shutdownServer() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    if (g_DebugState.clientSocket != INVALID_SOCKET) {
+        std::string exitMsg = "\n*EXIT* Program exited with code 0\n";
+        send(g_DebugState.clientSocket, exitMsg.c_str(), (int)exitMsg.size(), 0);
+        shutdown(g_DebugState.clientSocket, SD_BOTH);
+        closesocket(g_DebugState.clientSocket);
+        g_DebugState.clientSocket = INVALID_SOCKET;
+    }
+    g_DebugActive = false;
+    g_DebugState.isSuspended = false;
+    g_DebugState.cond.notify_all();
+}
+
 } // namespace TzdDebugger
 
 // Implementation of TzdInterpreter::visit
@@ -623,10 +637,12 @@ std::any TzdInterpreter::visit(antlr4::tree::ParseTree *tree) {
             if (startToken != nullptr) {
                 int line = startToken->getLine();
                 std::string file = "memory";
-                if (!this->m_debugFileStack.empty()) {
+                if (!this->m_debugFileStack.empty() && !this->m_debugFileStack.back().empty()) {
                     file = this->m_debugFileStack.back();
                 } else if (!this->m_scriptPathStack.empty()) {
                     file = this->m_scriptPathStack.back().string();
+                } else if (!this->m_currentExecutingFile.empty()) {
+                    file = this->m_currentExecutingFile;
                 }
                 TzdDebugger::checkBreakpointAndSuspend(this, file, line);
             }
