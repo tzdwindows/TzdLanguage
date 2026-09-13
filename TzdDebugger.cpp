@@ -94,7 +94,7 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
         g_DebugState.isSuspended = true;
 
         std::string msg = "\n*BREAK* Attached. Paused at startup (line " + std::to_string(line) + ")\n";
-        msg += "*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
+        msg += "*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\nTzdDebug> ";
         send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
 
         g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended; });
@@ -177,6 +177,7 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
             if (!interpreter->m_callStackFrames.empty()) {
                 msg += "*FRAME* " + interpreter->m_callStackFrames.back() + "\n";
             }
+            msg += "TzdDebug> ";
             send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
         }
 
