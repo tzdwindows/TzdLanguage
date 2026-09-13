@@ -28,7 +28,11 @@ class TzdDebugSession {
     this.stopOnEntry = false;
     this.configured = false;
     this.isSuspended = false;
+    this.isStartupPaused = false;
     this.hasReportedEntry = false;
+    this.isTerminated = false;
+    this.breakpointsSynced = false;
+
     this.currentFile = "";
     this.currentLine = 1;
     this.currentFrame = "";
@@ -241,13 +245,20 @@ class TzdDebugSession {
 
       this.childProcess.on("close", (code) => {
         this.sendOutput(`[TzdDebugger] 进程已退出，退出码: ${code}`);
-        this.sendEvent("terminated");
+        if (!this.isTerminated) {
+          this.isTerminated = true;
+          this.sendEvent("exited", { exitCode: code || 0 });
+          this.sendEvent("terminated");
+        }
         this.dispose();
       });
 
       this.childProcess.on("error", (err) => {
         this.sendOutput(`[TzdDebugger] 启动失败: ${err.message}`, "stderr");
-        this.sendEvent("terminated");
+        if (!this.isTerminated) {
+          this.isTerminated = true;
+          this.sendEvent("terminated");
+        }
       });
 
       // 尝试连接调试服务器端口
@@ -304,7 +315,7 @@ class TzdDebugSession {
       const text = data.toString("utf8");
       this.recvBuffer += text;
 
-      // 1. 抽取并处理所有的 *EXIT* 与 *BREAK* 事件行，避免污染命令响应缓冲区
+      // 1. 处理所有 *EXIT* 行
       let exitIdx;
       while ((exitIdx = this.recvBuffer.indexOf("*EXIT*")) !== -1) {
         const lineEnd = this.recvBuffer.indexOf("\n", exitIdx);
@@ -317,19 +328,63 @@ class TzdDebugSession {
         }
       }
 
-      let breakIdx;
-      while ((breakIdx = this.recvBuffer.indexOf("*BREAK*")) !== -1) {
+      // 2. 处理所有 *BREAK* 事件块 (包含伴随的 *FILE*, *LINE*, *FRAME* 行)
+      while (true) {
+        const breakIdx = this.recvBuffer.indexOf("*BREAK*");
+        if (breakIdx === -1) break;
+
         const lineEnd = this.recvBuffer.indexOf("\n", breakIdx);
         if (lineEnd === -1) {
-          // 当前行尚未接收完全，等待下一次数据包
+          // 当前 *BREAK* 行尚未完整接收，等待后续数据
           break;
         }
-        const breakLine = this.recvBuffer.substring(breakIdx, lineEnd);
-        this.recvBuffer = this.recvBuffer.substring(0, breakIdx) + this.recvBuffer.substring(lineEnd + 1);
-        this.handleBreakLine(breakLine);
+
+        const breakLine = this.recvBuffer.substring(breakIdx, lineEnd).trim();
+        let file = "";
+        let line = 1;
+        let frame = "";
+        let removeEnd = lineEnd + 1;
+
+        // 向下探测 *FILE*, *LINE*, *FRAME* 属性行
+        let remainder = this.recvBuffer.substring(removeEnd);
+        let incompleteSubline = false;
+
+        while (remainder.length > 0) {
+          const nextNl = remainder.indexOf("\n");
+          if (nextNl === -1) {
+            if (remainder.startsWith("*FILE*") || remainder.startsWith("*LINE*") || remainder.startsWith("*FRAME*")) {
+              incompleteSubline = true;
+            }
+            break;
+          }
+          const subLine = remainder.substring(0, nextNl).trim();
+          if (subLine.startsWith("*FILE*")) {
+            file = subLine.substring(6).trim();
+            removeEnd += nextNl + 1;
+            remainder = this.recvBuffer.substring(removeEnd);
+          } else if (subLine.startsWith("*LINE*")) {
+            line = parseInt(subLine.substring(6).trim(), 10);
+            removeEnd += nextNl + 1;
+            remainder = this.recvBuffer.substring(removeEnd);
+          } else if (subLine.startsWith("*FRAME*")) {
+            frame = subLine.substring(7).trim();
+            removeEnd += nextNl + 1;
+            remainder = this.recvBuffer.substring(removeEnd);
+          } else {
+            break;
+          }
+        }
+
+        if (incompleteSubline) {
+          // 等待属性行接收完整
+          break;
+        }
+
+        this.recvBuffer = this.recvBuffer.substring(0, breakIdx) + this.recvBuffer.substring(removeEnd);
+        this.handleBreakEvent(breakLine, file, line, frame);
       }
 
-      // 2. 处理已排队的交互命令响应 (:stack, :locals 等)
+      // 3. 处理已排队的交互命令响应 (:stack, :locals 等)
       this.drainCommandQueue();
     });
 
@@ -354,39 +409,52 @@ class TzdDebugSession {
     });
   }
 
-  handleBreakLine(breakLine) {
+  handleBreakEvent(breakLine, file, line, frame) {
     this.isSuspended = true;
 
-    // 提取断点文件与行号
-    const atMatch = /at\s+([^:\r\n]+):(\d+)/.exec(breakLine);
-    if (atMatch) {
-      this.currentFile = atMatch[1].trim();
-      this.currentLine = parseInt(atMatch[2], 10);
+    // 若 C++ 未发送独立的 *FILE* / *LINE*，使用兼容正则回退解析
+    if (!file) {
+      // 匹配 Windows 盘符 C:\path:11 或 Unix /path:11
+      const atMatch = /at\s+([a-zA-Z]:[\\/][^:\r\n]+|\S+?):(\d+)/.exec(breakLine);
+      if (atMatch) {
+        file = atMatch[1].trim();
+        line = parseInt(atMatch[2], 10);
+      }
     }
 
-    const frameMatch = /\(frame:\s*([^)]+)\)/.exec(breakLine);
-    if (frameMatch) {
-      this.currentFrame = frameMatch[1].trim();
+    if (!frame) {
+      const frameMatch = /\(frame:\s*([^)]+(?:\([^)]*\))?[^)]*)\)/.exec(breakLine);
+      if (frameMatch) {
+        frame = frameMatch[1].trim();
+      }
     }
+
+    if (file) this.currentFile = path.normalize(file);
+    if (line) this.currentLine = line;
+    if (frame) this.currentFrame = frame;
 
     const isStartup = breakLine.includes("Attached") || breakLine.includes("Paused at startup");
     const isStep = breakLine.includes("step");
 
     if (isStartup) {
+      this.isStartupPaused = true;
       if (!this.hasReportedEntry) {
         this.hasReportedEntry = true;
-        if (this.configured && !this.stopOnEntry) {
-          // 已配置完成且不需暂停在入口，立即继续
-          this.sendRawCommand(":c\n");
-          this.isSuspended = false;
-        } else {
+        if (this.stopOnEntry) {
+          // 用户明确要求在程序入口暂停
           this.sendEvent("stopped", {
             reason: "entry",
             threadId: 1,
             allThreadsStopped: true,
             description: "已暂停在启动入口",
           });
+        } else if (this.configured) {
+          // 已完成配置且无需入口暂停，直接继续执行
+          this.sendRawCommand(":c\n");
+          this.isSuspended = false;
+          this.isStartupPaused = false;
         }
+        // 若尚未收到 configurationDone，保持挂起等待断点同步完毕后在 handleConfigurationDone 中继续
       }
     } else {
       this.sendEvent("stopped", {
@@ -399,19 +467,29 @@ class TzdDebugSession {
   }
 
   drainCommandQueue() {
-    if (this.pendingCommands.length === 0) return;
+    if (this.pendingCommands.length === 0) {
+      // 没有等待响应的指令，清理多余的提示符标记，防止后续指令误命中历史提示符
+      const idx = this.recvBuffer.lastIndexOf("TzdDebug> ");
+      if (idx !== -1) {
+        this.recvBuffer = this.recvBuffer.substring(idx + "TzdDebug> ".length);
+      }
+      return;
+    }
 
-    const currentCmd = this.pendingCommands[0];
     const promptIdx = this.recvBuffer.indexOf("TzdDebug> ");
     if (promptIdx !== -1) {
       const output = this.recvBuffer.substring(0, promptIdx);
       this.recvBuffer = this.recvBuffer.substring(promptIdx + "TzdDebug> ".length);
 
-      this.pendingCommands.shift();
+      const currentCmd = this.pendingCommands.shift();
       currentCmd.resolve(output);
 
-      // 发送下一个指令
+      // 发送下一个排队指令
       if (this.pendingCommands.length > 0) {
+        const nextIdx = this.recvBuffer.lastIndexOf("TzdDebug> ");
+        if (nextIdx !== -1) {
+          this.recvBuffer = this.recvBuffer.substring(nextIdx + "TzdDebug> ".length);
+        }
         const next = this.pendingCommands[0];
         if (this.socket && !this.socket.destroyed) {
           this.socket.write(next.cmd);
@@ -425,6 +503,11 @@ class TzdDebugSession {
       const item = { cmd: cmd.endsWith("\n") ? cmd : cmd + "\n", resolve, reject };
       this.pendingCommands.push(item);
       if (this.pendingCommands.length === 1) {
+        // 清理当前缓冲区残留的历史提示符，确保本次指令匹配到的是 C++ 后端执行本次指令产生的响应
+        const idx = this.recvBuffer.lastIndexOf("TzdDebug> ");
+        if (idx !== -1) {
+          this.recvBuffer = this.recvBuffer.substring(idx + "TzdDebug> ".length);
+        }
         if (this.socket && !this.socket.destroyed) {
           this.socket.write(item.cmd);
         }
@@ -450,10 +533,11 @@ class TzdDebugSession {
     // 如果 Socket 已经建立，立即与 TzdTools 进行断点同步并消费响应
     if (this.socket && !this.socket.destroyed) {
       try {
-        await this.sendDebugCommand(`:bp clear "${filePath}"\n`);
+        await this.sendDebugCommand(`:bp clear "${normPath}"\n`);
         for (const bp of breakpoints) {
-          await this.sendDebugCommand(`:bp add "${filePath}" ${bp.line}\n`);
+          await this.sendDebugCommand(`:bp add "${normPath}" ${bp.line}\n`);
         }
+        this.breakpointsSynced = true;
       } catch (_) {}
     }
 
@@ -472,8 +556,8 @@ class TzdDebugSession {
   async handleConfigurationDone(request) {
     this.configured = true;
 
-    // 同步所有已缓存的文件断点
-    if (this.socket && !this.socket.destroyed) {
+    // 若尚未在 setBreakpoints 中同步，在此处集中同步所有断点
+    if (!this.breakpointsSynced && this.socket && !this.socket.destroyed) {
       try {
         for (const [fPath, bps] of this.breakpointsMap.entries()) {
           await this.sendDebugCommand(`:bp clear "${fPath}"\n`);
@@ -481,6 +565,7 @@ class TzdDebugSession {
             await this.sendDebugCommand(`:bp add "${fPath}" ${bp.line}\n`);
           }
         }
+        this.breakpointsSynced = true;
       } catch (_) {}
     }
 
@@ -488,6 +573,7 @@ class TzdDebugSession {
     if (this.isSuspended && !this.stopOnEntry) {
       this.sendRawCommand(":c\n");
       this.isSuspended = false;
+      this.isStartupPaused = false;
     }
 
     this.sendResponse(request, {});
@@ -514,8 +600,8 @@ class TzdDebugSession {
 
     // 解析调用栈文本
     // === Call Stack (depth: 2) ===
-    //   [2] helper
-    //   [1] main
+    //   [2] helper (C:\path\test.tzd:10) (Interpreted)
+    //   [1] main (C:\path\test.tzd:4) (Interpreted)
     //   [0] <global_scope>
     const frames = [];
     const lines = rawStack.split("\n");
@@ -524,39 +610,57 @@ class TzdDebugSession {
     for (const line of lines) {
       const match = /^\s*\[(\d+)\]\s+(.*)$/.exec(line.trim());
       if (match) {
-        const funcName = match[2].trim();
-
-        // 栈顶帧使用当前中断的文件与行号
+        const fullFrame = match[2].trim();
         const isTop = frames.length === 0;
-        const sourcePath = isTop && this.currentFile ? this.currentFile : "";
-        const sourceName = sourcePath ? path.basename(sourcePath) : "TzdScript";
+
+        let frameSource = isTop && this.currentFile ? this.currentFile : "";
+        let frameLine = isTop && this.currentLine ? this.currentLine : 1;
+
+        // 从帧描述中尝试提取源文件与行号
+        const locMatch = /\(([a-zA-Z]:[\\/][^:\r\n]+|\S+?):(\d+)\)/.exec(fullFrame);
+        if (locMatch) {
+          if (!isTop || !frameSource) {
+            frameSource = locMatch[1].trim();
+            frameLine = parseInt(locMatch[2], 10);
+          }
+        }
+
+        // 提取干净的函数名称
+        let displayName = fullFrame;
+        const parenIdx = displayName.indexOf(" (");
+        if (parenIdx !== -1) {
+          displayName = displayName.substring(0, parenIdx).trim();
+        }
+
+        const sourceName = frameSource ? path.basename(frameSource) : "TzdScript";
 
         frames.push({
           id: frameId++,
-          name: funcName,
-          source: sourcePath
+          name: displayName || fullFrame,
+          source: frameSource
             ? {
                 name: sourceName,
-                path: sourcePath,
+                path: path.normalize(frameSource),
               }
             : undefined,
-          line: isTop ? this.currentLine : 1,
+          line: frameLine,
           column: 1,
         });
       }
     }
 
     if (frames.length === 0) {
+      const src = this.currentFile || "";
       frames.push({
-        id: 1,
-        name: this.currentFrame || "<global_scope>",
-        source: this.currentFile
+        id: 1000,
+        name: this.currentFrame || "main",
+        source: src
           ? {
-              name: path.basename(this.currentFile),
-              path: this.currentFile,
+              name: path.basename(src),
+              path: path.normalize(src),
             }
           : undefined,
-        line: this.currentLine,
+        line: this.currentLine || 1,
         column: 1,
       });
     }
@@ -605,13 +709,13 @@ class TzdDebugSession {
 
     for (const line of lines) {
       const trimLine = line.trim();
-      if (!trimLine || trimLine.startsWith("===") || trimLine.startsWith("(")) {
+      if (!trimLine || trimLine.startsWith("===") || trimLine.startsWith("(") || trimLine.startsWith("No active scope") || trimLine.startsWith("No user-defined")) {
         continue;
       }
       const eqPos = trimLine.indexOf(" = ");
       if (eqPos !== -1) {
         const name = trimLine.substring(0, eqPos).trim();
-        const value = trimLine.substring(eqPos + 3).trim();
+        let value = trimLine.substring(eqPos + 3).trim();
         let typeStr = "variable";
         if (value.startsWith('"')) typeStr = "string";
         else if (value === "true" || value === "false") typeStr = "boolean";
@@ -619,6 +723,10 @@ class TzdDebugSession {
         else if (value.startsWith("array")) typeStr = "array";
         else if (value.startsWith("map")) typeStr = "map";
         else if (value.startsWith("function")) typeStr = "function";
+        else if (value.startsWith("native_function")) typeStr = "native_function";
+        else if (value.startsWith("class")) typeStr = "class";
+        else if (value.startsWith("instance")) typeStr = "instance";
+        else if (value.startsWith("pointer")) typeStr = "pointer";
 
         variables.push({
           name: name,
@@ -665,16 +773,34 @@ class TzdDebugSession {
   }
 
   async handleEvaluate(request, args) {
-    const expr = args.expression || "";
-    if (!expr.trim()) {
+    const rawExpr = (args.expression || "").trim();
+    if (!rawExpr) {
       this.sendResponse(request, { result: "", variablesReference: 0 });
       return;
     }
 
+    if (rawExpr.startsWith(":")) {
+      try {
+        let output = await this.sendDebugCommand(rawExpr);
+        output = output.replace(/TzdDebug>\s*$/g, "").trim();
+        this.sendResponse(request, { result: output || "(no output)", variablesReference: 0 });
+      } catch (err) {
+        this.sendResponse(request, { result: `Error: ${err.message}`, variablesReference: 0 });
+      }
+      return;
+    }
+
+    // 智能处理表达式求值：若是纯表达式，包装为 print(...) 执行以便在监视/悬停中回显求值结果
+    const isStmt = /^(var|int|float|double|string|bool|void|fun|class|if|while|for|switch|return|print|println)\b/.test(rawExpr) || rawExpr.endsWith(";");
+    const evalCmd = isStmt ? (rawExpr.endsWith(";") ? rawExpr : rawExpr + ";") : `print(${rawExpr});`;
+
     try {
-      let output = await this.sendDebugCommand(expr);
-      // 清除提示符
+      let output = await this.sendDebugCommand(evalCmd);
       output = output.replace(/TzdDebug>\s*$/g, "").trim();
+      if (output.includes("语法错误") && !isStmt) {
+        let fallback = await this.sendDebugCommand(rawExpr + ";");
+        output = fallback.replace(/TzdDebug>\s*$/g, "").trim();
+      }
       this.sendResponse(request, {
         result: output || "(no output)",
         variablesReference: 0,

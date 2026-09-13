@@ -94,7 +94,7 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
         g_DebugState.isSuspended = true;
 
         std::string msg = "\n*BREAK* Attached. Paused at startup (line " + std::to_string(line) + ")\n";
-        msg += "Type ':bp add <line>' to add breakpoints, ':c' to resume.\nTzdDebug> ";
+        msg += "*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
         send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
 
         g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended; });
@@ -144,6 +144,14 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
                     std::transform(f2.begin(), f2.end(), f2.begin(), ::tolower);
                     if (f1.find(f2) != std::string::npos || f2.find(f1) != std::string::npos) {
                         fileMatch = true;
+                    } else {
+                        try {
+                            std::string fn1 = fs::path(f1).filename().string();
+                            std::string fn2 = fs::path(f2).filename().string();
+                            if (!fn1.empty() && fn1 == fn2) {
+                                fileMatch = true;
+                            }
+                        } catch (...) {}
                     }
                 }
 
@@ -165,7 +173,10 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
             if (!interpreter->m_callStackFrames.empty()) {
                 msg += " (frame: " + interpreter->m_callStackFrames.back() + ")";
             }
-            msg += "\nType ':c' to resume, ':locals' for vars, ':bt' for callstack.\nTzdDebug> ";
+            msg += "\n*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
+            if (!interpreter->m_callStackFrames.empty()) {
+                msg += "*FRAME* " + interpreter->m_callStackFrames.back() + "\n";
+            }
             send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
         }
 
@@ -564,7 +575,7 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
                 std::string welcome = "--- Tzd Remote Debugger Service ---\n";
                 welcome += "Use ':' prefix for debug actions (e.g. :bp add 10, :locals, :bt, :step, :into, :out, :c)\n";
                 welcome += "Or type any TzdLang expression to evaluate dynamically in the current scope.\n";
-                welcome += "Type 'exit' to disconnect.\n\nTzdDebug> ";
+                welcome += "Type 'exit' to disconnect.\n";
                 send(clientSocket, welcome.c_str(), (int)welcome.size(), 0);
 
                 char buf[4096];
