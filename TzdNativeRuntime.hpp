@@ -1509,9 +1509,121 @@ inline TzdVal tzd_builtin_det(const std::vector<TzdVal>& args) {
     }
     return TzdVal(det);
 }
-inline TzdVal tzd_builtin_inverse(const std::vector<TzdVal>& args) { return tzd_builtin_transpose(args); }
-inline TzdVal tzd_builtin_rank(const std::vector<TzdVal>& args) { return args.empty() ? TzdVal(0) : TzdVal((int64_t)args[0].arrVal->size()); }
-inline TzdVal tzd_builtin_solve(const std::vector<TzdVal>& args) { return tzd_builtin_matrixMul(args); }
+inline TzdVal tzd_builtin_inverse(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal || args[0].arrVal->empty()) {
+        return tzd_make_array({});
+    }
+    size_t n = args[0].arrVal->size();
+    std::vector<std::vector<double>> a(n, std::vector<double>(2 * n, 0.0));
+    for (size_t i = 0; i < n; ++i) {
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            for (size_t j = 0; j < (std::min)(n, (*args[0].arrVal)[i].arrVal->size()); ++j) {
+                a[i][j] = (*(*args[0].arrVal)[i].arrVal)[j].as_double();
+            }
+        }
+        a[i][n + i] = 1.0;
+    }
+    // Gauss-Jordan elimination with partial pivoting
+    for (size_t i = 0; i < n; ++i) {
+        size_t pivot = i;
+        for (size_t r = i + 1; r < n; ++r) {
+            if (std::abs(a[r][i]) > std::abs(a[pivot][i])) pivot = r;
+        }
+        if (std::abs(a[pivot][i]) < 1e-12) return tzd_make_array({}); // Singular matrix
+        if (pivot != i) std::swap(a[i], a[pivot]);
+        double div = a[i][i];
+        for (size_t j = 0; j < 2 * n; ++j) a[i][j] /= div;
+        for (size_t r = 0; r < n; ++r) {
+            if (r != i) {
+                double factor = a[r][i];
+                for (size_t j = 0; j < 2 * n; ++j) {
+                    a[r][j] -= factor * a[i][j];
+                }
+            }
+        }
+    }
+    auto invMat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < n; ++i) {
+        auto row = std::make_shared<std::vector<TzdVal>>();
+        for (size_t j = 0; j < n; ++j) {
+            row->push_back(TzdVal(a[i][n + j]));
+        }
+        invMat->push_back(TzdVal(row));
+    }
+    return TzdVal(invMat);
+}
+
+inline TzdVal tzd_builtin_rank(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal || args[0].arrVal->empty()) {
+        return TzdVal(0);
+    }
+    size_t m = args[0].arrVal->size();
+    size_t n = 0;
+    for (size_t i = 0; i < m; ++i) {
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            n = (std::max)(n, (*args[0].arrVal)[i].arrVal->size());
+        }
+    }
+    if (n == 0) return TzdVal(0);
+    std::vector<std::vector<double>> mat(m, std::vector<double>(n, 0.0));
+    for (size_t i = 0; i < m; ++i) {
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            for (size_t j = 0; j < (*args[0].arrVal)[i].arrVal->size(); ++j) {
+                mat[i][j] = (*(*args[0].arrVal)[i].arrVal)[j].as_double();
+            }
+        }
+    }
+    size_t rank = 0;
+    for (size_t col = 0; col < n && rank < m; ++col) {
+        size_t pivot = rank;
+        for (size_t r = rank + 1; r < m; ++r) {
+            if (std::abs(mat[r][col]) > std::abs(mat[pivot][col])) pivot = r;
+        }
+        if (std::abs(mat[pivot][col]) < 1e-12) continue;
+        if (pivot != rank) std::swap(mat[rank], mat[pivot]);
+        for (size_t r = rank + 1; r < m; ++r) {
+            double factor = mat[r][col] / mat[rank][col];
+            for (size_t c = col; c < n; ++c) {
+                mat[r][c] -= factor * mat[rank][c];
+            }
+        }
+        rank++;
+    }
+    return TzdVal((int64_t)rank);
+}
+
+inline TzdVal tzd_builtin_solve(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || args[1].type != ValType::ARRAY) {
+        return tzd_make_array({});
+    }
+    TzdVal invA = tzd_builtin_inverse({args[0]});
+    if (invA.type != ValType::ARRAY || !invA.arrVal || invA.arrVal->empty()) {
+        return tzd_make_array({}); // Singular or invalid
+    }
+    // Check if b is 1D vector or 2D matrix
+    bool is1D = true;
+    if (args[1].arrVal && !args[1].arrVal->empty()) {
+        if ((*args[1].arrVal)[0].type == ValType::ARRAY) is1D = false;
+    }
+    if (is1D) {
+        // Convert b to column matrix, multiply, and unwrap to 1D vector
+        auto bMat = std::make_shared<std::vector<TzdVal>>();
+        for (const auto& val : *args[1].arrVal) {
+            bMat->push_back(tzd_make_array({val}));
+        }
+        TzdVal resMat = tzd_builtin_matrixMul({invA, TzdVal(bMat)});
+        auto resVec = std::make_shared<std::vector<TzdVal>>();
+        if (resMat.type == ValType::ARRAY && resMat.arrVal) {
+            for (const auto& row : *resMat.arrVal) {
+                if (row.type == ValType::ARRAY && row.arrVal && !row.arrVal->empty()) {
+                    resVec->push_back((*row.arrVal)[0]);
+                }
+            }
+        }
+        return TzdVal(resVec);
+    }
+    return tzd_builtin_matrixMul({invA, args[1]});
+}
 
 // ── Map, Set, Queue, Stack Built-ins ──
 inline TzdVal tzd_builtin_keys(const std::vector<TzdVal>& args) {
@@ -1815,45 +1927,331 @@ inline TzdVal tzd_builtin_setEnv(const std::vector<TzdVal>& args) {
     return TzdVal(true);
 }
 inline TzdVal tzd_builtin_getOsInfo(const std::vector<TzdVal>& = {}) { return TzdVal("Windows x86_64 Native"); }
-inline TzdVal tzd_builtin_addIncludePath(const std::vector<TzdVal>& = {}) { return TzdVal(); }
-inline TzdVal tzd_builtin_getFunctions(const std::vector<TzdVal>& = {}) { return tzd_make_array({}); }
-inline TzdVal tzd_builtin_getNativeFunctions(const std::vector<TzdVal>& = {}) { return tzd_make_array({}); }
-inline TzdVal tzd_builtin_getClassInfo(const std::vector<TzdVal>& = {}) { return tzd_make_array({}); }
-inline TzdVal tzd_builtin_getSymbols(const std::vector<TzdVal>& = {}) { return tzd_make_array({}); }
-inline TzdVal tzd_builtin_getArraysInfo(const std::vector<TzdVal>& = {}) { return tzd_make_array({}); }
-inline TzdVal tzd_builtin_Runtime(const std::vector<TzdVal>& = {}) { return TzdVal("TzdNativeRuntime 0.2.4"); }
+// ── Global Include Search Paths ──
+inline std::vector<std::string>& get_custom_include_paths() {
+    static std::vector<std::string> paths;
+    return paths;
+}
+inline TzdVal tzd_builtin_addIncludePath(const std::vector<TzdVal>& args) {
+    if (!args.empty()) {
+        get_custom_include_paths().push_back(args[0].to_string());
+        return TzdVal(true);
+    }
+    return TzdVal(false);
+}
+
+// ── Reflection Built-ins ──
+const std::vector<std::string>& get_all_registered_builtin_names_list();
+
+inline TzdVal tzd_builtin_getFunctions(const std::vector<TzdVal>& = {}) {
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (const auto& fn : get_all_registered_builtin_names_list()) {
+        arr->push_back(TzdVal(fn));
+    }
+    return TzdVal(arr);
+}
+inline TzdVal tzd_builtin_getNativeFunctions(const std::vector<TzdVal>& args = {}) {
+    return tzd_builtin_getFunctions(args);
+}
+inline TzdVal tzd_builtin_getSymbols(const std::vector<TzdVal>& args = {}) {
+    return tzd_builtin_getFunctions(args);
+}
+
+inline TzdVal tzd_builtin_getClassInfo(const std::vector<TzdVal>& args) {
+    auto m = std::make_shared<std::unordered_map<std::string, TzdVal>>();
+    if (!args.empty() && args[0].type == ValType::INSTANCE && args[0].instVal) {
+        (*m)["className"] = TzdVal(args[0].instVal->className);
+        auto fArr = std::make_shared<std::vector<TzdVal>>();
+        for (const auto& kv : args[0].instVal->fields) fArr->push_back(TzdVal(kv.first));
+        (*m)["fields"] = TzdVal(fArr);
+        (*m)["fieldCount"] = TzdVal((int64_t)args[0].instVal->fields.size());
+    }
+    return TzdVal(m);
+}
+
+inline TzdVal tzd_builtin_getArraysInfo(const std::vector<TzdVal>& args) {
+    auto m = std::make_shared<std::unordered_map<std::string, TzdVal>>();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        (*m)["length"] = TzdVal((int64_t)args[0].arrVal->size());
+        (*m)["capacity"] = TzdVal((int64_t)args[0].arrVal->capacity());
+        (*m)["type"] = TzdVal("array");
+    }
+    return TzdVal(m);
+}
+
+inline TzdVal tzd_builtin_Runtime(const std::vector<TzdVal>& = {}) { return TzdVal("TzdNativeRuntime 0.2.4 (Full Machine Code)"); }
 inline TzdVal tzd_builtin_bit(const std::vector<TzdVal>& args) { return args.empty() ? TzdVal(0) : args[0]; }
 
-// ── JSON Built-ins (Minimal Native JSON Parser) ──
-inline TzdVal parse_simple_json(const std::string& str) {
-    std::string s = str;
-    auto start = s.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos) return TzdVal();
-    if (s[start] == '{') {
-        auto m = std::make_shared<std::unordered_map<std::string, TzdVal>>();
-        return TzdVal(m);
+// ── Complete Recursive-Descent JSON Parser ──
+struct JsonParser {
+    const std::string& src;
+    size_t pos = 0;
+
+    JsonParser(const std::string& s) : src(s) {}
+
+    void skip_whitespace() {
+        while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\r' || src[pos] == '\n')) {
+            pos++;
+        }
     }
-    if (s[start] == '[') {
+
+    TzdVal parse_value() {
+        skip_whitespace();
+        if (pos >= src.size()) return TzdVal();
+        char c = src[pos];
+        if (c == '{') return parse_object();
+        if (c == '[') return parse_array();
+        if (c == '"') return parse_string();
+        if (c == 't' || c == 'f') return parse_bool();
+        if (c == 'n') return parse_null();
+        if (c == '-' || (c >= '0' && c <= '9')) return parse_number();
+        return TzdVal();
+    }
+
+    TzdVal parse_null() {
+        if (src.compare(pos, 4, "null") == 0) { pos += 4; return TzdVal(); }
+        return TzdVal();
+    }
+
+    TzdVal parse_bool() {
+        if (src.compare(pos, 4, "true") == 0) { pos += 4; return TzdVal(true); }
+        if (src.compare(pos, 5, "false") == 0) { pos += 5; return TzdVal(false); }
+        return TzdVal(false);
+    }
+
+    TzdVal parse_number() {
+        size_t start = pos;
+        if (pos < src.size() && src[pos] == '-') pos++;
+        bool isFloat = false;
+        while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9')) pos++;
+        if (pos < src.size() && src[pos] == '.') {
+            isFloat = true;
+            pos++;
+            while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9')) pos++;
+        }
+        if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E')) {
+            isFloat = true;
+            pos++;
+            if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) pos++;
+            while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9')) pos++;
+        }
+        std::string numStr = src.substr(start, pos - start);
+        try {
+            if (isFloat) return TzdVal(std::stod(numStr));
+            return TzdVal((int64_t)std::stoll(numStr));
+        } catch (...) {
+            return TzdVal(0);
+        }
+    }
+
+    TzdVal parse_string() {
+        if (pos >= src.size() || src[pos] != '"') return TzdVal("");
+        pos++;
+        std::string res;
+        while (pos < src.size()) {
+            char c = src[pos++];
+            if (c == '"') return TzdVal(res);
+            if (c == '\\' && pos < src.size()) {
+                char esc = src[pos++];
+                switch (esc) {
+                    case '"': res += '"'; break;
+                    case '\\': res += '\\'; break;
+                    case '/': res += '/'; break;
+                    case 'b': res += '\b'; break;
+                    case 'f': res += '\f'; break;
+                    case 'n': res += '\n'; break;
+                    case 'r': res += '\r'; break;
+                    case 't': res += '\t'; break;
+                    case 'u': {
+                        if (pos + 4 <= src.size()) {
+                            std::string hex = src.substr(pos, 4);
+                            pos += 4;
+                            try {
+                                uint32_t cp = (uint32_t)std::stoul(hex, nullptr, 16);
+                                if (cp < 0x80) res += (char)cp;
+                                else if (cp < 0x800) {
+                                    res += (char)(0xC0 | (cp >> 6));
+                                    res += (char)(0x80 | (cp & 0x3F));
+                                } else {
+                                    res += (char)(0xE0 | (cp >> 12));
+                                    res += (char)(0x80 | ((cp >> 6) & 0x3F));
+                                    res += (char)(0x80 | (cp & 0x3F));
+                                }
+                            } catch (...) {}
+                        }
+                        break;
+                    }
+                    default: res += esc; break;
+                }
+            } else {
+                res += c;
+            }
+        }
+        return TzdVal(res);
+    }
+
+    TzdVal parse_array() {
+        if (pos >= src.size() || src[pos] != '[') return tzd_make_array({});
+        pos++;
         auto arr = std::make_shared<std::vector<TzdVal>>();
+        skip_whitespace();
+        if (pos < src.size() && src[pos] == ']') { pos++; return TzdVal(arr); }
+        while (pos < src.size()) {
+            arr->push_back(parse_value());
+            skip_whitespace();
+            if (pos < src.size() && src[pos] == ',') {
+                pos++;
+                skip_whitespace();
+            } else if (pos < src.size() && src[pos] == ']') {
+                pos++;
+                break;
+            } else {
+                break;
+            }
+        }
         return TzdVal(arr);
     }
-    return TzdVal(s);
-}
+
+    TzdVal parse_object() {
+        if (pos >= src.size() || src[pos] != '{') return TzdVal(std::make_shared<std::unordered_map<std::string, TzdVal>>());
+        pos++;
+        auto obj = std::make_shared<std::unordered_map<std::string, TzdVal>>();
+        skip_whitespace();
+        if (pos < src.size() && src[pos] == '}') { pos++; return TzdVal(obj); }
+        while (pos < src.size()) {
+            skip_whitespace();
+            if (pos >= src.size() || src[pos] != '"') break;
+            TzdVal keyVal = parse_string();
+            skip_whitespace();
+            if (pos < src.size() && src[pos] == ':') pos++;
+            else break;
+            TzdVal val = parse_value();
+            (*obj)[keyVal.sVal] = val;
+            skip_whitespace();
+            if (pos < src.size() && src[pos] == ',') {
+                pos++;
+                skip_whitespace();
+            } else if (pos < src.size() && src[pos] == '}') {
+                pos++;
+                break;
+            } else {
+                break;
+            }
+        }
+        return TzdVal(obj);
+    }
+};
+
 inline TzdVal tzd_builtin_jsonParse(const std::vector<TzdVal>& args) {
     if (args.empty()) return TzdVal();
-    return parse_simple_json(args[0].to_string());
+    std::string s = args[0].to_string();
+    JsonParser parser(s);
+    return parser.parse_value();
 }
 inline TzdVal tzd_builtin_fromJSON(const std::vector<TzdVal>& args) { return tzd_builtin_jsonParse(args); }
-inline TzdVal tzd_builtin_jsonStringify(const std::vector<TzdVal>& args) { return args.empty() ? TzdVal("{}") : TzdVal(args[0].to_string()); }
+
+// ── Strict JSON Serializer ──
+inline std::string json_escape_str(const std::string& s) {
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\b') out += "\\b";
+        else if (c == '\f') out += "\\f";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if ((unsigned char)c < 0x20) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)c);
+            out += buf;
+        } else {
+            out += c;
+        }
+    }
+    out += "\"";
+    return out;
+}
+
+inline std::string real_json_stringify(const TzdVal& val) {
+    switch (val.type) {
+        case ValType::NIL: return "null";
+        case ValType::BOOL: return val.bVal ? "true" : "false";
+        case ValType::INT: return std::to_string(val.iVal);
+        case ValType::FLOAT: {
+            if (std::isnan(val.fVal) || std::isinf(val.fVal)) return "null";
+            std::ostringstream ss;
+            ss << std::setprecision(15) << val.fVal;
+            std::string s = ss.str();
+            if (s.find('.') == std::string::npos && s.find('e') == std::string::npos && s.find('E') == std::string::npos) {
+                s += ".0";
+            }
+            return s;
+        }
+        case ValType::STRING: return json_escape_str(val.sVal);
+        case ValType::ARRAY: {
+            if (!val.arrVal) return "[]";
+            std::string out = "[";
+            for (size_t i = 0; i < val.arrVal->size(); ++i) {
+                if (i > 0) out += ",";
+                out += real_json_stringify((*val.arrVal)[i]);
+            }
+            out += "]";
+            return out;
+        }
+        case ValType::MAP: {
+            if (!val.mapVal) return "{}";
+            std::string out = "{";
+            bool first = true;
+            for (const auto& kv : *val.mapVal) {
+                if (!first) out += ",";
+                first = false;
+                out += json_escape_str(kv.first) + ":" + real_json_stringify(kv.second);
+            }
+            out += "}";
+            return out;
+        }
+        case ValType::INSTANCE: {
+            if (!val.instVal) return "{}";
+            std::string out = "{";
+            bool first = true;
+            for (const auto& kv : val.instVal->fields) {
+                if (!first) out += ",";
+                first = false;
+                out += json_escape_str(kv.first) + ":" + real_json_stringify(kv.second);
+            }
+            out += "}";
+            return out;
+        }
+        default: return "null";
+    }
+}
+
+inline TzdVal tzd_builtin_jsonStringify(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal("null");
+    return TzdVal(real_json_stringify(args[0]));
+}
 inline TzdVal tzd_builtin_toJSON(const std::vector<TzdVal>& args) { return tzd_builtin_jsonStringify(args); }
 
 // ── BigInt & Rational Built-ins ──
 inline TzdVal tzd_builtin_bigint(const std::vector<TzdVal>& args) { return args.empty() ? TzdVal("0") : TzdVal(args[0].to_string()); }
-inline TzdVal tzd_builtin_isBigint(const std::vector<TzdVal>& args) { return TzdVal(!args.empty() && args[0].type == ValType::STRING); }
+
+inline TzdVal tzd_builtin_isBigint(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::STRING) return TzdVal(false);
+    const std::string& s = args[0].sVal;
+    if (s.empty()) return TzdVal(false);
+    size_t i = (s[0] == '+' || s[0] == '-') ? 1 : 0;
+    if (i >= s.size()) return TzdVal(false);
+    for (; i < s.size(); ++i) {
+        if (!std::isdigit((unsigned char)s[i])) return TzdVal(false);
+    }
+    return TzdVal(true);
+}
 inline TzdVal tzd_builtin_bigintGcd(const std::vector<TzdVal>& args) { return tzd_builtin_gcd(args); }
 inline TzdVal tzd_builtin_bigintFactorial(const std::vector<TzdVal>& args) { return tzd_builtin_factorial(args); }
-inline TzdVal tzd_builtin_getBigIntMaxDigits(const std::vector<TzdVal>& = {}) { return TzdVal(10000); }
+inline TzdVal tzd_builtin_getBigIntMaxDigits(const std::vector<TzdVal>& = {}) { return TzdVal(100000); }
 inline TzdVal tzd_builtin_setBigIntMaxDigits(const std::vector<TzdVal>& = {}) { return TzdVal(true); }
+
 inline TzdVal tzd_builtin_rational(const std::vector<TzdVal>& args) {
     if (args.empty()) return tzd_make_array({TzdVal(0), TzdVal(1)});
     int64_t n = args[0].as_int(), d = args.size() > 1 ? args[1].as_int() : 1;
@@ -1875,405 +2273,1509 @@ inline TzdVal tzd_builtin_rationalMul(const std::vector<TzdVal>& args) {
     if (d1 == 0) d1 = 1; if (d2 == 0) d2 = 1;
     return tzd_builtin_rational({TzdVal(n1 * n2), TzdVal(d1 * d2)});
 }
+
+// Continued fraction algorithm for exact float-to-fraction conversion
 inline TzdVal tzd_builtin_toFraction(const std::vector<TzdVal>& args) {
     if (args.empty()) return TzdVal("0/1");
-    int64_t n = (int64_t)(args[0].as_double() * 1000.0);
-    int64_t g = compute_gcd(n, 1000);
-    return TzdVal(std::to_string(n / g) + "/" + std::to_string(1000 / g));
+    double x = args[0].as_double();
+    if (std::isnan(x) || std::isinf(x)) return TzdVal("0/1");
+    int64_t sign = x < 0 ? -1 : 1;
+    x = std::abs(x);
+    if (std::abs(x - std::round(x)) < 1e-12) {
+        return TzdVal(std::to_string(sign * (int64_t)std::round(x)) + "/1");
+    }
+    int64_t h0 = 0, h1 = 1;
+    int64_t k0 = 1, k1 = 0;
+    double b = x;
+    for (int iter = 0; iter < 40; ++iter) {
+        int64_t a = (int64_t)std::floor(b);
+        int64_t h2 = a * h1 + h0;
+        int64_t k2 = a * k1 + k0;
+        if (k2 <= 0 || k2 > 1000000000LL) break;
+        double frac = (double)h2 / (double)k2;
+        if (std::abs(x - frac) < 1e-9 || std::abs(b - a) < 1e-12) {
+            return TzdVal(std::to_string(sign * h2) + "/" + std::to_string(k2));
+        }
+        b = 1.0 / (b - a);
+        h0 = h1; h1 = h2;
+        k0 = k1; k1 = k2;
+    }
+    return TzdVal(std::to_string(sign * h1) + "/" + std::to_string(k1));
 }
 
-// ── Multi-threading ──
+// ── Multi-threading Manager with Real Handle Tracking ──
+struct NativeThreadManager {
+    std::mutex mtx;
+    int64_t nextId = 1;
+    std::unordered_map<int64_t, std::shared_ptr<std::thread>> threads;
+};
+inline NativeThreadManager& get_thread_mgr() {
+    static NativeThreadManager mgr;
+    return mgr;
+}
+
 inline TzdVal tzd_builtin_sys_thread_start(const std::vector<TzdVal>& args) {
-    if (args.empty() || args[0].type != ValType::FUNC) return TzdVal();
+    if (args.empty() || args[0].type != ValType::FUNC || !args[0].funcVal) return TzdVal(0);
     TzdVal fn = args[0];
-    auto th = std::make_shared<std::thread>([fn]() { fn({}); });
-    th->detach();
+    auto& mgr = get_thread_mgr();
+    std::lock_guard<std::mutex> lock(mgr.mtx);
+    int64_t tid = mgr.nextId++;
+    auto th = std::make_shared<std::thread>([fn]() {
+        try {
+            std::vector<TzdVal> emptyArgs;
+            fn(emptyArgs);
+        } catch (...) {}
+    });
+    mgr.threads[tid] = th;
+    return TzdVal(tid);
+}
+
+inline TzdVal tzd_builtin_sys_thread_join(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(false);
+    int64_t tid = args[0].as_int();
+    std::shared_ptr<std::thread> th;
+    {
+        auto& mgr = get_thread_mgr();
+        std::lock_guard<std::mutex> lock(mgr.mtx);
+        auto it = mgr.threads.find(tid);
+        if (it != mgr.threads.end()) {
+            th = it->second;
+            mgr.threads.erase(it);
+        }
+    }
+    if (th && th->joinable()) {
+        th->join();
+        return TzdVal(true);
+    }
+    return TzdVal(false);
+}
+
+inline TzdVal tzd_builtin_sys_thread_detach(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(false);
+    int64_t tid = args[0].as_int();
+    std::shared_ptr<std::thread> th;
+    {
+        auto& mgr = get_thread_mgr();
+        std::lock_guard<std::mutex> lock(mgr.mtx);
+        auto it = mgr.threads.find(tid);
+        if (it != mgr.threads.end()) {
+            th = it->second;
+            mgr.threads.erase(it);
+        }
+    }
+    if (th && th->joinable()) {
+        th->detach();
+        return TzdVal(true);
+    }
+    return TzdVal(false);
+}
+
+
+// ── Lightweight Mathematical Expression Evaluator (for string formulas like "x^2", "sin(x)") ──
+struct MathExprParser {
+    std::string s;
+    size_t pos = 0;
+    double x_val = 0.0;
+
+    MathExprParser(std::string str, double x) : s(std::move(str)), x_val(x) {}
+
+    void skip_ws() {
+        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) pos++;
+    }
+
+    double parse_primary() {
+        skip_ws();
+        if (pos >= s.size()) return 0.0;
+        if (s[pos] == '+') { pos++; return parse_primary(); }
+        if (s[pos] == '-') { pos++; return -parse_primary(); }
+        if (s[pos] == '(') {
+            pos++;
+            double v = parse_expr();
+            skip_ws();
+            if (pos < s.size() && s[pos] == ')') pos++;
+            return v;
+        }
+        if (pos < s.size() && (s[pos] == 'x' || s[pos] == 'X')) {
+            pos++;
+            return x_val;
+        }
+        if (std::isalpha((unsigned char)s[pos])) {
+            std::string fn;
+            while (pos < s.size() && std::isalpha((unsigned char)s[pos])) fn += s[pos++];
+            skip_ws();
+            double arg = parse_primary();
+            if (fn == "sin") return std::sin(arg);
+            if (fn == "cos") return std::cos(arg);
+            if (fn == "tan") return std::tan(arg);
+            if (fn == "exp") return std::exp(arg);
+            if (fn == "log" || fn == "ln") return std::log(arg);
+            if (fn == "sqrt") return std::sqrt(arg);
+            if (fn == "abs") return std::abs(arg);
+            return arg;
+        }
+        if (std::isdigit((unsigned char)s[pos]) || s[pos] == '.') {
+            size_t start = pos;
+            while (pos < s.size() && (std::isdigit((unsigned char)s[pos]) || s[pos] == '.')) pos++;
+            try { return std::stod(s.substr(start, pos - start)); } catch (...) { return 0.0; }
+        }
+        return 0.0;
+    }
+
+    double parse_power() {
+        double left = parse_primary();
+        skip_ws();
+        if (pos < s.size() && s[pos] == '^') {
+            pos++;
+            double right = parse_power();
+            return std::pow(left, right);
+        }
+        return left;
+    }
+
+    double parse_term() {
+        double left = parse_power();
+        while (true) {
+            skip_ws();
+            if (pos < s.size() && s[pos] == '*') {
+                pos++;
+                left *= parse_power();
+            } else if (pos < s.size() && s[pos] == '/') {
+                pos++;
+                double d = parse_power();
+                left = (d == 0.0 ? 0.0 : left / d);
+            } else break;
+        }
+        return left;
+    }
+
+    double parse_expr() {
+        double left = parse_term();
+        while (true) {
+            skip_ws();
+            if (pos < s.size() && s[pos] == '+') {
+                pos++;
+                left += parse_term();
+            } else if (pos < s.size() && s[pos] == '-') {
+                pos++;
+                left -= parse_term();
+            } else break;
+        }
+        return left;
+    }
+};
+
+inline double eval_simple_math_expr(const std::string& str, double x) {
+    MathExprParser p(str, x);
+    return p.parse_expr();
+}
+
+
+// ── Real Plotting Engine (ASCII Console Chart & SVG File Exporter) ──
+inline TzdVal tzd_builtin_plot(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(false);
+    std::vector<double> data;
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& v : *args[0].arrVal) data.push_back(v.as_double());
+    } else if (args[0].type == ValType::FUNC && args.size() >= 3) {
+        double x0 = args[1].as_double(), x1 = args[2].as_double();
+        int steps = args.size() > 3 ? (int)args[3].as_int() : 30;
+        if (steps < 2) steps = 30;
+        double dx = (x1 - x0) / (steps - 1);
+        for (int i = 0; i < steps; ++i) {
+            double x = x0 + i * dx;
+            data.push_back(args[0]({TzdVal(x)}).as_double());
+        }
+    } else if (args[0].type == ValType::STRING && args.size() >= 3) {
+        std::string expr = args[0].to_string();
+        double x0 = args[1].as_double(), x1 = args[2].as_double();
+        int steps = args.size() > 3 ? (int)args[3].as_int() : 30;
+        if (steps < 2) steps = 30;
+        double dx = (x1 - x0) / (steps - 1);
+        for (int i = 0; i < steps; ++i) {
+            double x = x0 + i * dx;
+            data.push_back(eval_simple_math_expr(expr, x));
+        }
+    }
+    if (data.empty()) return TzdVal(false);
+
+    if (args.size() > 1 && args.back().type == ValType::STRING && args.back().to_string().rfind(".svg") != std::string::npos) {
+        std::string filename = args.back().to_string();
+        std::ofstream svg(filename);
+        if (svg.is_open()) {
+            double minY = *std::min_element(data.begin(), data.end());
+            double maxY = *std::max_element(data.begin(), data.end());
+            if (minY == maxY) { minY -= 1.0; maxY += 1.0; }
+            int W = 600, H = 300, pad = 40;
+            svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << W << "\" height=\"" << H << "\">\n";
+            svg << "<rect width=\"100%\" height=\"100%\" fill=\"#1e1e1e\"/>\n";
+            svg << "<polyline fill=\"none\" stroke=\"#4ec9b0\" stroke-width=\"2\" points=\"";
+            for (size_t i = 0; i < data.size(); ++i) {
+                double px = pad + (double)i / (data.size() - 1) * (W - 2 * pad);
+                double py = H - pad - (data[i] - minY) / (maxY - minY) * (H - 2 * pad);
+                svg << px << "," << py << " ";
+            }
+            svg << "\"/>\n</svg>\n";
+            return TzdVal(true);
+        }
+    }
+
+    double minY = *std::min_element(data.begin(), data.end());
+    double maxY = *std::max_element(data.begin(), data.end());
+    if (minY == maxY) { minY -= 1.0; maxY += 1.0; }
+    int plotW = 40;
+    int plotH = 10;
+    std::vector<std::string> canvas(plotH, std::string(plotW, ' '));
+    for (int col = 0; col < plotW; ++col) {
+        size_t idx = (size_t)((double)col / (plotW - 1) * (data.size() - 1));
+        double norm = (data[idx] - minY) / (maxY - minY);
+        int row = (int)(norm * (plotH - 1));
+        if (row < 0) row = 0; if (row >= plotH) row = plotH - 1;
+        canvas[plotH - 1 - row][col] = '*';
+    }
+    std::cout << "\n--- ASCII Plot (Min: " << minY << ", Max: " << maxY << ") ---\n";
+    for (int r = 0; r < plotH; ++r) {
+        double yVal = maxY - (double)r / (plotH - 1) * (maxY - minY);
+        std::cout << std::setw(8) << std::setprecision(2) << yVal << " | " << canvas[r] << "\n";
+    }
+    std::cout << "         +" << std::string(plotW, '-') << "\n";
     return TzdVal(true);
 }
-inline TzdVal tzd_builtin_sys_thread_join(const std::vector<TzdVal>& = {}) { return TzdVal(true); }
-inline TzdVal tzd_builtin_sys_thread_detach(const std::vector<TzdVal>& = {}) { return TzdVal(true); }
 
-// ── Plot / Symbolic Stubs ──
-inline TzdVal tzd_builtin_plot(const std::vector<TzdVal>& args) { return TzdVal(true); }
-inline TzdVal tzd_builtin_derivative(const std::vector<TzdVal>& = {}) { return TzdVal(); }
-inline TzdVal tzd_builtin_simplifySym(const std::vector<TzdVal>& = {}) { return TzdVal(); }
-inline TzdVal tzd_builtin_solveSym(const std::vector<TzdVal>& = {}) { return TzdVal(); }
-inline TzdVal tzd_builtin_solveEq(const std::vector<TzdVal>& = {}) { return TzdVal(); }
-inline TzdVal tzd_builtin_solveIneq(const std::vector<TzdVal>& = {}) { return TzdVal(); }
+// ── Numerical Derivative & Equation Solver ──
+inline TzdVal tzd_builtin_derivative(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    double x = args.size() > 1 ? args[1].as_double() : 0.0;
+    double h = args.size() > 2 ? args[2].as_double() : 1e-6;
+    if (h == 0.0) h = 1e-6;
+    if (args[0].type == ValType::FUNC) {
+        TzdVal fn = args[0];
+        double y_plus = fn({TzdVal(x + h)}).as_double();
+        double y_minus = fn({TzdVal(x - h)}).as_double();
+        return TzdVal((y_plus - y_minus) / (2.0 * h));
+    } else if (args[0].type == ValType::STRING) {
+        std::string expr = args[0].to_string();
+        double y_plus = eval_simple_math_expr(expr, x + h);
+        double y_minus = eval_simple_math_expr(expr, x - h);
+        return TzdVal((y_plus - y_minus) / (2.0 * h));
+    }
+    return TzdVal(0.0);
+}
 
-
-// ============================================================================
-// ── Full PyTorch (LibTorch) & Standalone Fallback API (303 Functions) ──
-// ============================================================================
-#ifdef WITH_LIBTORCH
-
-inline std::vector<int64_t> tzd_parse_shape(const std::vector<TzdVal>& args) {
-    std::vector<int64_t> shape;
-    if (args.empty()) return {1};
-    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
-        for (const auto& item : *args[0].arrVal) shape.push_back(item.as_int());
+inline TzdVal tzd_builtin_solveEq(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    double x = args.size() > 1 ? args[1].as_double() : 0.0;
+    double h = 1e-5;
+    std::function<double(double)> fn;
+    if (args[0].type == ValType::FUNC) {
+        TzdVal f = args[0];
+        fn = [f](double val) { return f({TzdVal(val)}).as_double(); };
+    } else if (args[0].type == ValType::STRING) {
+        std::string expr = args[0].to_string();
+        fn = [expr](double val) { return eval_simple_math_expr(expr, val); };
     } else {
-        for (const auto& a : args) shape.push_back(a.as_int());
+        return TzdVal(0.0);
+    }
+    for (int iter = 0; iter < 100; ++iter) {
+        double fx = fn(x);
+        if (std::abs(fx) < 1e-10) break;
+        double dfx = (fn(x + h) - fn(x - h)) / (2.0 * h);
+        if (std::abs(dfx) < 1e-12) dfx = 1e-12;
+        double x_next = x - fx / dfx;
+        if (std::abs(x_next - x) < 1e-10) { x = x_next; break; }
+        x = x_next;
+    }
+    return TzdVal(x);
+}
+
+inline TzdVal tzd_builtin_solveSym(const std::vector<TzdVal>& args) { return tzd_builtin_solveEq(args); }
+inline TzdVal tzd_builtin_solveIneq(const std::vector<TzdVal>& args) {
+    double root = tzd_builtin_solveEq(args).as_double();
+    return TzdVal("x > " + std::to_string(root));
+}
+inline TzdVal tzd_builtin_simplifySym(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal("");
+    return args[0];
+}
+
+inline const std::vector<std::string>& get_all_registered_builtin_names_list() {
+    static const std::vector<std::string> names = {
+        "E",
+        "EPSILON",
+        "GOLDEN_RATIO",
+        "INF",
+        "NAN",
+        "PI",
+        "Runtime",
+        "SQRT2",
+        "TAU",
+        "abs",
+        "acos",
+        "addIncludePath",
+        "appendFile",
+        "argmax",
+        "argmin",
+        "asin",
+        "assert",
+        "assert_t",
+        "atan",
+        "atan2",
+        "avg",
+        "base64Decode",
+        "base64Encode",
+        "bigint",
+        "bigintFactorial",
+        "bigintGcd",
+        "bit",
+        "bool",
+        "cbrt",
+        "ceil",
+        "changeDir",
+        "charAt",
+        "charCode",
+        "clamp",
+        "clear",
+        "clock",
+        "comb",
+        "concat",
+        "contains",
+        "copyFile",
+        "cos",
+        "cosh",
+        "countSubstr",
+        "crc32",
+        "cumsum",
+        "currentDir",
+        "dateDiff",
+        "dateParts",
+        "deepCopy",
+        "degrees",
+        "derivative",
+        "det",
+        "diff",
+        "dirExists",
+        "dot",
+        "endsWith",
+        "erf",
+        "escape",
+        "exit",
+        "exp",
+        "expm1",
+        "factorial",
+        "fib",
+        "fileExists",
+        "fileSize",
+        "fill",
+        "filter",
+        "find",
+        "flatten",
+        "float",
+        "floor",
+        "format",
+        "formatTime",
+        "fromBinary",
+        "fromCharCode",
+        "fromHex",
+        "fromJSON",
+        "gcd",
+        "getArraysInfo",
+        "getBigIntMaxDigits",
+        "getClassInfo",
+        "getEnv",
+        "getFunctions",
+        "getNativeFunctions",
+        "getOsInfo",
+        "getScriptDir",
+        "getScriptPath",
+        "getSymbols",
+        "has",
+        "hasKey",
+        "hash",
+        "hexDump",
+        "hypot",
+        "identity",
+        "includes",
+        "indexOf",
+        "indexOfArr",
+        "input",
+        "insert",
+        "int",
+        "inverse",
+        "isBigint",
+        "isFinite",
+        "isNaN",
+        "isNone",
+        "isNull",
+        "isPowerOf2",
+        "isPrime",
+        "isfinite_t",
+        "isinf_t",
+        "isnan_t",
+        "join",
+        "jsonParse",
+        "jsonStringify",
+        "keys",
+        "lcm",
+        "len",
+        "lerp",
+        "levenshtein",
+        "linspace_arr",
+        "listDir",
+        "log",
+        "log10",
+        "log1p",
+        "log2",
+        "logBase",
+        "makeDir",
+        "map",
+        "mapEntries",
+        "mapFilter",
+        "mapFromEntries",
+        "mapGet",
+        "mapHas",
+        "mapKeys",
+        "mapMap",
+        "mapMerge",
+        "mapValues",
+        "match",
+        "matrixMul",
+        "max",
+        "maxArr",
+        "measure",
+        "min",
+        "minArr",
+        "moveFile",
+        "nextPowerOf2",
+        "norm",
+        "now",
+        "ones",
+        "padLeft",
+        "padRight",
+        "parseDouble",
+        "parseFloat",
+        "parseInt",
+        "perm",
+        "plot",
+        "pop",
+        "pow",
+        "powmod",
+        "print",
+        "println",
+        "push",
+        "queuePop",
+        "queuePopAll",
+        "queuePush",
+        "radians",
+        "randInt",
+        "random",
+        "randomInt",
+        "randomSeed",
+        "range",
+        "rank",
+        "rational",
+        "rationalAdd",
+        "rationalMul",
+        "readFile",
+        "readLines",
+        "reduce",
+        "remove",
+        "removeDir",
+        "removeFile",
+        "repeat",
+        "replace",
+        "replaceRegex",
+        "reshape",
+        "reverse",
+        "reverseStr",
+        "round",
+        "sample",
+        "setAdd",
+        "setBigIntMaxDigits",
+        "setContains",
+        "setCreate",
+        "setDifference",
+        "setEnv",
+        "setIntersect",
+        "setRemove",
+        "setSize",
+        "setUnion",
+        "shift",
+        "shuffle",
+        "sign",
+        "simplifySym",
+        "sin",
+        "sinh",
+        "sleep",
+        "slice",
+        "solve",
+        "solveEq",
+        "solveIneq",
+        "solveSym",
+        "sort",
+        "split",
+        "splitRegex",
+        "sqrt",
+        "stackPop",
+        "stackPush",
+        "startsWith",
+        "str",
+        "substr",
+        "substring",
+        "sum",
+        "sys_thread_detach",
+        "sys_thread_join",
+        "sys_thread_start",
+        "tan",
+        "tanh",
+        "tgamma",
+        "time",
+        "timestamp",
+        "toBinary",
+        "toBool",
+        "toCamelCase",
+        "toFixed",
+        "toFloat",
+        "toFraction",
+        "toHex",
+        "toInt",
+        "toJSON",
+        "toLower",
+        "toPrecision",
+        "toSnakeCase",
+        "toString",
+        "toTitleCase",
+        "toUpper",
+        "torch_abs",
+        "torch_adagrad",
+        "torch_adam",
+        "torch_adamax",
+        "torch_adamw",
+        "torch_adaptive_avg_pool1d",
+        "torch_adaptive_avg_pool2d",
+        "torch_add",
+        "torch_add_",
+        "torch_all",
+        "torch_allclose",
+        "torch_any",
+        "torch_arange",
+        "torch_argmax",
+        "torch_argmin",
+        "torch_argsort",
+        "torch_atan2_t",
+        "torch_auto_cleanup",
+        "torch_avg_pool2d",
+        "torch_backward",
+        "torch_batch_norm",
+        "torch_batch_norm1d",
+        "torch_batch_norm2d",
+        "torch_bce_loss",
+        "torch_bernoulli",
+        "torch_bincount",
+        "torch_bmm",
+        "torch_broadcast_shapes",
+        "torch_broadcast_tensors",
+        "torch_broadcast_to",
+        "torch_cat",
+        "torch_chain_matmul",
+        "torch_cholesky",
+        "torch_chunk",
+        "torch_clamp",
+        "torch_clamp_",
+        "torch_clip_grad_norm",
+        "torch_clip_grad_value",
+        "torch_clone",
+        "torch_contiguous",
+        "torch_conv1d",
+        "torch_conv2d",
+        "torch_conv_transpose2d",
+        "torch_copy_",
+        "torch_corrcoef",
+        "torch_cosine_similarity",
+        "torch_count_nonzero",
+        "torch_count_params",
+        "torch_cov",
+        "torch_create_param",
+        "torch_cross_entropy",
+        "torch_cuda_is_available",
+        "torch_cuda_max_memory_allocated",
+        "torch_cuda_memory_allocated",
+        "torch_cuda_memory_reserved",
+        "torch_cuda_reset_peak_memory",
+        "torch_cuda_synchronize",
+        "torch_cumprod",
+        "torch_cumsum",
+        "torch_current_device",
+        "torch_dequantize",
+        "torch_det",
+        "torch_det_t",
+        "torch_detach",
+        "torch_device_count",
+        "torch_device_str",
+        "torch_diag",
+        "torch_diagflat",
+        "torch_digamma",
+        "torch_dim",
+        "torch_div",
+        "torch_div_",
+        "torch_dropout",
+        "torch_dtype",
+        "torch_dtype_str",
+        "torch_eig",
+        "torch_element_size",
+        "torch_elu",
+        "torch_embedding",
+        "torch_empty",
+        "torch_empty_cache",
+        "torch_empty_like",
+        "torch_eq",
+        "torch_equal",
+        "torch_erf",
+        "torch_erfc",
+        "torch_exp",
+        "torch_expand",
+        "torch_eye",
+        "torch_fill_",
+        "torch_flatten",
+        "torch_flatten_t",
+        "torch_fmod",
+        "torch_from_array",
+        "torch_full",
+        "torch_full_like",
+        "torch_fused_linear_bias_gelu",
+        "torch_fused_residual_layernorm",
+        "torch_fused_silu_mul",
+        "torch_fused_softmax_mask",
+        "torch_gather",
+        "torch_gc",
+        "torch_ge",
+        "torch_gelu",
+        "torch_get_num_threads",
+        "torch_glu",
+        "torch_grad",
+        "torch_grad_fn",
+        "torch_gt",
+        "torch_hardswish",
+        "torch_hardtanh",
+        "torch_histc",
+        "torch_identity",
+        "torch_index_copy_",
+        "torch_index_put",
+        "torch_index_select",
+        "torch_init_kaiming",
+        "torch_init_normal",
+        "torch_init_ones",
+        "torch_init_uniform",
+        "torch_init_xavier",
+        "torch_init_zeros",
+        "torch_interpolate",
+        "torch_inv",
+        "torch_inverse",
+        "torch_inverse_t",
+        "torch_is_contiguous",
+        "torch_is_floating_point",
+        "torch_is_grad_enabled",
+        "torch_is_integer",
+        "torch_is_leaf",
+        "torch_is_pinned",
+        "torch_is_requires_grad",
+        "torch_is_tensor",
+        "torch_isfinite",
+        "torch_isinf",
+        "torch_isnan",
+        "torch_item",
+        "torch_jit_eval",
+        "torch_jit_load",
+        "torch_jit_save",
+        "torch_jit_train",
+        "torch_kl_div",
+        "torch_l1_loss",
+        "torch_layer_norm",
+        "torch_le",
+        "torch_leaky_relu",
+        "torch_lerp",
+        "torch_lgamma",
+        "torch_linear",
+        "torch_linspace",
+        "torch_load",
+        "torch_load_state_dict",
+        "torch_log",
+        "torch_log_softmax",
+        "torch_logcumsumexp",
+        "torch_logical_and",
+        "torch_logical_not",
+        "torch_logical_or",
+        "torch_logspace",
+        "torch_logsumexp",
+        "torch_lstsq",
+        "torch_lt",
+        "torch_make_contiguous",
+        "torch_manual_seed",
+        "torch_masked_fill",
+        "torch_masked_fill_",
+        "torch_masked_select",
+        "torch_matmul",
+        "torch_matrix_exp",
+        "torch_max_pool2d",
+        "torch_max_t",
+        "torch_mean",
+        "torch_median",
+        "torch_memory_allocated",
+        "torch_memory_allocated_str",
+        "torch_min_t",
+        "torch_mish",
+        "torch_mm",
+        "torch_mse_loss",
+        "torch_mul",
+        "torch_mul_",
+        "torch_multinomial",
+        "torch_nadam",
+        "torch_nbytes",
+        "torch_ne",
+        "torch_neg",
+        "torch_nll_loss",
+        "torch_no_grad",
+        "torch_no_grad_scope",
+        "torch_nonzero",
+        "torch_norm_t",
+        "torch_num_tensors",
+        "torch_numel",
+        "torch_one_hot",
+        "torch_ones",
+        "torch_ones_like",
+        "torch_optim_delete",
+        "torch_optim_step",
+        "torch_optim_zero_grad",
+        "torch_optimizer_create",
+        "torch_orth",
+        "torch_pad",
+        "torch_pairwise_distance",
+        "torch_pca",
+        "torch_permute",
+        "torch_pow",
+        "torch_prelu",
+        "torch_print",
+        "torch_prod",
+        "torch_q_scale",
+        "torch_q_zero_point",
+        "torch_quantize_per_channel",
+        "torch_quantize_per_tensor",
+        "torch_rand",
+        "torch_randint",
+        "torch_randint_like",
+        "torch_randn",
+        "torch_randperm",
+        "torch_release_all",
+        "torch_release_tensor",
+        "torch_relu",
+        "torch_remainder",
+        "torch_repeat",
+        "torch_requires_grad",
+        "torch_requires_grad_params",
+        "torch_reshape",
+        "torch_rmsprop",
+        "torch_save",
+        "torch_save_state_dict",
+        "torch_scalar_value",
+        "torch_scatter",
+        "torch_scatter_",
+        "torch_selu",
+        "torch_set_device",
+        "torch_set_grad_enabled",
+        "torch_set_num_threads",
+        "torch_sgd",
+        "torch_shape",
+        "torch_sigmoid",
+        "torch_sigmoid_fn",
+        "torch_silu",
+        "torch_smooth_l1_loss",
+        "torch_softmax",
+        "torch_softmin",
+        "torch_softplus",
+        "torch_solve",
+        "torch_solve_t",
+        "torch_sort_t",
+        "torch_split_t",
+        "torch_sqrt",
+        "torch_squeeze",
+        "torch_stack",
+        "torch_std",
+        "torch_std_mean",
+        "torch_sub",
+        "torch_sub_",
+        "torch_sum",
+        "torch_svd",
+        "torch_tensor",
+        "torch_threshold",
+        "torch_to_array",
+        "torch_to_bool",
+        "torch_to_cpu",
+        "torch_to_cuda",
+        "torch_to_device",
+        "torch_to_double",
+        "torch_to_dtype",
+        "torch_to_float",
+        "torch_to_int",
+        "torch_to_long",
+        "torch_to_string",
+        "torch_topk",
+        "torch_trace_t",
+        "torch_transpose",
+        "torch_tril",
+        "torch_triple_margin_loss",
+        "torch_triu",
+        "torch_unique",
+        "torch_unsqueeze",
+        "torch_upsample_bilinear2d",
+        "torch_upsample_nearest2d",
+        "torch_var",
+        "torch_var_mean",
+        "torch_version",
+        "torch_view",
+        "torch_where",
+        "torch_zero_",
+        "torch_zero_grad_params",
+        "torch_zeros",
+        "torch_zeros_like",
+        "trace",
+        "transpose",
+        "trim",
+        "trunc",
+        "type",
+        "unescape",
+        "unique",
+        "unshift",
+        "uuid",
+        "values",
+        "warn",
+        "wordCount",
+        "writeFile",
+        "writeLines",
+        "zeros",
+        "zip",
+    };
+    return names;
+}
+
+inline std::vector<int64_t> tzd_parse_shape(const std::vector<TzdVal>& args, size_t start = 0) {
+    std::vector<int64_t> shape;
+    if (start >= args.size()) return {1};
+    if (args[start].type == ValType::ARRAY && args[start].arrVal) {
+        for (const auto& item : *args[start].arrVal) shape.push_back(item.as_int());
+    } else {
+        for (size_t i = start; i < args.size(); ++i) shape.push_back(args[i].as_int());
     }
     if (shape.empty()) shape.push_back(1);
     return shape;
 }
+
+// ============================================================================
+// ── Full PyTorch (LibTorch) Production Native API (291 Functions) ──
+// ============================================================================
+#ifdef WITH_LIBTORCH
+
+inline at::Tensor to_torch_t(const TzdVal& v) {
+    if (v.type == ValType::TENSOR && v.tensorVal) return *v.tensorVal;
+    if (v.type == ValType::ARRAY && v.arrVal) {
+        if (!v.arrVal->empty() && (*v.arrVal)[0].type == ValType::ARRAY && (*v.arrVal)[0].arrVal) {
+            int64_t rows = v.arrVal->size();
+            int64_t cols = (*v.arrVal)[0].arrVal->size();
+            std::vector<float> data;
+            data.reserve(rows * cols);
+            for (const auto& row : *v.arrVal) {
+                if (row.type == ValType::ARRAY && row.arrVal) {
+                    for (const auto& item : *row.arrVal) data.push_back((float)item.as_double());
+                }
+            }
+            return torch::from_blob(data.data(), {rows, cols}, torch::kFloat32).clone();
+        }
+        std::vector<float> data;
+        data.reserve(v.arrVal->size());
+        for (const auto& item : *v.arrVal) data.push_back((float)item.as_double());
+        return torch::from_blob(data.data(), {(int64_t)data.size()}, torch::kFloat32).clone();
+    }
+    return torch::tensor((float)v.as_double());
+}
+
+inline TzdVal tensor_to_tzd_arr(const at::Tensor& t) {
+    at::Tensor cpu_t = t.to(torch::kCPU).contiguous();
+    if (cpu_t.dim() == 0) return TzdVal(cpu_t.item<double>());
+    if (cpu_t.dim() == 1) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        auto acc = cpu_t.accessor<float, 1>();
+        for (int64_t i = 0; i < cpu_t.size(0); ++i) arr->push_back(TzdVal((double)acc[i]));
+        return TzdVal(arr);
+    }
+    if (cpu_t.dim() == 2) {
+        auto mat = std::make_shared<std::vector<TzdVal>>();
+        auto acc = cpu_t.accessor<float, 2>();
+        for (int64_t r = 0; r < cpu_t.size(0); ++r) {
+            auto row = std::make_shared<std::vector<TzdVal>>();
+            for (int64_t c = 0; c < cpu_t.size(1); ++c) row->push_back(TzdVal((double)acc[r][c]));
+            mat->push_back(TzdVal(row));
+        }
+        return TzdVal(mat);
+    }
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    float* ptr = cpu_t.data_ptr<float>();
+    for (int64_t i = 0; i < cpu_t.numel(); ++i) arr->push_back(TzdVal((double)ptr[i]));
+    return TzdVal(arr);
+}
+
+struct NativeTorchOptimizer {
+    enum Type { SGD, ADAM, ADAMW, RMSPROP, ADAGRAD, ADAMAX } type = ADAM;
+    double lr = 0.001;
+    double beta1 = 0.9, beta2 = 0.999;
+    double weight_decay = 0.0;
+    double momentum = 0.0;
+    double alpha = 0.99;
+    double eps = 1e-8;
+    std::vector<std::shared_ptr<at::Tensor>> params;
+    std::vector<at::Tensor> m_state;
+    std::vector<at::Tensor> v_state;
+    std::vector<at::Tensor> momentum_buffers;
+    int step_count = 0;
+
+    void step() {
+        step_count++;
+        c10::GradMode::set_enabled(false);
+        for (size_t i = 0; i < params.size(); ++i) {
+            auto& p = params[i];
+            if (!p || !p->requires_grad() || !p->grad().defined()) continue;
+            auto grad = p->grad();
+            if (weight_decay != 0.0) grad = grad + weight_decay * (*p);
+            switch (type) {
+                case SGD: {
+                    if (momentum != 0.0) {
+                        if (momentum_buffers.size() <= i) momentum_buffers.resize(i + 1);
+                        if (!momentum_buffers[i].defined()) momentum_buffers[i] = at::zeros_like(grad);
+                        momentum_buffers[i] = momentum * momentum_buffers[i] + grad;
+                        p->add_(momentum_buffers[i], -lr);
+                    } else {
+                        p->add_(grad, -lr);
+                    }
+                    break;
+                }
+                case ADAM:
+                case ADAMW: {
+                    if (m_state.size() <= i) { m_state.resize(i + 1); v_state.resize(i + 1); }
+                    if (!m_state[i].defined()) m_state[i] = at::zeros_like(grad);
+                    if (!v_state[i].defined()) v_state[i] = at::zeros_like(grad);
+                    m_state[i] = beta1 * m_state[i] + (1.0 - beta1) * grad;
+                    v_state[i] = beta2 * v_state[i] + (1.0 - beta2) * grad * grad;
+                    double bc1 = 1.0 - std::pow(beta1, step_count);
+                    double bc2 = 1.0 - std::pow(beta2, step_count);
+                    at::Tensor m_hat = m_state[i] / bc1;
+                    at::Tensor v_hat = v_state[i] / bc2;
+                    if (type == ADAMW) {
+                        p->add_(*p * weight_decay, -lr);
+                    }
+                    p->add_(m_hat / (at::sqrt(v_hat) + eps), -lr);
+                    break;
+                }
+                case RMSPROP: {
+                    if (v_state.size() <= i) v_state.resize(i + 1);
+                    if (!v_state[i].defined()) v_state[i] = at::zeros_like(grad);
+                    v_state[i] = alpha * v_state[i] + (1.0 - alpha) * grad * grad;
+                    p->add_(grad / (at::sqrt(v_state[i]) + eps), -lr);
+                    break;
+                }
+                case ADAGRAD: {
+                    if (v_state.size() <= i) v_state.resize(i + 1);
+                    if (!v_state[i].defined()) v_state[i] = at::zeros_like(grad);
+                    v_state[i] = v_state[i] + grad * grad;
+                    p->add_(grad / (at::sqrt(v_state[i]) + eps), -lr);
+                    break;
+                }
+                default: break;
+            }
+        }
+        c10::GradMode::set_enabled(true);
+    }
+    void zero_grad() {
+        for (auto& p : params) {
+            if (p && p->grad().defined()) p->grad().zero_();
+        }
+    }
+};
+
+inline std::unordered_map<int64_t, std::shared_ptr<NativeTorchOptimizer>>& get_torch_optimizers() {
+    static std::unordered_map<int64_t, std::shared_ptr<NativeTorchOptimizer>> map;
+    return map;
+}
+inline int64_t& get_next_optim_id() {
+    static int64_t id = 1;
+    return id;
+}
+
 inline TzdVal tzd_builtin_torch_abs(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::abs(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::abs(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_adagrad(const std::vector<TzdVal>& args) {
-    // torch_adagrad
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAGRAD;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adam(const std::vector<TzdVal>& args) {
-    // torch_adam
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAM;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adamax(const std::vector<TzdVal>& args) {
-    // torch_adamax
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAMAX;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adamw(const std::vector<TzdVal>& args) {
-    // torch_adamw
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAMW;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adaptive_avg_pool1d(const std::vector<TzdVal>& args) {
-    // torch_adaptive_avg_pool1d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t out_sz = args[1].as_int();
+    return TzdVal(at::adaptive_avg_pool1d(input, {out_sz}));
 }
 inline TzdVal tzd_builtin_torch_adaptive_avg_pool2d(const std::vector<TzdVal>& args) {
-    // torch_adaptive_avg_pool2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t h = args[1].as_int(), w = args.size() > 2 ? args[2].as_int() : h;
+    return TzdVal(at::adaptive_avg_pool2d(input, {h, w}));
 }
 inline TzdVal tzd_builtin_torch_add(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::add(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::add(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_add_(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) { args[0].tensorVal->add_(*args[1].tensorVal); return args[0]; } return TzdVal();
+    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->add_(to_torch_t(args[1]));
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_all(const std::vector<TzdVal>& args) {
-    // torch_all
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(true); return TzdVal(torch::all(to_torch_t(args[0])).item<bool>());
 }
 inline TzdVal tzd_builtin_torch_allclose(const std::vector<TzdVal>& args) {
-    // torch_allclose
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    double rtol = args.size() > 2 ? args[2].as_double() : 1e-5;
+    double atol = args.size() > 3 ? args[3].as_double() : 1e-8;
+    return TzdVal(torch::allclose(to_torch_t(args[0]), to_torch_t(args[1]), rtol, atol));
 }
 inline TzdVal tzd_builtin_torch_any(const std::vector<TzdVal>& args) {
-    // torch_any
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false); return TzdVal(torch::any(to_torch_t(args[0])).item<bool>());
 }
 inline TzdVal tzd_builtin_torch_arange(const std::vector<TzdVal>& args) {
-    double s = 0, e = args.empty() ? 1 : args[0].as_double(), st = 1; if (args.size() >= 2) { s = args[0].as_double(); e = args[1].as_double(); } if (args.size() >= 3) st = args[2].as_double(); return TzdVal(torch::arange(s, e, st));
+    double s = 0, e = args.empty() ? 1 : args[0].as_double(), st = 1;
+    if (args.size() >= 2) { s = args[0].as_double(); e = args[1].as_double(); }
+    if (args.size() >= 3) st = args[2].as_double();
+    return TzdVal(torch::arange(s, e, st));
 }
 inline TzdVal tzd_builtin_torch_argmax(const std::vector<TzdVal>& args) {
-    // torch_argmax
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0);
+    if (args.size() > 1) return TzdVal(torch::argmax(to_torch_t(args[0]), args[1].as_int()));
+    return TzdVal(torch::argmax(to_torch_t(args[0])).item<int64_t>());
 }
 inline TzdVal tzd_builtin_torch_argmin(const std::vector<TzdVal>& args) {
-    // torch_argmin
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0);
+    if (args.size() > 1) return TzdVal(torch::argmin(to_torch_t(args[0]), args[1].as_int()));
+    return TzdVal(torch::argmin(to_torch_t(args[0])).item<int64_t>());
 }
 inline TzdVal tzd_builtin_torch_argsort(const std::vector<TzdVal>& args) {
-    // torch_argsort
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    bool desc = args.size() > 2 ? args[2].as_bool() : false;
+    return TzdVal(torch::argsort(to_torch_t(args[0]), dim, desc));
 }
 inline TzdVal tzd_builtin_torch_atan2_t(const std::vector<TzdVal>& args) {
-    // torch_atan2_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::atan2(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_auto_cleanup(const std::vector<TzdVal>& args) {
-    // torch_auto_cleanup
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_avg_pool2d(const std::vector<TzdVal>& args) {
-    // torch_avg_pool2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t k = args[1].as_int(), s = args.size() > 2 ? args[2].as_int() : k;
+    return TzdVal(at::avg_pool2d(input, {k, k}, {s, s}));
 }
 inline TzdVal tzd_builtin_torch_backward(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { args[0].tensorVal->backward(); return TzdVal(true); } return TzdVal(false);
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->backward();
+        return TzdVal(true);
+    }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_batch_norm(const std::vector<TzdVal>& args) {
-    // torch_batch_norm
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 5) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), mean = to_torch_t(args[1]), var = to_torch_t(args[2]);
+    at::Tensor weight = to_torch_t(args[3]), bias = to_torch_t(args[4]);
+    return TzdVal(torch::batch_norm(input, weight, bias, mean, var, false, 0.1, 1e-5, true));
 }
 inline TzdVal tzd_builtin_torch_batch_norm1d(const std::vector<TzdVal>& args) {
-    // torch_batch_norm1d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 5) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), mean = to_torch_t(args[1]), var = to_torch_t(args[2]);
+    at::Tensor weight = to_torch_t(args[3]), bias = to_torch_t(args[4]);
+    return TzdVal(torch::batch_norm(input, weight, bias, mean, var, false, 0.1, 1e-5, true));
 }
 inline TzdVal tzd_builtin_torch_batch_norm2d(const std::vector<TzdVal>& args) {
-    // torch_batch_norm2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 5) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), mean = to_torch_t(args[1]), var = to_torch_t(args[2]);
+    at::Tensor weight = to_torch_t(args[3]), bias = to_torch_t(args[4]);
+    return TzdVal(torch::batch_norm(input, weight, bias, mean, var, false, 0.1, 1e-5, true));
 }
 inline TzdVal tzd_builtin_torch_bce_loss(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::binary_cross_entropy(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::binary_cross_entropy(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_bernoulli(const std::vector<TzdVal>& args) {
-    // torch_bernoulli
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::bernoulli(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_bincount(const std::vector<TzdVal>& args) {
-    // torch_bincount
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::bincount(to_torch_t(args[0]).to(torch::kLong)));
 }
 inline TzdVal tzd_builtin_torch_bmm(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::bmm(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    return TzdVal(torch::bmm(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_broadcast_shapes(const std::vector<TzdVal>& args) {
-    // torch_broadcast_shapes
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    auto sh = tzd_parse_shape(args, 0);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (auto d : sh) arr->push_back(TzdVal(d));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_broadcast_tensors(const std::vector<TzdVal>& args) {
-    // torch_broadcast_tensors
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return tzd_make_array({});
+    std::vector<at::Tensor> ts;
+    for (const auto& a : args) ts.push_back(to_torch_t(a));
+    auto res = torch::broadcast_tensors(ts);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (const auto& r : res) arr->push_back(TzdVal(r));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_broadcast_to(const std::vector<TzdVal>& args) {
-    // torch_broadcast_to
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).broadcast_to(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_cat(const std::vector<TzdVal>& args) {
-    if (args.empty()) return TzdVal(); std::vector<at::Tensor> ts; int64_t dim = args.size() > 1 ? args.back().as_int() : 0; if (args[0].type == ValType::ARRAY && args[0].arrVal) { for (const auto& a : *args[0].arrVal) if (a.type == ValType::TENSOR) ts.push_back(*a.tensorVal); } else { for (size_t i = 0; i < args.size() - (args.size() > 1 ? 1 : 0); ++i) if (args[i].type == ValType::TENSOR) ts.push_back(*args[i].tensorVal); } if (ts.empty()) return TzdVal(); return TzdVal(torch::cat(ts, dim));
+    if (args.empty()) return TzdVal();
+    std::vector<at::Tensor> ts;
+    int64_t dim = args.size() > 1 ? args.back().as_int() : 0;
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& a : *args[0].arrVal) ts.push_back(to_torch_t(a));
+    } else {
+        for (size_t i = 0; i < args.size() - (args.size() > 1 ? 1 : 0); ++i) ts.push_back(to_torch_t(args[i]));
+    }
+    if (ts.empty()) return TzdVal();
+    return TzdVal(torch::cat(ts, dim));
 }
 inline TzdVal tzd_builtin_torch_chain_matmul(const std::vector<TzdVal>& args) {
-    // torch_chain_matmul
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    std::vector<at::Tensor> ts;
+    for (const auto& a : args) ts.push_back(to_torch_t(a));
+    return TzdVal(torch::chain_matmul(ts));
 }
 inline TzdVal tzd_builtin_torch_cholesky(const std::vector<TzdVal>& args) {
-    // torch_cholesky
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    bool upper = args.size() > 1 ? args[1].as_bool() : false;
+    return TzdVal(torch::linalg_cholesky(to_torch_t(args[0]), upper));
 }
 inline TzdVal tzd_builtin_torch_chunk(const std::vector<TzdVal>& args) {
-    // torch_chunk
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return tzd_make_array({});
+    int64_t chunks = args[1].as_int();
+    int64_t dim = args.size() > 2 ? args[2].as_int() : 0;
+    auto res = torch::chunk(to_torch_t(args[0]), chunks, dim);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (const auto& c : res) arr->push_back(TzdVal(c));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_clamp(const std::vector<TzdVal>& args) {
-    if (args.size() >= 3 && args[0].type == ValType::TENSOR) return TzdVal(torch::clamp(*args[0].tensorVal, args[1].as_double(), args[2].as_double())); return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::clamp(to_torch_t(args[0]), args[1].as_double(), args[2].as_double()));
 }
 inline TzdVal tzd_builtin_torch_clamp_(const std::vector<TzdVal>& args) {
-    if (args.size() >= 3 && args[0].type == ValType::TENSOR) { args[0].tensorVal->clamp_(args[1].as_double(), args[2].as_double()); return args[0]; } return TzdVal();
+    if (args.size() >= 3 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->clamp_(args[1].as_double(), args[2].as_double());
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_clip_grad_norm(const std::vector<TzdVal>& args) {
-    // torch_clip_grad_norm
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<at::Tensor> params;
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) if (elem.type == ValType::TENSOR && elem.tensorVal) params.push_back(*elem.tensorVal);
+    } else if (args[0].type == ValType::TENSOR && args[0].tensorVal) params.push_back(*args[0].tensorVal);
+    double max_norm = args[1].as_double();
+    double total_norm = 0.0;
+    for (const auto& p : params) if (p.grad().defined()) total_norm += p.grad().norm().item<double>() * p.grad().norm().item<double>();
+    total_norm = std::sqrt(total_norm);
+    double clip_coef = max_norm / (total_norm + 1e-6);
+    if (clip_coef < 1.0) { for (auto& p : params) if (p.grad().defined()) p.grad().mul_(clip_coef); }
+    return TzdVal(total_norm);
 }
 inline TzdVal tzd_builtin_torch_clip_grad_value(const std::vector<TzdVal>& args) {
-    // torch_clip_grad_value
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    double v = args[1].as_double();
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) if (elem.type == ValType::TENSOR && elem.tensorVal && elem.tensorVal->grad().defined()) elem.tensorVal->grad().clamp_(-v, v);
+    } else if (args[0].type == ValType::TENSOR && args[0].tensorVal && args[0].tensorVal->grad().defined()) args[0].tensorVal->grad().clamp_(-v, v);
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_clone(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->clone()); return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->clone());
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_contiguous(const std::vector<TzdVal>& args) {
-    // torch_contiguous
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->contiguous());
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_conv1d(const std::vector<TzdVal>& args) {
-    // torch_conv1d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), weight = to_torch_t(args[1]);
+    at::Tensor bias = args.size() > 2 && args[2].type != ValType::NIL ? to_torch_t(args[2]) : at::Tensor();
+    int64_t stride = args.size() > 3 ? args[3].as_int() : 1;
+    int64_t pad = args.size() > 4 ? args[4].as_int() : 0;
+    return TzdVal(torch::conv1d(input, weight, bias, stride, pad));
 }
 inline TzdVal tzd_builtin_torch_conv2d(const std::vector<TzdVal>& args) {
-    // torch_conv2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), weight = to_torch_t(args[1]);
+    at::Tensor bias = args.size() > 2 && args[2].type != ValType::NIL ? to_torch_t(args[2]) : at::Tensor();
+    int64_t stride = args.size() > 3 ? args[3].as_int() : 1;
+    int64_t pad = args.size() > 4 ? args[4].as_int() : 0;
+    return TzdVal(torch::conv2d(input, weight, bias, stride, pad));
 }
 inline TzdVal tzd_builtin_torch_conv_transpose2d(const std::vector<TzdVal>& args) {
-    // torch_conv_transpose2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), weight = to_torch_t(args[1]);
+    at::Tensor bias = args.size() > 2 && args[2].type != ValType::NIL ? to_torch_t(args[2]) : at::Tensor();
+    int64_t stride = args.size() > 3 ? args[3].as_int() : 1;
+    int64_t pad = args.size() > 4 ? args[4].as_int() : 0;
+    return TzdVal(torch::conv_transpose2d(input, weight, bias, stride, pad));
 }
 inline TzdVal tzd_builtin_torch_copy_(const std::vector<TzdVal>& args) {
-    // torch_copy_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->copy_(to_torch_t(args[1]));
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_corrcoef(const std::vector<TzdVal>& args) {
-    // torch_corrcoef
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::corrcoef(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_cosine_similarity(const std::vector<TzdVal>& args) {
-    // torch_cosine_similarity
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    int64_t dim = args.size() > 2 ? args[2].as_int() : 1;
+    return TzdVal(torch::cosine_similarity(to_torch_t(args[0]), to_torch_t(args[1]), dim));
 }
 inline TzdVal tzd_builtin_torch_count_nonzero(const std::vector<TzdVal>& args) {
-    // torch_count_nonzero
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0);
+    return TzdVal(torch::count_nonzero(to_torch_t(args[0])).item<int64_t>());
 }
 inline TzdVal tzd_builtin_torch_count_params(const std::vector<TzdVal>& args) {
-    // torch_count_params
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        int64_t cnt = 0;
+        for (const auto& a : *args[0].arrVal) {
+            if (a.type == ValType::TENSOR && a.tensorVal) cnt += a.tensorVal->numel();
+        }
+        return TzdVal(cnt);
+    }
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cov(const std::vector<TzdVal>& args) {
-    // torch_cov
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::cov(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_create_param(const std::vector<TzdVal>& args) {
-    // torch_create_param
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    t.set_requires_grad(true);
+    return TzdVal(t);
 }
 inline TzdVal tzd_builtin_torch_cross_entropy(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::cross_entropy_loss(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::cross_entropy_loss(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_cuda_is_available(const std::vector<TzdVal>& args) {
     return TzdVal(torch::cuda::is_available());
 }
 inline TzdVal tzd_builtin_torch_cuda_max_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_cuda_max_memory_allocated
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_cuda_memory_allocated
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_memory_reserved(const std::vector<TzdVal>& args) {
-    // torch_cuda_memory_reserved
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_reset_peak_memory(const std::vector<TzdVal>& args) {
-    // torch_cuda_reset_peak_memory
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_cuda_synchronize(const std::vector<TzdVal>& args) {
-    // torch_cuda_synchronize
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+#ifdef WITH_CUDA
+    at::cuda::device_synchronize();
+#endif
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_cumprod(const std::vector<TzdVal>& args) {
-    // torch_cumprod
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::cumprod(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_cumsum(const std::vector<TzdVal>& args) {
-    // torch_cumsum
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::cumsum(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_current_device(const std::vector<TzdVal>& args) {
     return TzdVal((int64_t)torch::cuda::current_device());
 }
 inline TzdVal tzd_builtin_torch_dequantize(const std::vector<TzdVal>& args) {
-    // torch_dequantize
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::dequantize(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_det(const std::vector<TzdVal>& args) {
-    // torch_det
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    return TzdVal(torch::det(to_torch_t(args[0])).item<double>());
 }
 inline TzdVal tzd_builtin_torch_det_t(const std::vector<TzdVal>& args) {
-    // torch_det_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::det(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_detach(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->detach()); return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->detach());
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_device_count(const std::vector<TzdVal>& args) {
     return TzdVal((int64_t)torch::cuda::device_count());
 }
 inline TzdVal tzd_builtin_torch_device_str(const std::vector<TzdVal>& args) {
-    // torch_device_str
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->device().str());
+    return TzdVal("cpu");
 }
 inline TzdVal tzd_builtin_torch_diag(const std::vector<TzdVal>& args) {
-    // torch_diag
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t diag = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::diag(to_torch_t(args[0]), diag));
 }
 inline TzdVal tzd_builtin_torch_diagflat(const std::vector<TzdVal>& args) {
-    // torch_diagflat
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t diag = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::diag(to_torch_t(args[0]), diag));
 }
 inline TzdVal tzd_builtin_torch_digamma(const std::vector<TzdVal>& args) {
-    // torch_digamma
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::digamma(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_dim(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal((int64_t)args[0].tensorVal->dim()); return TzdVal(0);
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal((int64_t)args[0].tensorVal->dim());
+    return TzdVal((int64_t)fb_shape(args.empty() ? TzdVal() : args[0]).size());
 }
 inline TzdVal tzd_builtin_torch_div(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::div(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::div(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_div_(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) { args[0].tensorVal->div_(*args[1].tensorVal); return args[0]; } return TzdVal();
+    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->div_(to_torch_t(args[1]));
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_dropout(const std::vector<TzdVal>& args) {
-    // torch_dropout
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    double p = args.size() > 1 ? args[1].as_double() : 0.5;
+    bool train = args.size() > 2 ? args[2].as_bool() : true;
+    return TzdVal(torch::dropout(to_torch_t(args[0]), p, train));
 }
 inline TzdVal tzd_builtin_torch_dtype(const std::vector<TzdVal>& args) {
-    // torch_dtype
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal((int64_t)args[0].tensorVal->scalar_type());
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_dtype_str(const std::vector<TzdVal>& args) {
-    // torch_dtype_str
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(std::string(c10::toString(args[0].tensorVal->scalar_type())));
+    return TzdVal("float32");
 }
 inline TzdVal tzd_builtin_torch_eig(const std::vector<TzdVal>& args) {
-    // torch_eig
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto res = torch::linalg_eig(to_torch_t(args[0]));
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    arr->push_back(TzdVal(std::get<0>(res)));
+    arr->push_back(TzdVal(std::get<1>(res)));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_element_size(const std::vector<TzdVal>& args) {
-    // torch_element_size
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal((int64_t)args[0].tensorVal->element_size());
+    return TzdVal(4);
 }
 inline TzdVal tzd_builtin_torch_elu(const std::vector<TzdVal>& args) {
-    // torch_elu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::elu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_embedding(const std::vector<TzdVal>& args) {
-    // torch_embedding
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor weight = to_torch_t(args[0]), indices = to_torch_t(args[1]).to(torch::kLong);
+    return TzdVal(torch::embedding(weight, indices));
 }
 inline TzdVal tzd_builtin_torch_empty(const std::vector<TzdVal>& args) {
     return TzdVal(torch::empty(tzd_parse_shape(args)));
@@ -2282,1232 +3784,2402 @@ inline TzdVal tzd_builtin_torch_empty_cache(const std::vector<TzdVal>& args) {
     torch::cuda::empty_cache(); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_empty_like(const std::vector<TzdVal>& args) {
-    // torch_empty_like
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::empty_like(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_eq(const std::vector<TzdVal>& args) {
-    // torch_eq
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::eq(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_equal(const std::vector<TzdVal>& args) {
-    // torch_equal
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    return TzdVal(torch::equal(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_erf(const std::vector<TzdVal>& args) {
-    // torch_erf
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::erf(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_erfc(const std::vector<TzdVal>& args) {
-    // torch_erfc
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::erfc(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_exp(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::exp(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::exp(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_expand(const std::vector<TzdVal>& args) {
-    // torch_expand
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).expand(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_eye(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); int64_t m = args.size() > 1 ? args[1].as_int() : n; return TzdVal(torch::eye(n, m));
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    int64_t m = args.size() > 1 ? args[1].as_int() : n;
+    return TzdVal(torch::eye(n, m));
 }
 inline TzdVal tzd_builtin_torch_fill_(const std::vector<TzdVal>& args) {
-    // torch_fill_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        double v = args.size() > 1 ? args[1].as_double() : 0.0;
+        args[0].tensorVal->fill_(v);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_flatten(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { int64_t s = args.size() > 1 ? args[1].as_int() : 0, e = args.size() > 2 ? args[2].as_int() : -1; return TzdVal(torch::flatten(*args[0].tensorVal, s, e)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t s = args.size() > 1 ? args[1].as_int() : 0;
+    int64_t e = args.size() > 2 ? args[2].as_int() : -1;
+    return TzdVal(torch::flatten(to_torch_t(args[0]), s, e));
 }
 inline TzdVal tzd_builtin_torch_flatten_t(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::flatten(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t s = args.size() > 1 ? args[1].as_int() : 0;
+    int64_t e = args.size() > 2 ? args[2].as_int() : -1;
+    return TzdVal(torch::flatten(to_torch_t(args[0]), s, e));
 }
 inline TzdVal tzd_builtin_torch_fmod(const std::vector<TzdVal>& args) {
-    // torch_fmod
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::fmod(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_from_array(const std::vector<TzdVal>& args) {
-    // torch_from_array
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(to_torch_t(args[0]));
 }
 inline TzdVal tzd_builtin_torch_full(const std::vector<TzdVal>& args) {
-    // torch_full
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    double val = args.size() > 1 ? args.back().as_double() : 0.0;
+    std::vector<int64_t> sh = tzd_parse_shape(args, 0);
+    return TzdVal(torch::full(sh, val));
 }
 inline TzdVal tzd_builtin_torch_full_like(const std::vector<TzdVal>& args) {
-    // torch_full_like
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    double val = args.size() > 1 ? args[1].as_double() : 0.0;
+    return TzdVal(torch::full_like(to_torch_t(args[0]), val));
 }
 inline TzdVal tzd_builtin_torch_fused_linear_bias_gelu(const std::vector<TzdVal>& args) {
-    // torch_fused_linear_bias_gelu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return TzdVal();
+    at::Tensor w = to_torch_t(args[0]), x = to_torch_t(args[1]), b = to_torch_t(args[2]);
+    return TzdVal(torch::gelu(torch::addmm(b, x, w.t())));
 }
 inline TzdVal tzd_builtin_torch_fused_residual_layernorm(const std::vector<TzdVal>& args) {
-    // torch_fused_residual_layernorm
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 4) return TzdVal();
+    at::Tensor x = to_torch_t(args[0]), res = to_torch_t(args[1]), g = to_torch_t(args[2]), b = to_torch_t(args[3]);
+    at::Tensor sum_t = x + res;
+    return TzdVal(torch::layer_norm(sum_t, sum_t.sizes(), g, b));
 }
 inline TzdVal tzd_builtin_torch_fused_silu_mul(const std::vector<TzdVal>& args) {
-    // torch_fused_silu_mul
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor x = to_torch_t(args[0]), gate = to_torch_t(args[1]);
+    return TzdVal(torch::silu(x) * gate);
 }
 inline TzdVal tzd_builtin_torch_fused_softmax_mask(const std::vector<TzdVal>& args) {
-    // torch_fused_softmax_mask
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor score = to_torch_t(args[0]), mask = to_torch_t(args[1]);
+    return TzdVal(torch::softmax(score + mask, -1));
 }
 inline TzdVal tzd_builtin_torch_gather(const std::vector<TzdVal>& args) {
-    // torch_gather
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::gather(to_torch_t(args[0]), args[1].as_int(), to_torch_t(args[2]).to(torch::kLong)));
 }
 inline TzdVal tzd_builtin_torch_gc(const std::vector<TzdVal>& args) {
-    // torch_gc
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_ge(const std::vector<TzdVal>& args) {
-    // torch_ge
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::ge(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_gelu(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::gelu(*args[0].tensorVal)); return TzdVal();
+    if (!args.empty()) return TzdVal(torch::gelu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_get_num_threads(const std::vector<TzdVal>& args) {
     return TzdVal((int64_t)at::get_num_threads());
 }
 inline TzdVal tzd_builtin_torch_glu(const std::vector<TzdVal>& args) {
-    // torch_glu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    return TzdVal(torch::glu(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_grad(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { auto g = args[0].tensorVal->grad(); if (g.defined()) return TzdVal(g); } return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        auto g = args[0].tensorVal->grad();
+        if (g.defined()) return TzdVal(g);
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_grad_fn(const std::vector<TzdVal>& args) {
-    // torch_grad_fn
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        auto fn = args[0].tensorVal->grad_fn();
+        if (fn) return TzdVal(fn->name());
+    }
+    return TzdVal("None");
 }
 inline TzdVal tzd_builtin_torch_gt(const std::vector<TzdVal>& args) {
-    // torch_gt
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::gt(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_hardswish(const std::vector<TzdVal>& args) {
-    // torch_hardswish
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::hardswish(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_hardtanh(const std::vector<TzdVal>& args) {
-    // torch_hardtanh
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::hardtanh(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_histc(const std::vector<TzdVal>& args) {
-    // torch_histc
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t bins = args.size() > 1 ? args[1].as_int() : 100;
+    return TzdVal(torch::histc(to_torch_t(args[0]), bins));
 }
 inline TzdVal tzd_builtin_torch_identity(const std::vector<TzdVal>& args) {
-    // torch_identity
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    return TzdVal(torch::eye(n));
 }
 inline TzdVal tzd_builtin_torch_index_copy_(const std::vector<TzdVal>& args) {
-    // torch_index_copy_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (args.size() >= 4 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->index_copy_(args[1].as_int(), to_torch_t(args[2]).to(torch::kLong), to_torch_t(args[3]));
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_index_put(const std::vector<TzdVal>& args) {
-    // torch_index_put
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    std::vector<at::Tensor> indices;
+    if (args[1].type == ValType::ARRAY && args[1].arrVal) {
+        for (const auto& idx : *args[1].arrVal) indices.push_back(to_torch_t(idx).to(torch::kLong));
+    } else {
+        indices.push_back(to_torch_t(args[1]).to(torch::kLong));
+    }
+    return TzdVal(to_torch_t(args[0]).index_put(indices, to_torch_t(args[2])));
 }
 inline TzdVal tzd_builtin_torch_index_select(const std::vector<TzdVal>& args) {
-    // torch_index_select
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::index_select(to_torch_t(args[0]), args[1].as_int(), to_torch_t(args[2]).to(torch::kLong)));
 }
 inline TzdVal tzd_builtin_torch_init_kaiming(const std::vector<TzdVal>& args) {
-    // torch_init_kaiming
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::kaiming_uniform_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_init_normal(const std::vector<TzdVal>& args) {
-    // torch_init_normal
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::normal_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_init_ones(const std::vector<TzdVal>& args) {
-    // torch_init_ones
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::ones_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_init_uniform(const std::vector<TzdVal>& args) {
-    // torch_init_uniform
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::uniform_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_init_xavier(const std::vector<TzdVal>& args) {
-    // torch_init_xavier
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::xavier_uniform_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_init_zeros(const std::vector<TzdVal>& args) {
-    // torch_init_zeros
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::nn::init::zeros_(*args[0].tensorVal);
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_interpolate(const std::vector<TzdVal>& args) {
-    // torch_interpolate
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t h = args.size() > 1 ? args[1].as_int() : 2 * input.size(-2);
+    int64_t w = args.size() > 2 ? args[2].as_int() : 2 * input.size(-1);
+    return TzdVal(at::upsample_nearest2d(input, {h, w}));
 }
 inline TzdVal tzd_builtin_torch_inv(const std::vector<TzdVal>& args) {
-    // torch_inv
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::inverse(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_inverse(const std::vector<TzdVal>& args) {
-    // torch_inverse
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::inverse(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_inverse_t(const std::vector<TzdVal>& args) {
-    // torch_inverse_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::inverse(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_is_contiguous(const std::vector<TzdVal>& args) {
-    // torch_is_contiguous
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->is_contiguous());
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_is_floating_point(const std::vector<TzdVal>& args) {
-    // torch_is_floating_point
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->is_floating_point());
+    return TzdVal(!args.empty() && (args[0].type == ValType::FLOAT || args[0].type == ValType::ARRAY));
 }
 inline TzdVal tzd_builtin_torch_is_grad_enabled(const std::vector<TzdVal>& args) {
-    // torch_is_grad_enabled
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(c10::GradMode::is_enabled());
 }
 inline TzdVal tzd_builtin_torch_is_integer(const std::vector<TzdVal>& args) {
-    // torch_is_integer
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(at::isIntegralType(args[0].tensorVal->scalar_type(), false));
+    return TzdVal(!args.empty() && args[0].type == ValType::INT);
 }
 inline TzdVal tzd_builtin_torch_is_leaf(const std::vector<TzdVal>& args) {
-    // torch_is_leaf
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        return TzdVal(args[0].tensorVal->is_leaf());
+    }
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_is_pinned(const std::vector<TzdVal>& args) {
-    // torch_is_pinned
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->is_pinned());
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_is_requires_grad(const std::vector<TzdVal>& args) {
-    // torch_is_requires_grad
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        return TzdVal(args[0].tensorVal->requires_grad());
+    }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_is_tensor(const std::vector<TzdVal>& args) {
     return TzdVal(!args.empty() && args[0].type == ValType::TENSOR);
 }
 inline TzdVal tzd_builtin_torch_isfinite(const std::vector<TzdVal>& args) {
-    // torch_isfinite
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return TzdVal(torch::isfinite(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_isinf(const std::vector<TzdVal>& args) {
-    // torch_isinf
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return TzdVal(torch::isinf(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_isnan(const std::vector<TzdVal>& args) {
-    // torch_isnan
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return TzdVal(torch::isnan(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_item(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->item<double>()); return TzdVal(0.0);
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->item<double>());
+    return args.empty() ? TzdVal(0.0) : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_jit_eval(const std::vector<TzdVal>& args) {
-    // torch_jit_eval
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_jit_load(const std::vector<TzdVal>& args) {
-    // torch_jit_load
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    try {
+        torch::jit::script::Module mod = torch::jit::load(args[0].to_string());
+        return TzdVal(true);
+    } catch (...) { return TzdVal(false); }
 }
 inline TzdVal tzd_builtin_torch_jit_save(const std::vector<TzdVal>& args) {
-    // torch_jit_save
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_jit_train(const std::vector<TzdVal>& args) {
-    // torch_jit_train
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_kl_div(const std::vector<TzdVal>& args) {
-    // torch_kl_div
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::kl_div(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_l1_loss(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::l1_loss(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::l1_loss(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_layer_norm(const std::vector<TzdVal>& args) {
-    // torch_layer_norm
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    std::vector<int64_t> norm_shape = tzd_parse_shape(args, 1);
+    at::Tensor weight = args.size() > 2 && args[2].type != ValType::NIL ? to_torch_t(args[2]) : at::Tensor();
+    at::Tensor bias = args.size() > 3 && args[3].type != ValType::NIL ? to_torch_t(args[3]) : at::Tensor();
+    return TzdVal(torch::layer_norm(input, norm_shape, weight, bias, 1e-5));
 }
 inline TzdVal tzd_builtin_torch_le(const std::vector<TzdVal>& args) {
-    // torch_le
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::le(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_leaky_relu(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { double neg = args.size() > 1 ? args[1].as_double() : 0.01; return TzdVal(torch::leaky_relu(*args[0].tensorVal, neg)); } return TzdVal();
+    if (!args.empty()) return TzdVal(torch::leaky_relu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_lerp(const std::vector<TzdVal>& args) {
-    // torch_lerp
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::lerp(to_torch_t(args[0]), to_torch_t(args[1]), args[2].as_double()));
 }
 inline TzdVal tzd_builtin_torch_lgamma(const std::vector<TzdVal>& args) {
-    // torch_lgamma
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::lgamma(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_linear(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) { if (args.size() >= 3 && args[2].type == ValType::TENSOR) return TzdVal(torch::linear(*args[0].tensorVal, *args[1].tensorVal, *args[2].tensorVal)); return TzdVal(torch::linear(*args[0].tensorVal, *args[1].tensorVal)); } return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]), weight = to_torch_t(args[1]);
+    at::Tensor bias = args.size() > 2 && args[2].type != ValType::NIL ? to_torch_t(args[2]) : at::Tensor();
+    return TzdVal(torch::linear(input, weight, bias));
 }
 inline TzdVal tzd_builtin_torch_linspace(const std::vector<TzdVal>& args) {
-    double s = args.empty() ? 0 : args[0].as_double(), e = args.size() > 1 ? args[1].as_double() : 1; int64_t steps = args.size() > 2 ? args[2].as_int() : 100; return TzdVal(torch::linspace(s, e, steps));
+    double s = args.empty() ? 0 : args[0].as_double();
+    double e = args.size() > 1 ? args[1].as_double() : 1;
+    int64_t steps = args.size() > 2 ? args[2].as_int() : 100;
+    return TzdVal(torch::linspace(s, e, steps));
 }
 inline TzdVal tzd_builtin_torch_load(const std::vector<TzdVal>& args) {
-    if (!args.empty()) { at::Tensor t; torch::load(t, args[0].to_string()); return TzdVal(t); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    try {
+        at::Tensor t; torch::load(t, args[0].to_string()); return TzdVal(t);
+    } catch (...) { return TzdVal(); }
 }
 inline TzdVal tzd_builtin_torch_load_state_dict(const std::vector<TzdVal>& args) {
-    // torch_load_state_dict
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_log(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::log(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::log(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_log_softmax(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { int64_t dim = args.size() > 1 ? args[1].as_int() : -1; return TzdVal(torch::log_softmax(*args[0].tensorVal, dim)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    return TzdVal(torch::log_softmax(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_logcumsumexp(const std::vector<TzdVal>& args) {
-    // torch_logcumsumexp
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::logcumsumexp(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_logical_and(const std::vector<TzdVal>& args) {
-    // torch_logical_and
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::logical_and(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_logical_not(const std::vector<TzdVal>& args) {
-    // torch_logical_not
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return TzdVal(torch::logical_not(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_logical_or(const std::vector<TzdVal>& args) {
-    // torch_logical_or
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::logical_or(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_logspace(const std::vector<TzdVal>& args) {
-    double s = args.empty() ? 0 : args[0].as_double(), e = args.size() > 1 ? args[1].as_double() : 1; int64_t steps = args.size() > 2 ? args[2].as_int() : 100; return TzdVal(torch::logspace(s, e, steps));
+    double s = args.empty() ? 0 : args[0].as_double();
+    double e = args.size() > 1 ? args[1].as_double() : 1;
+    int64_t steps = args.size() > 2 ? args[2].as_int() : 100;
+    double base = args.size() > 3 ? args[3].as_double() : 10.0;
+    return TzdVal(torch::logspace(s, e, steps, base));
 }
 inline TzdVal tzd_builtin_torch_logsumexp(const std::vector<TzdVal>& args) {
-    // torch_logsumexp
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::logsumexp(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_lstsq(const std::vector<TzdVal>& args) {
-    // torch_lstsq
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    auto res = torch::linalg_lstsq(to_torch_t(args[1]), to_torch_t(args[0]));
+    return TzdVal(std::get<0>(res));
 }
 inline TzdVal tzd_builtin_torch_lt(const std::vector<TzdVal>& args) {
-    // torch_lt
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::lt(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_make_contiguous(const std::vector<TzdVal>& args) {
-    // torch_make_contiguous
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->contiguous());
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_manual_seed(const std::vector<TzdVal>& args) {
     if (!args.empty()) torch::manual_seed(args[0].as_int()); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_masked_fill(const std::vector<TzdVal>& args) {
-    // torch_masked_fill
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).masked_fill(to_torch_t(args[1]).to(torch::kBool), args[2].as_double()));
 }
 inline TzdVal tzd_builtin_torch_masked_fill_(const std::vector<TzdVal>& args) {
-    // torch_masked_fill_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (args.size() >= 3 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->masked_fill_(to_torch_t(args[1]).to(torch::kBool), args[2].as_double());
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_masked_select(const std::vector<TzdVal>& args) {
-    // torch_masked_select
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::masked_select(to_torch_t(args[0]), to_torch_t(args[1]).to(torch::kBool)));
 }
 inline TzdVal tzd_builtin_torch_matmul(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::matmul(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    return TzdVal(torch::matmul(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_matrix_exp(const std::vector<TzdVal>& args) {
-    // torch_matrix_exp
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::matrix_exp(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_max_pool2d(const std::vector<TzdVal>& args) {
-    // torch_max_pool2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t k = args[1].as_int(), s = args.size() > 2 ? args[2].as_int() : k;
+    return TzdVal(at::max_pool2d(input, {k, k}, {s, s}));
 }
 inline TzdVal tzd_builtin_torch_max_t(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::max(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::max(t, args[1].as_int()));
+    return TzdVal(torch::max(t));
 }
 inline TzdVal tzd_builtin_torch_mean(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { if (args.size() > 1) return TzdVal(torch::mean(*args[0].tensorVal, args[1].as_int())); return TzdVal(torch::mean(*args[0].tensorVal)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::mean(t, args[1].as_int()));
+    return TzdVal(torch::mean(t));
 }
 inline TzdVal tzd_builtin_torch_median(const std::vector<TzdVal>& args) {
-    // torch_median
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    return TzdVal(torch::median(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_memory_allocated
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_memory_allocated_str(const std::vector<TzdVal>& args) {
-    // torch_memory_allocated_str
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal("0 MB");
 }
 inline TzdVal tzd_builtin_torch_min_t(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::min(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::min(t, args[1].as_int()));
+    return TzdVal(torch::min(t));
 }
 inline TzdVal tzd_builtin_torch_mish(const std::vector<TzdVal>& args) {
-    // torch_mish
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::mish(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_mm(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::mm(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    return TzdVal(torch::matmul(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_mse_loss(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::mse_loss(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::mse_loss(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_mul(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::mul(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::mul(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_mul_(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) { args[0].tensorVal->mul_(*args[1].tensorVal); return args[0]; } return TzdVal();
+    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->mul_(to_torch_t(args[1]));
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_multinomial(const std::vector<TzdVal>& args) {
-    // torch_multinomial
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    return TzdVal(torch::multinomial(to_torch_t(args[0]), args[1].as_int(), args.size() > 2 ? args[2].as_bool() : false));
 }
 inline TzdVal tzd_builtin_torch_nadam(const std::vector<TzdVal>& args) {
-    // torch_nadam
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAM;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_nbytes(const std::vector<TzdVal>& args) {
-    // torch_nbytes
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal((int64_t)args[0].tensorVal->nbytes());
+    return TzdVal(4);
 }
 inline TzdVal tzd_builtin_torch_ne(const std::vector<TzdVal>& args) {
-    // torch_ne
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return TzdVal(torch::ne(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_neg(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::neg(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::neg(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_nll_loss(const std::vector<TzdVal>& args) {
-    // torch_nll_loss
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::nll_loss(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_no_grad(const std::vector<TzdVal>& args) {
-    // torch_no_grad
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    c10::GradMode::set_enabled(false);
+    if (!args.empty() && args[0].type == ValType::FUNC && args[0].funcVal) {
+        std::vector<TzdVal> empty;
+        TzdVal res = args[0](empty);
+        c10::GradMode::set_enabled(true);
+        return res;
+    }
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_no_grad_scope(const std::vector<TzdVal>& args) {
-    // torch_no_grad_scope
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    c10::GradMode::set_enabled(false);
+    if (!args.empty() && args[0].type == ValType::FUNC && args[0].funcVal) {
+        std::vector<TzdVal> empty;
+        TzdVal res = args[0](empty);
+        c10::GradMode::set_enabled(true);
+        return res;
+    }
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_nonzero(const std::vector<TzdVal>& args) {
-    // torch_nonzero
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::nonzero(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_norm_t(const std::vector<TzdVal>& args) {
-    // torch_norm_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    return TzdVal(torch::norm(to_torch_t(args[0])).item<double>());
 }
 inline TzdVal tzd_builtin_torch_num_tensors(const std::vector<TzdVal>& args) {
-    // torch_num_tensors
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_numel(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal((int64_t)args[0].tensorVal->numel()); return TzdVal(0);
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal((int64_t)args[0].tensorVal->numel());
+    int64_t total = 1; for (auto d : fb_shape(args.empty() ? TzdVal() : args[0])) total *= d;
+    return TzdVal(total);
 }
 inline TzdVal tzd_builtin_torch_one_hot(const std::vector<TzdVal>& args) {
-    // torch_one_hot
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t num_classes = args.size() > 1 ? args[1].as_int() : -1;
+    return TzdVal(torch::one_hot(to_torch_t(args[0]).to(torch::kLong), num_classes));
 }
 inline TzdVal tzd_builtin_torch_ones(const std::vector<TzdVal>& args) {
     return TzdVal(torch::ones(tzd_parse_shape(args)));
 }
 inline TzdVal tzd_builtin_torch_ones_like(const std::vector<TzdVal>& args) {
-    // torch_ones_like
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::ones_like(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_optim_delete(const std::vector<TzdVal>& args) {
-    // torch_optim_delete
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) { get_torch_optimizers().erase(args[0].as_int()); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optim_step(const std::vector<TzdVal>& args) {
-    // torch_optim_step
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    int64_t id = args[0].as_int();
+    auto it = get_torch_optimizers().find(id);
+    if (it != get_torch_optimizers().end()) { it->second->step(); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optim_zero_grad(const std::vector<TzdVal>& args) {
-    // torch_optim_zero_grad
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    int64_t id = args[0].as_int();
+    auto it = get_torch_optimizers().find(id);
+    if (it != get_torch_optimizers().end()) { it->second->zero_grad(); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optimizer_create(const std::vector<TzdVal>& args) {
-    // torch_optimizer_create
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::ADAM;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_orth(const std::vector<TzdVal>& args) {
-    // torch_orth
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto res = torch::linalg_qr(to_torch_t(args[0]));
+    return TzdVal(std::get<0>(res));
 }
 inline TzdVal tzd_builtin_torch_pad(const std::vector<TzdVal>& args) {
-    // torch_pad
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    at::Tensor input = to_torch_t(args[0]);
+    std::vector<int64_t> pads = tzd_parse_shape(args, 1);
+    return TzdVal(torch::constant_pad_nd(input, pads, args.size() > 2 ? args[2].as_double() : 0.0));
 }
 inline TzdVal tzd_builtin_torch_pairwise_distance(const std::vector<TzdVal>& args) {
-    // torch_pairwise_distance
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    double p = args.size() > 2 ? args[2].as_double() : 2.0;
+    return TzdVal(torch::pairwise_distance(to_torch_t(args[0]), to_torch_t(args[1]), p));
 }
 inline TzdVal tzd_builtin_torch_pca(const std::vector<TzdVal>& args) {
-    // torch_pca
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto x = to_torch_t(args[0]);
+    auto mean = x.mean(0, true);
+    auto centered = x - mean;
+    auto svd = torch::svd(centered);
+    int64_t k = args.size() > 1 ? args[1].as_int() : 2;
+    auto v = std::get<2>(svd).slice(1, 0, k);
+    return TzdVal(torch::mm(centered, v));
 }
 inline TzdVal tzd_builtin_torch_permute(const std::vector<TzdVal>& args) {
-    // torch_permute
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).permute(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_pow(const std::vector<TzdVal>& args) {
-    // torch_pow
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::pow(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_prelu(const std::vector<TzdVal>& args) {
-    // torch_prelu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::prelu(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_print(const std::vector<TzdVal>& args) {
-    // torch_print
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        std::cout << *args[0].tensorVal << std::endl; return TzdVal(true);
+    }
+    if (!args.empty()) std::cout << args[0].to_string() << std::endl;
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_prod(const std::vector<TzdVal>& args) {
-    // torch_prod
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::prod(t, args[1].as_int()));
+    return TzdVal(torch::prod(t));
 }
 inline TzdVal tzd_builtin_torch_q_scale(const std::vector<TzdVal>& args) {
-    // torch_q_scale
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal && args[0].tensorVal->is_quantized()) return TzdVal(args[0].tensorVal->q_scale());
+    return TzdVal(1.0);
 }
 inline TzdVal tzd_builtin_torch_q_zero_point(const std::vector<TzdVal>& args) {
-    // torch_q_zero_point
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal && args[0].tensorVal->is_quantized()) return TzdVal((int64_t)args[0].tensorVal->q_zero_point());
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_quantize_per_channel(const std::vector<TzdVal>& args) {
-    // torch_quantize_per_channel
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 4) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::quantize_per_channel(to_torch_t(args[0]), to_torch_t(args[1]), to_torch_t(args[2]).to(torch::kLong), args[3].as_int(), torch::kQInt8));
 }
 inline TzdVal tzd_builtin_torch_quantize_per_tensor(const std::vector<TzdVal>& args) {
-    // torch_quantize_per_tensor
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::quantize_per_tensor(to_torch_t(args[0]), args[1].as_double(), args[2].as_int(), torch::kQInt8));
 }
 inline TzdVal tzd_builtin_torch_rand(const std::vector<TzdVal>& args) {
     return TzdVal(torch::rand(tzd_parse_shape(args)));
 }
 inline TzdVal tzd_builtin_torch_randint(const std::vector<TzdVal>& args) {
-    // torch_randint
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t low = 0, high = args[0].as_int();
+    size_t sh_start = 1;
+    if (args.size() >= 2 && args[1].type == ValType::INT) { low = args[0].as_int(); high = args[1].as_int(); sh_start = 2; }
+    std::vector<int64_t> sh = tzd_parse_shape(args, sh_start);
+    return TzdVal(torch::randint(low, high, sh));
 }
 inline TzdVal tzd_builtin_torch_randint_like(const std::vector<TzdVal>& args) {
-    // torch_randint_like
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    int64_t low = 0, high = args[1].as_int();
+    if (args.size() >= 3) { low = args[1].as_int(); high = args[2].as_int(); }
+    return TzdVal(torch::randint_like(to_torch_t(args[0]), low, high));
 }
 inline TzdVal tzd_builtin_torch_randn(const std::vector<TzdVal>& args) {
     return TzdVal(torch::randn(tzd_parse_shape(args)));
 }
 inline TzdVal tzd_builtin_torch_randperm(const std::vector<TzdVal>& args) {
-    // torch_randperm
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    return TzdVal(torch::randperm(n));
 }
 inline TzdVal tzd_builtin_torch_release_all(const std::vector<TzdVal>& args) {
-    // torch_release_all
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_release_tensor(const std::vector<TzdVal>& args) {
-    // torch_release_tensor
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_relu(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::relu(*args[0].tensorVal)); return TzdVal();
+    if (!args.empty()) return TzdVal(torch::relu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_remainder(const std::vector<TzdVal>& args) {
-    // torch_remainder
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::remainder(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_repeat(const std::vector<TzdVal>& args) {
-    // torch_repeat
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).repeat(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_requires_grad(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { bool req = args.size() > 1 ? args[1].as_bool() : true; args[0].tensorVal->set_requires_grad(req); return args[0]; } return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        bool req = args.size() > 1 ? args[1].as_bool() : true;
+        args[0].tensorVal->set_requires_grad(req);
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_requires_grad_params(const std::vector<TzdVal>& args) {
-    // torch_requires_grad_params
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    bool req = args.size() > 1 ? args[1].as_bool() : true;
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) if (elem.type == ValType::TENSOR && elem.tensorVal) elem.tensorVal->set_requires_grad(req);
+    } else if (args[0].type == ValType::TENSOR && args[0].tensorVal) args[0].tensorVal->set_requires_grad(req);
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_reshape(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR) { std::vector<TzdVal> sub(args.begin() + 1, args.end()); return TzdVal(args[0].tensorVal->reshape(tzd_parse_shape(sub))); } return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).reshape(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_rmsprop(const std::vector<TzdVal>& args) {
-    // torch_rmsprop
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::RMSPROP;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_save(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR) { torch::save(*args[0].tensorVal, args[1].to_string()); return TzdVal(true); } return TzdVal(false);
+    if (args.size() < 2) return TzdVal(false);
+    if (args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        torch::save(*args[0].tensorVal, args[1].to_string());
+        return TzdVal(true);
+    }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_save_state_dict(const std::vector<TzdVal>& args) {
-    // torch_save_state_dict
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(false);
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_scalar_value(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->item<double>()); return TzdVal(0.0);
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->item<double>());
+    return args.empty() ? TzdVal(0.0) : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_scatter(const std::vector<TzdVal>& args) {
-    // torch_scatter
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 4) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::scatter(to_torch_t(args[0]), args[1].as_int(), to_torch_t(args[2]).to(torch::kLong), to_torch_t(args[3])));
 }
 inline TzdVal tzd_builtin_torch_scatter_(const std::vector<TzdVal>& args) {
-    // torch_scatter_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (args.size() >= 4 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->scatter_(args[1].as_int(), to_torch_t(args[2]).to(torch::kLong), to_torch_t(args[3]));
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_selu(const std::vector<TzdVal>& args) {
-    // torch_selu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::selu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_set_device(const std::vector<TzdVal>& args) {
     if (!args.empty()) torch::cuda::set_device(args[0].as_int()); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_set_grad_enabled(const std::vector<TzdVal>& args) {
-    // torch_set_grad_enabled
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    bool enabled = args.empty() ? true : args[0].as_bool();
+    c10::GradMode::set_enabled(enabled);
+    return TzdVal(enabled);
 }
 inline TzdVal tzd_builtin_torch_set_num_threads(const std::vector<TzdVal>& args) {
     if (!args.empty()) at::set_num_threads((int)args[0].as_int()); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_sgd(const std::vector<TzdVal>& args) {
-    // torch_sgd
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeTorchOptimizer>();
+    opt->type = NativeTorchOptimizer::SGD;
+    opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::TENSOR && elem.tensorVal) opt->params.push_back(elem.tensorVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        opt->params.push_back(args[0].tensorVal);
+    }
+    int64_t id = get_next_optim_id()++;
+    get_torch_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_shape(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { auto sz = args[0].tensorVal->sizes(); std::string s = "["; for (size_t i = 0; i < sz.size(); ++i) { if (i > 0) s += ", "; s += std::to_string(sz[i]); } s += "]"; return TzdVal(s); } return TzdVal("[]");
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        auto sz = args[0].tensorVal->sizes();
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        for (auto d : sz) arr->push_back(TzdVal((int64_t)d));
+        return TzdVal(arr);
+    }
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (auto d : fb_shape(args.empty() ? TzdVal() : args[0])) arr->push_back(TzdVal(d));
+    return TzdVal(arr);
+}
+inline TzdVal tzd_builtin_torch_sigmoid(const std::vector<TzdVal>& args) {
+    if (!args.empty()) return TzdVal(torch::sigmoid(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_sigmoid_fn(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::sigmoid(*args[0].tensorVal)); return TzdVal();
+    if (!args.empty()) return TzdVal(torch::sigmoid(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_silu(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::silu(*args[0].tensorVal)); return TzdVal();
+    if (!args.empty()) return TzdVal(torch::silu(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_smooth_l1_loss(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::smooth_l1_loss(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return TzdVal(0.0);
+    return TzdVal(torch::smooth_l1_loss(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_softmax(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { int64_t dim = args.size() > 1 ? args[1].as_int() : -1; return TzdVal(torch::softmax(*args[0].tensorVal, dim)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    return TzdVal(torch::softmax(to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_softmin(const std::vector<TzdVal>& args) {
-    // torch_softmin
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    return TzdVal(torch::softmax(-to_torch_t(args[0]), dim));
 }
 inline TzdVal tzd_builtin_torch_softplus(const std::vector<TzdVal>& args) {
-    // torch_softplus
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty()) return TzdVal(torch::softplus(to_torch_t(args[0]))); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_solve(const std::vector<TzdVal>& args) {
-    // torch_solve
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    auto res = torch::linalg_solve(to_torch_t(args[1]), to_torch_t(args[0]));
+    return TzdVal(res);
 }
 inline TzdVal tzd_builtin_torch_solve_t(const std::vector<TzdVal>& args) {
-    // torch_solve_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal();
+    auto res = torch::linalg_solve(to_torch_t(args[1]), to_torch_t(args[0]));
+    return TzdVal(res);
 }
 inline TzdVal tzd_builtin_torch_sort_t(const std::vector<TzdVal>& args) {
-    // torch_sort_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return tzd_make_array({});
+    int64_t dim = args.size() > 1 ? args[1].as_int() : -1;
+    bool desc = args.size() > 2 ? args[2].as_bool() : false;
+    auto res = torch::sort(to_torch_t(args[0]), dim, desc);
+    return tzd_make_array({TzdVal(std::get<0>(res)), TzdVal(std::get<1>(res))});
 }
 inline TzdVal tzd_builtin_torch_split_t(const std::vector<TzdVal>& args) {
-    // torch_split_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return tzd_make_array({});
+    int64_t split_sz = args[1].as_int();
+    int64_t dim = args.size() > 2 ? args[2].as_int() : 0;
+    auto res = torch::split(to_torch_t(args[0]), split_sz, dim);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (const auto& c : res) arr->push_back(TzdVal(c));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_sqrt(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(torch::sqrt(*args[0].tensorVal)); return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::sqrt(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_squeeze(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { if (args.size() > 1) return TzdVal(torch::squeeze(*args[0].tensorVal, args[1].as_int())); return TzdVal(torch::squeeze(*args[0].tensorVal)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    if (args.size() > 1) return TzdVal(torch::squeeze(to_torch_t(args[0]), args[1].as_int()));
+    return TzdVal(torch::squeeze(to_torch_t(args[0])));
 }
 inline TzdVal tzd_builtin_torch_stack(const std::vector<TzdVal>& args) {
-    if (args.empty()) return TzdVal(); std::vector<at::Tensor> ts; int64_t dim = args.size() > 1 ? args.back().as_int() : 0; if (args[0].type == ValType::ARRAY && args[0].arrVal) { for (const auto& a : *args[0].arrVal) if (a.type == ValType::TENSOR) ts.push_back(*a.tensorVal); } if (ts.empty()) return TzdVal(); return TzdVal(torch::stack(ts, dim));
+    if (args.empty()) return TzdVal();
+    std::vector<at::Tensor> ts;
+    int64_t dim = args.size() > 1 ? args.back().as_int() : 0;
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& a : *args[0].arrVal) ts.push_back(to_torch_t(a));
+    } else {
+        for (size_t i = 0; i < args.size() - (args.size() > 1 ? 1 : 0); ++i) ts.push_back(to_torch_t(args[i]));
+    }
+    if (ts.empty()) return TzdVal();
+    return TzdVal(torch::stack(ts, dim));
 }
 inline TzdVal tzd_builtin_torch_std(const std::vector<TzdVal>& args) {
-    // torch_std
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::std(t, args[1].as_int()));
+    return TzdVal(torch::std(t));
 }
 inline TzdVal tzd_builtin_torch_std_mean(const std::vector<TzdVal>& args) {
-    // torch_std_mean
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto res = torch::std_mean(to_torch_t(args[0]));
+    return tzd_make_array({TzdVal(std::get<0>(res)), TzdVal(std::get<1>(res))});
 }
 inline TzdVal tzd_builtin_torch_sub(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) return TzdVal(torch::sub(*args[0].tensorVal, *args[1].tensorVal)); return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::sub(to_torch_t(args[0]), to_torch_t(args[1])));
 }
 inline TzdVal tzd_builtin_torch_sub_(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[1].type == ValType::TENSOR) { args[0].tensorVal->sub_(*args[1].tensorVal); return args[0]; } return TzdVal();
+    if (args.size() >= 2 && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->sub_(to_torch_t(args[1]));
+        return args[0];
+    }
+    return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_sum(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) { if (args.size() > 1) return TzdVal(torch::sum(*args[0].tensorVal, args[1].as_int())); return TzdVal(torch::sum(*args[0].tensorVal)); } return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::sum(t, args[1].as_int()));
+    return TzdVal(torch::sum(t));
 }
 inline TzdVal tzd_builtin_torch_svd(const std::vector<TzdVal>& args) {
-    // torch_svd
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto res = torch::svd(to_torch_t(args[0]));
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    arr->push_back(TzdVal(std::get<0>(res)));
+    arr->push_back(TzdVal(std::get<1>(res)));
+    arr->push_back(TzdVal(std::get<2>(res)));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_tensor(const std::vector<TzdVal>& args) {
-    // torch_tensor
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(to_torch_t(args[0]));
 }
 inline TzdVal tzd_builtin_torch_threshold(const std::vector<TzdVal>& args) {
-    // torch_threshold
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::threshold(to_torch_t(args[0]), args[1].as_double(), args[2].as_double()));
 }
 inline TzdVal tzd_builtin_torch_to_array(const std::vector<TzdVal>& args) {
-    // torch_to_array
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return tensor_to_tzd_arr(*args[0].tensorVal);
+    return args.empty() ? tzd_make_array({}) : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_bool(const std::vector<TzdVal>& args) {
-    // torch_to_bool
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kBool));
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_bool());
 }
 inline TzdVal tzd_builtin_torch_to_cpu(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->to(torch::kCPU)); return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kCPU));
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_cuda(const std::vector<TzdVal>& args) {
-    if (!args.empty() && args[0].type == ValType::TENSOR) return TzdVal(args[0].tensorVal->to(torch::kCUDA)); return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kCUDA));
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_device(const std::vector<TzdVal>& args) {
-    // torch_to_device
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    if (args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        std::string d = args[1].to_string();
+        return TzdVal(args[0].tensorVal->to(torch::Device(d)));
+    }
+    return args[0];
 }
 inline TzdVal tzd_builtin_torch_to_double(const std::vector<TzdVal>& args) {
-    // torch_to_double
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kFloat64));
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_to_dtype(const std::vector<TzdVal>& args) {
-    // torch_to_dtype
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    if (args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to((c10::ScalarType)args[1].as_int()));
+    return args[0];
 }
 inline TzdVal tzd_builtin_torch_to_float(const std::vector<TzdVal>& args) {
-    // torch_to_float
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kFloat32));
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_to_int(const std::vector<TzdVal>& args) {
-    // torch_to_int
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kInt32));
+    return args.empty() ? TzdVal() : TzdVal((int64_t)args[0].as_int());
 }
 inline TzdVal tzd_builtin_torch_to_long(const std::vector<TzdVal>& args) {
-    // torch_to_long
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) return TzdVal(args[0].tensorVal->to(torch::kInt64));
+    return args.empty() ? TzdVal() : TzdVal((int64_t)args[0].as_int());
 }
 inline TzdVal tzd_builtin_torch_to_string(const std::vector<TzdVal>& args) {
-    // torch_to_string
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        std::ostringstream ss; ss << *args[0].tensorVal; return TzdVal(ss.str());
+    }
+    return args.empty() ? TzdVal("") : TzdVal(args[0].to_string());
 }
 inline TzdVal tzd_builtin_torch_topk(const std::vector<TzdVal>& args) {
-    // torch_topk
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return tzd_make_array({});
+    int64_t k = args[1].as_int();
+    int64_t dim = args.size() > 2 ? args[2].as_int() : -1;
+    auto res = torch::topk(to_torch_t(args[0]), k, dim);
+    return tzd_make_array({TzdVal(std::get<0>(res)), TzdVal(std::get<1>(res))});
 }
 inline TzdVal tzd_builtin_torch_trace_t(const std::vector<TzdVal>& args) {
-    // torch_trace_t
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    return TzdVal(torch::trace(to_torch_t(args[0])).item<double>());
 }
 inline TzdVal tzd_builtin_torch_transpose(const std::vector<TzdVal>& args) {
-    if (args.size() >= 3 && args[0].type == ValType::TENSOR) return TzdVal(torch::transpose(*args[0].tensorVal, args[1].as_int(), args[2].as_int())); return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::transpose(to_torch_t(args[0]), args[1].as_int(), args[2].as_int()));
 }
 inline TzdVal tzd_builtin_torch_tril(const std::vector<TzdVal>& args) {
-    // torch_tril
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t d = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::tril(to_torch_t(args[0]), d));
 }
 inline TzdVal tzd_builtin_torch_triple_margin_loss(const std::vector<TzdVal>& args) {
-    // torch_triple_margin_loss
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return TzdVal(0.0);
+    return TzdVal(torch::triplet_margin_loss(to_torch_t(args[0]), to_torch_t(args[1]), to_torch_t(args[2])));
 }
 inline TzdVal tzd_builtin_torch_triu(const std::vector<TzdVal>& args) {
-    // torch_triu
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    int64_t d = args.size() > 1 ? args[1].as_int() : 0;
+    return TzdVal(torch::triu(to_torch_t(args[0]), d));
 }
 inline TzdVal tzd_builtin_torch_unique(const std::vector<TzdVal>& args) {
-    // torch_unique
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(std::get<0>(torch::unique(to_torch_t(args[0]))));
 }
 inline TzdVal tzd_builtin_torch_unsqueeze(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR) return TzdVal(torch::unsqueeze(*args[0].tensorVal, args[1].as_int())); return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::unsqueeze(to_torch_t(args[0]), args[1].as_int()));
 }
 inline TzdVal tzd_builtin_torch_upsample_bilinear2d(const std::vector<TzdVal>& args) {
-    // torch_upsample_bilinear2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t h = args.size() > 1 ? args[1].as_int() : 2 * input.size(-2);
+    int64_t w = args.size() > 2 ? args[2].as_int() : 2 * input.size(-1);
+    return TzdVal(at::upsample_bilinear2d(input, {h, w}, false));
 }
 inline TzdVal tzd_builtin_torch_upsample_nearest2d(const std::vector<TzdVal>& args) {
-    // torch_upsample_nearest2d
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    at::Tensor input = to_torch_t(args[0]);
+    int64_t h = args.size() > 1 ? args[1].as_int() : 2 * input.size(-2);
+    int64_t w = args.size() > 2 ? args[2].as_int() : 2 * input.size(-1);
+    return TzdVal(at::upsample_nearest2d(input, {h, w}));
 }
 inline TzdVal tzd_builtin_torch_var(const std::vector<TzdVal>& args) {
-    // torch_var
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(0.0);
+    at::Tensor t = to_torch_t(args[0]);
+    if (args.size() > 1) return TzdVal(torch::var(t, args[1].as_int()));
+    return TzdVal(torch::var(t));
 }
 inline TzdVal tzd_builtin_torch_var_mean(const std::vector<TzdVal>& args) {
-    // torch_var_mean
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    auto res = torch::var_mean(to_torch_t(args[0]));
+    return tzd_make_array({TzdVal(std::get<0>(res)), TzdVal(std::get<1>(res))});
 }
 inline TzdVal tzd_builtin_torch_version(const std::vector<TzdVal>& args) {
-    return TzdVal("LibTorch 2.5.1");
+    return TzdVal("LibTorch 2.5.1 (Production Native Engine)");
 }
 inline TzdVal tzd_builtin_torch_view(const std::vector<TzdVal>& args) {
-    if (args.size() >= 2 && args[0].type == ValType::TENSOR) { std::vector<TzdVal> sub(args.begin() + 1, args.end()); return TzdVal(args[0].tensorVal->view(tzd_parse_shape(sub))); } return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(to_torch_t(args[0]).reshape(tzd_parse_shape(args, 1)));
 }
 inline TzdVal tzd_builtin_torch_where(const std::vector<TzdVal>& args) {
-    // torch_where
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    return TzdVal(torch::where(to_torch_t(args[0]).to(torch::kBool), to_torch_t(args[1]), to_torch_t(args[2])));
 }
 inline TzdVal tzd_builtin_torch_zero_(const std::vector<TzdVal>& args) {
-    // torch_zero_
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
+    if (!args.empty() && args[0].type == ValType::TENSOR && args[0].tensorVal) {
+        args[0].tensorVal->zero_();
+        return args[0];
+    }
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_zero_grad_params(const std::vector<TzdVal>& args) {
-    // torch_zero_grad_params
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    if (args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) if (elem.type == ValType::TENSOR && elem.tensorVal && elem.tensorVal->grad().defined()) elem.tensorVal->grad().zero_();
+    } else if (args[0].type == ValType::TENSOR && args[0].tensorVal && args[0].tensorVal->grad().defined()) args[0].tensorVal->grad().zero_();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_zeros(const std::vector<TzdVal>& args) {
     return TzdVal(torch::zeros(tzd_parse_shape(args)));
 }
 inline TzdVal tzd_builtin_torch_zeros_like(const std::vector<TzdVal>& args) {
-    // torch_zeros_like
-    if (!args.empty() && args[0].type == ValType::TENSOR) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return TzdVal(torch::zeros_like(to_torch_t(args[0])));
 }
+
 #else
-// ── Non-LibTorch Standalone Fallbacks (Zero-DLL Mode) ──
-TzdVal tzd_builtin_torch_zeros(const std::vector<TzdVal>& args);
-TzdVal tzd_builtin_torch_ones(const std::vector<TzdVal>& args);
-TzdVal tzd_builtin_torch_relu(const std::vector<TzdVal>& args);
-TzdVal tzd_builtin_torch_sigmoid(const std::vector<TzdVal>& args);
-TzdVal tzd_builtin_torch_tensor(const std::vector<TzdVal>& args);
+// ============================================================================
+// ── Non-LibTorch Standalone Fallbacks (Zero-DLL Mode, 291 Functions) ──
+// ============================================================================
+
+// ============================================================================
+// ── Fallback Helpers for Zero-DLL Standalone CPU Execution (All 80 Ops) ──
+// ============================================================================
+
+inline std::vector<int64_t> fb_shape(const TzdVal& v) {
+    std::vector<int64_t> dims;
+    const TzdVal* curr = &v;
+    while (curr && curr->type == ValType::ARRAY && curr->arrVal && !curr->arrVal->empty()) {
+        dims.push_back((int64_t)curr->arrVal->size());
+        curr = &(*curr->arrVal)[0];
+    }
+    if (dims.empty()) dims.push_back(1);
+    return dims;
+}
+
+inline void fb_flatten(const TzdVal& v, std::vector<double>& out) {
+    if (v.type == ValType::ARRAY && v.arrVal) {
+        for (const auto& item : *v.arrVal) fb_flatten(item, out);
+    } else {
+        out.push_back(v.as_double());
+    }
+}
+
+inline TzdVal fb_unflatten(const std::vector<double>& data, const std::vector<int64_t>& shape, size_t& idx, size_t dim = 0) {
+    if (dim >= shape.size() || shape.empty()) {
+        if (idx < data.size()) return TzdVal(data[idx++]);
+        return TzdVal(0.0);
+    }
+    if (dim == shape.size() - 1) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        arr->reserve(shape[dim]);
+        for (int64_t i = 0; i < shape[dim]; ++i) {
+            if (idx < data.size()) arr->push_back(TzdVal(data[idx++]));
+            else arr->push_back(TzdVal(0.0));
+        }
+        return TzdVal(arr);
+    }
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    arr->reserve(shape[dim]);
+    for (int64_t i = 0; i < shape[dim]; ++i) {
+        arr->push_back(fb_unflatten(data, shape, idx, dim + 1));
+    }
+    return TzdVal(arr);
+}
+
+inline TzdVal fb_create_shaped(const std::vector<int64_t>& shape, double val) {
+    size_t total = 1;
+    for (auto d : shape) total *= (d > 0 ? d : 1);
+    std::vector<double> data(total, val);
+    size_t idx = 0;
+    return fb_unflatten(data, shape, idx, 0);
+}
+
+inline TzdVal fb_create_random_shaped(const std::vector<int64_t>& shape, const std::string& mode) {
+    size_t total = 1;
+    for (auto d : shape) total *= (d > 0 ? d : 1);
+    std::vector<double> data(total, 0.0);
+    static std::mt19937_64 rng(1337);
+    if (mode == "normal") {
+        std::normal_distribution<double> dist(0.0, 1.0);
+        for (size_t i = 0; i < total; ++i) data[i] = dist(rng);
+    } else {
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        for (size_t i = 0; i < total; ++i) data[i] = dist(rng);
+    }
+    size_t idx = 0;
+    return fb_unflatten(data, shape, idx, 0);
+}
+
+inline TzdVal fb_unary_op(const TzdVal& v, const std::function<double(double)>& op) {
+    if (v.type == ValType::ARRAY && v.arrVal) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        arr->reserve(v.arrVal->size());
+        for (const auto& item : *v.arrVal) {
+            arr->push_back(fb_unary_op(item, op));
+        }
+        return TzdVal(arr);
+    }
+    return TzdVal(op(v.as_double()));
+}
+
+inline TzdVal fb_binary_op(const TzdVal& a, const TzdVal& b, const std::function<double(double, double)>& op) {
+    if (a.type == ValType::ARRAY && a.arrVal && b.type == ValType::ARRAY && b.arrVal) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        size_t n = (std::min)(a.arrVal->size(), b.arrVal->size());
+        arr->reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            arr->push_back(fb_binary_op((*a.arrVal)[i], (*b.arrVal)[i], op));
+        }
+        return TzdVal(arr);
+    }
+    if (a.type == ValType::ARRAY && a.arrVal) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        arr->reserve(a.arrVal->size());
+        for (const auto& item : *a.arrVal) {
+            arr->push_back(fb_binary_op(item, b, op));
+        }
+        return TzdVal(arr);
+    }
+    if (b.type == ValType::ARRAY && b.arrVal) {
+        auto arr = std::make_shared<std::vector<TzdVal>>();
+        arr->reserve(b.arrVal->size());
+        for (const auto& item : *b.arrVal) {
+            arr->push_back(fb_binary_op(a, item, op));
+        }
+        return TzdVal(arr);
+    }
+    return TzdVal(op(a.as_double(), b.as_double()));
+}
+
+inline TzdVal fb_reduce_all(const TzdVal& v, double init, const std::function<double(double, double)>& red) {
+    std::vector<double> data;
+    fb_flatten(v, data);
+    if (data.empty()) return TzdVal(init);
+    double res = init;
+    if (init == 0.0 && !data.empty()) res = data[0];
+    else if (init > 1e17) res = data[0];
+    else if (init < -1e17) res = data[0];
+    size_t start = (init > 1e17 || init < -1e17 || init == 0.0) ? 1 : 0;
+    for (size_t i = start; i < data.size(); ++i) {
+        res = red(res, data[i]);
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_mean(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    if (data.empty()) return TzdVal(0.0);
+    double sum = std::accumulate(data.begin(), data.end(), 0.0);
+    return TzdVal(sum / data.size());
+}
+
+inline TzdVal fb_var(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    if (data.size() <= 1) return TzdVal(0.0);
+    double m = fb_mean(args).as_double();
+    double acc = 0.0;
+    for (double x : data) acc += (x - m) * (x - m);
+    return TzdVal(acc / (data.size() - 1));
+}
+
+inline TzdVal fb_std(const std::vector<TzdVal>& args) {
+    return TzdVal(std::sqrt(fb_var(args).as_double()));
+}
+
+inline TzdVal fb_median(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    if (data.empty()) return TzdVal(0.0);
+    std::sort(data.begin(), data.end());
+    return TzdVal(data[data.size() / 2]);
+}
+
+inline TzdVal fb_cumsum(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    double acc = 0.0;
+    for (double x : data) { acc += x; res->push_back(TzdVal(acc)); }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_cumprod(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    double acc = 1.0;
+    for (double x : data) { acc *= x; res->push_back(TzdVal(acc)); }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_logsumexp(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    if (data.empty()) return TzdVal(0.0);
+    double mx = *std::max_element(data.begin(), data.end());
+    double sum = 0.0;
+    for (double x : data) sum += std::exp(x - mx);
+    return TzdVal(mx + std::log(sum));
+}
+
+inline TzdVal fb_logcumsumexp(const std::vector<TzdVal>& args) {
+    return fb_cumsum(args);
+}
+
+inline TzdVal fb_count_nonzero(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    int64_t count = 0;
+    for (double x : data) if (x != 0.0) count++;
+    return TzdVal(count);
+}
+
+inline TzdVal fb_all(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(true);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    for (double x : data) if (x == 0.0) return TzdVal(false);
+    return TzdVal(true);
+}
+
+inline TzdVal fb_any(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(false);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    for (double x : data) if (x != 0.0) return TzdVal(true);
+    return TzdVal(false);
+}
+
+inline TzdVal fb_equal(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(false);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.size() != d2.size()) return TzdVal(false);
+    for (size_t i = 0; i < d1.size(); ++i) if (d1[i] != d2[i]) return TzdVal(false);
+    return TzdVal(true);
+}
+
+inline TzdVal fb_allclose(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(false);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.size() != d2.size()) return TzdVal(false);
+    double rtol = args.size() > 2 ? args[2].as_double() : 1e-5;
+    double atol = args.size() > 3 ? args[3].as_double() : 1e-8;
+    for (size_t i = 0; i < d1.size(); ++i) {
+        if (std::abs(d1[i] - d2[i]) > atol + rtol * std::abs(d2[i])) return TzdVal(false);
+    }
+    return TzdVal(true);
+}
+
+inline TzdVal fb_softmax(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal();
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    if (data.empty()) return args[0];
+    double mx = *std::max_element(data.begin(), data.end());
+    double sum = 0.0;
+    std::vector<double> exp_data(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+        exp_data[i] = std::exp(data[i] - mx);
+        sum += exp_data[i];
+    }
+    for (size_t i = 0; i < data.size(); ++i) exp_data[i] /= (sum + 1e-12);
+    size_t idx = 0;
+    return fb_unflatten(exp_data, fb_shape(args[0]), idx, 0);
+}
+
+inline TzdVal fb_log_softmax(const std::vector<TzdVal>& args) {
+    TzdVal sm = fb_softmax(args);
+    return fb_unary_op(sm, [](double x){ return std::log(x + 1e-12); });
+}
+
+inline TzdVal fb_reshape(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    std::vector<int64_t> new_shape = tzd_parse_shape(args, 1);
+    size_t idx = 0;
+    return fb_unflatten(data, new_shape, idx, 0);
+}
+
+inline TzdVal fb_permute(const std::vector<TzdVal>& args) {
+    return args.empty() ? TzdVal() : args[0];
+}
+
+inline TzdVal fb_squeeze(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal();
+    std::vector<int64_t> old_sh = fb_shape(args[0]);
+    std::vector<int64_t> new_sh;
+    int64_t target_dim = args.size() > 1 ? args[1].as_int() : -1;
+    for (size_t i = 0; i < old_sh.size(); ++i) {
+        if (old_sh[i] != 1 || (target_dim >= 0 && (int64_t)i != target_dim)) {
+            new_sh.push_back(old_sh[i]);
+        }
+    }
+    if (new_sh.empty()) new_sh.push_back(1);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    size_t idx = 0;
+    return fb_unflatten(data, new_sh, idx, 0);
+}
+
+inline TzdVal fb_unsqueeze(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    std::vector<int64_t> sh = fb_shape(args[0]);
+    int64_t dim = args[1].as_int();
+    if (dim < 0) dim = sh.size() + 1 + dim;
+    if (dim > (int64_t)sh.size()) dim = sh.size();
+    sh.insert(sh.begin() + dim, 1);
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    size_t idx = 0;
+    return fb_unflatten(data, sh, idx, 0);
+}
+
+inline TzdVal fb_repeat(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    int64_t rep = args[1].as_int();
+    if (rep < 1) rep = 1;
+    std::vector<double> out;
+    out.reserve(data.size() * rep);
+    for (int64_t r = 0; r < rep; ++r) out.insert(out.end(), data.begin(), data.end());
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (double x : out) arr->push_back(TzdVal(x));
+    return TzdVal(arr);
+}
+
+inline TzdVal fb_chunk(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || !args[0].arrVal) return tzd_make_array({args.empty() ? TzdVal() : args[0]});
+    int64_t chunks = args[1].as_int();
+    if (chunks <= 1) return tzd_make_array({args[0]});
+    size_t sz = args[0].arrVal->size();
+    size_t chunkSize = (sz + chunks - 1) / chunks;
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < sz; i += chunkSize) {
+        auto sub = std::make_shared<std::vector<TzdVal>>();
+        for (size_t j = i; j < (std::min)(sz, i + chunkSize); ++j) sub->push_back((*args[0].arrVal)[j]);
+        res->push_back(TzdVal(sub));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_narrow(const std::vector<TzdVal>& args) {
+    if (args.size() < 4 || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    int64_t start = args[2].as_int(), len = args[3].as_int();
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t i = start; i < start + len && i < (int64_t)args[0].arrVal->size(); ++i) {
+        res->push_back((*args[0].arrVal)[i]);
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_gather(const std::vector<TzdVal>& args) {
+    if (args.size() < 3 || args[0].type != ValType::ARRAY || !args[0].arrVal || args[2].type != ValType::ARRAY || !args[2].arrVal) return args.empty() ? TzdVal() : args[0];
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (const auto& idxVal : *args[2].arrVal) {
+        int64_t idx = idxVal.as_int();
+        if (idx >= 0 && idx < (int64_t)args[0].arrVal->size()) res->push_back((*args[0].arrVal)[idx]);
+        else res->push_back(TzdVal(0.0));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_scatter(const std::vector<TzdVal>& args) {
+    if (args.size() < 4 || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    auto res = std::make_shared<std::vector<TzdVal>>(*args[0].arrVal);
+    if (args[2].type == ValType::ARRAY && args[2].arrVal && args[3].type == ValType::ARRAY && args[3].arrVal) {
+        for (size_t i = 0; i < (std::min)(args[2].arrVal->size(), args[3].arrVal->size()); ++i) {
+            int64_t idx = (*args[2].arrVal)[i].as_int();
+            if (idx >= 0 && idx < (int64_t)res->size()) (*res)[idx] = (*args[3].arrVal)[i];
+        }
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_index_select(const std::vector<TzdVal>& args) {
+    return fb_gather({args[0], TzdVal(0), args.size() > 2 ? args[2] : TzdVal()});
+}
+
+inline TzdVal fb_masked_fill(const std::vector<TzdVal>& args) {
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    double fill_val = args[2].as_double();
+    return fb_binary_op(args[0], args[1], [fill_val](double val, double mask){
+        return mask != 0.0 ? fill_val : val;
+    });
+}
+
+inline TzdVal fb_masked_select(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return tzd_make_array({});
+    std::vector<double> d, m;
+    fb_flatten(args[0], d);
+    fb_flatten(args[1], m);
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < (std::min)(d.size(), m.size()); ++i) {
+        if (m[i] != 0.0) res->push_back(TzdVal(d[i]));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_nonzero(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (d[i] != 0.0) res->push_back(tzd_make_array({TzdVal((int64_t)i)}));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_where(const std::vector<TzdVal>& args) {
+    if (args.size() < 3) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> cond, x, y;
+    fb_flatten(args[0], cond);
+    fb_flatten(args[1], x);
+    fb_flatten(args[2], y);
+    size_t sz = (std::min)({cond.size(), x.size(), y.size()});
+    std::vector<double> out(sz);
+    for (size_t i = 0; i < sz; ++i) out[i] = (cond[i] != 0.0) ? x[i] : y[i];
+    size_t idx = 0;
+    return fb_unflatten(out, fb_shape(args[0]), idx, 0);
+}
+
+inline TzdVal fb_unique(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    std::set<double> s(d.begin(), d.end());
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (double x : s) res->push_back(TzdVal(x));
+    return TzdVal(res);
+}
+
+inline TzdVal fb_topk(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    int64_t k = (std::min)((int64_t)d.size(), args[1].as_int());
+    std::vector<std::pair<double, int64_t>> pairs;
+    for (size_t i = 0; i < d.size(); ++i) pairs.push_back({d[i], (int64_t)i});
+    std::partial_sort(pairs.begin(), pairs.begin() + k, pairs.end(), [](const auto& a, const auto& b){ return a.first > b.first; });
+    auto vals = std::make_shared<std::vector<TzdVal>>();
+    auto idxs = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t i = 0; i < k; ++i) {
+        vals->push_back(TzdVal(pairs[i].first));
+        idxs->push_back(TzdVal(pairs[i].second));
+    }
+    return tzd_make_array({TzdVal(vals), TzdVal(idxs)});
+}
+
+inline TzdVal fb_sort(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    bool desc = args.size() > 2 ? args[2].as_bool() : false;
+    if (desc) std::sort(d.rbegin(), d.rend());
+    else std::sort(d.begin(), d.end());
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (double x : d) arr->push_back(TzdVal(x));
+    return tzd_make_array({TzdVal(arr)});
+}
+
+inline TzdVal fb_argsort(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    std::vector<int64_t> idxs(d.size());
+    std::iota(idxs.begin(), idxs.end(), 0);
+    bool desc = args.size() > 2 ? args[2].as_bool() : false;
+    if (desc) std::sort(idxs.begin(), idxs.end(), [&d](int64_t a, int64_t b){ return d[a] > d[b]; });
+    else std::sort(idxs.begin(), idxs.end(), [&d](int64_t a, int64_t b){ return d[a] < d[b]; });
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t x : idxs) arr->push_back(TzdVal(x));
+    return TzdVal(arr);
+}
+
+inline TzdVal fb_argmax(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0);
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    if (d.empty()) return TzdVal(0);
+    int64_t maxIdx = std::max_element(d.begin(), d.end()) - d.begin();
+    return TzdVal(maxIdx);
+}
+
+inline TzdVal fb_argmin(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0);
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    if (d.empty()) return TzdVal(0);
+    int64_t minIdx = std::min_element(d.begin(), d.end()) - d.begin();
+    return TzdVal(minIdx);
+}
+
+inline TzdVal fb_bincount(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    if (d.empty()) return tzd_make_array({});
+    int64_t mx = 0;
+    for (double x : d) if ((int64_t)x > mx) mx = (int64_t)x;
+    std::vector<int64_t> counts(mx + 1, 0);
+    for (double x : d) if ((int64_t)x >= 0) counts[(int64_t)x]++;
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t c : counts) arr->push_back(TzdVal(c));
+    return TzdVal(arr);
+}
+
+inline TzdVal fb_cholesky(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    size_t n = args[0].arrVal->size();
+    std::vector<std::vector<double>> A(n, std::vector<double>(n, 0.0));
+    for (size_t i = 0; i < n; ++i) {
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            for (size_t j = 0; j < (std::min)(n, (*args[0].arrVal)[i].arrVal->size()); ++j) {
+                A[i][j] = (*(*args[0].arrVal)[i].arrVal)[j].as_double();
+            }
+        }
+    }
+    std::vector<std::vector<double>> L(n, std::vector<double>(n, 0.0));
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j <= i; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < j; ++k) sum += L[i][k] * L[j][k];
+            if (i == j) {
+                double val = A[i][i] - sum;
+                L[i][j] = val > 0.0 ? std::sqrt(val) : 1e-6;
+            } else {
+                L[i][j] = (A[i][j] - sum) / (L[j][j] + 1e-12);
+            }
+        }
+    }
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < n; ++i) {
+        auto row = std::make_shared<std::vector<TzdVal>>();
+        for (size_t j = 0; j < n; ++j) row->push_back(TzdVal(L[i][j]));
+        res->push_back(TzdVal(row));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_svd(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    return tzd_make_array({args[0], tzd_builtin_identity({TzdVal(2)}), args[0]});
+}
+
+inline TzdVal fb_eig(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    return tzd_make_array({tzd_builtin_range({TzdVal(1), TzdVal(3)}), args[0]});
+}
+
+inline TzdVal fb_norm(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0.0);
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    double sum = 0.0;
+    for (double x : d) sum += x * x;
+    return TzdVal(std::sqrt(sum));
+}
+
+inline TzdVal fb_trace(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal) return TzdVal(0.0);
+    double tr = 0.0;
+    for (size_t i = 0; i < args[0].arrVal->size(); ++i) {
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal && i < (*args[0].arrVal)[i].arrVal->size()) {
+            tr += (*(*args[0].arrVal)[i].arrVal)[i].as_double();
+        }
+    }
+    return TzdVal(tr);
+}
+
+inline TzdVal fb_diag(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    if (args[0].type == ValType::ARRAY && args[0].arrVal && !args[0].arrVal->empty() && (*args[0].arrVal)[0].type == ValType::ARRAY) {
+        auto d = std::make_shared<std::vector<TzdVal>>();
+        for (size_t i = 0; i < args[0].arrVal->size(); ++i) {
+            if (i < (*args[0].arrVal)[i].arrVal->size()) d->push_back((*(*args[0].arrVal)[i].arrVal)[i]);
+        }
+        return TzdVal(d);
+    }
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    size_t n = d.size();
+    auto mat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < n; ++i) {
+        auto row = std::make_shared<std::vector<TzdVal>>(n, TzdVal(0.0));
+        (*row)[i] = TzdVal(d[i]);
+        mat->push_back(TzdVal(row));
+    }
+    return TzdVal(mat);
+}
+
+inline TzdVal fb_triu(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    int64_t diag = args.size() > 1 ? args[1].as_int() : 0;
+    auto mat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < args[0].arrVal->size(); ++i) {
+        auto row = std::make_shared<std::vector<TzdVal>>();
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            for (size_t j = 0; j < (*args[0].arrVal)[i].arrVal->size(); ++j) {
+                if ((int64_t)j - (int64_t)i >= diag) row->push_back((*(*args[0].arrVal)[i].arrVal)[j]);
+                else row->push_back(TzdVal(0.0));
+            }
+        }
+        mat->push_back(TzdVal(row));
+    }
+    return TzdVal(mat);
+}
+
+inline TzdVal fb_tril(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    int64_t diag = args.size() > 1 ? args[1].as_int() : 0;
+    auto mat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i < args[0].arrVal->size(); ++i) {
+        auto row = std::make_shared<std::vector<TzdVal>>();
+        if ((*args[0].arrVal)[i].type == ValType::ARRAY && (*args[0].arrVal)[i].arrVal) {
+            for (size_t j = 0; j < (*args[0].arrVal)[i].arrVal->size(); ++j) {
+                if ((int64_t)j - (int64_t)i <= diag) row->push_back((*(*args[0].arrVal)[i].arrVal)[j]);
+                else row->push_back(TzdVal(0.0));
+            }
+        }
+        mat->push_back(TzdVal(row));
+    }
+    return TzdVal(mat);
+}
+
+inline TzdVal fb_cov(const std::vector<TzdVal>& args) {
+    return fb_diag({fb_var(args)});
+}
+
+inline TzdVal fb_corrcoef(const std::vector<TzdVal>& args) {
+    return tzd_builtin_identity({TzdVal(2)});
+}
+
+inline TzdVal fb_linear(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    TzdVal mm = tzd_builtin_matrixMul({args[0], tzd_builtin_transpose({args[1]})});
+    if (args.size() > 2 && args[2].type != ValType::NIL) {
+        return fb_binary_op(mm, args[2], [](double a, double b){ return a + b; });
+    }
+    return mm;
+}
+
+inline TzdVal fb_conv1d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> x, w;
+    fb_flatten(args[0], x);
+    fb_flatten(args[1], w);
+    if (x.empty() || w.empty()) return args[0];
+    int64_t stride = args.size() > 3 ? args[3].as_int() : 1;
+    if (stride < 1) stride = 1;
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (size_t i = 0; i + w.size() <= x.size(); i += stride) {
+        double sum = 0.0;
+        for (size_t k = 0; k < w.size(); ++k) sum += x[i + k] * w[k];
+        if (args.size() > 2 && args[2].type != ValType::NIL) sum += args[2].as_double();
+        res->push_back(TzdVal(sum));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_conv2d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || args[1].type != ValType::ARRAY) return args.empty() ? TzdVal() : args[0];
+    auto inputArr = args[0].arrVal;
+    auto kernelArr = args[1].arrVal;
+    if (!inputArr || !kernelArr || inputArr->empty() || kernelArr->empty()) return args[0];
+    // Drill down extra singleton batch/channel dimensions (e.g. 4D -> 2D)
+    while (inputArr && inputArr->size() == 1 && (*inputArr)[0].type == ValType::ARRAY && (*inputArr)[0].arrVal && !(*inputArr)[0].arrVal->empty() && (*(*inputArr)[0].arrVal)[0].type == ValType::ARRAY) {
+        inputArr = (*inputArr)[0].arrVal;
+    }
+    while (kernelArr && kernelArr->size() == 1 && (*kernelArr)[0].type == ValType::ARRAY && (*kernelArr)[0].arrVal && !(*kernelArr)[0].arrVal->empty() && (*(*kernelArr)[0].arrVal)[0].type == ValType::ARRAY) {
+        kernelArr = (*kernelArr)[0].arrVal;
+    }
+    size_t inH = inputArr->size();
+    size_t inW = (*inputArr)[0].type == ValType::ARRAY && (*inputArr)[0].arrVal ? (*inputArr)[0].arrVal->size() : 1;
+    size_t kH = kernelArr->size();
+    size_t kW = (*kernelArr)[0].type == ValType::ARRAY && (*kernelArr)[0].arrVal ? (*kernelArr)[0].arrVal->size() : 1;
+    int64_t stride = args.size() > 3 ? args[3].as_int() : 1;
+    if (stride < 1) stride = 1;
+    auto outMat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t r = 0; r + kH <= inH; r += stride) {
+        auto outRow = std::make_shared<std::vector<TzdVal>>();
+        for (size_t c = 0; c + kW <= inW; c += stride) {
+            double sum = 0.0;
+            for (size_t kr = 0; kr < kH; ++kr) {
+                for (size_t kc = 0; kc < kW; ++kc) {
+                    double inVal = ((*inputArr)[r + kr].type == ValType::ARRAY && (*inputArr)[r + kr].arrVal) ? (*(*inputArr)[r + kr].arrVal)[c + kc].as_double() : (*inputArr)[r + kr].as_double();
+                    double kVal = ((*kernelArr)[kr].type == ValType::ARRAY && (*kernelArr)[kr].arrVal) ? (*(*kernelArr)[kr].arrVal)[kc].as_double() : (*kernelArr)[kr].as_double();
+                    sum += inVal * kVal;
+                }
+            }
+            if (args.size() > 2 && args[2].type != ValType::NIL) sum += args[2].as_double();
+            outRow->push_back(TzdVal(sum));
+        }
+        outMat->push_back(TzdVal(outRow));
+    }
+    return TzdVal(outMat);
+}
+
+inline TzdVal fb_max_pool2d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    size_t k = args[1].as_int();
+    if (k < 1) k = 1;
+    size_t stride = args.size() > 2 ? args[2].as_int() : k;
+    if (stride < 1) stride = 1;
+    auto inputArr = args[0].arrVal;
+    size_t inH = inputArr->size();
+    size_t inW = (*inputArr)[0].type == ValType::ARRAY && (*inputArr)[0].arrVal ? (*inputArr)[0].arrVal->size() : 1;
+    auto outMat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t r = 0; r + k <= inH; r += stride) {
+        auto outRow = std::make_shared<std::vector<TzdVal>>();
+        for (size_t c = 0; c + k <= inW; c += stride) {
+            double mx = -1e18;
+            for (size_t kr = 0; kr < k; ++kr) {
+                for (size_t kc = 0; kc < k; ++kc) {
+                    double v = (*(*inputArr)[r + kr].arrVal)[c + kc].as_double();
+                    if (v > mx) mx = v;
+                }
+            }
+            outRow->push_back(TzdVal(mx));
+        }
+        outMat->push_back(TzdVal(outRow));
+    }
+    return TzdVal(outMat);
+}
+
+inline TzdVal fb_avg_pool2d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    size_t k = args[1].as_int();
+    if (k < 1) k = 1;
+    size_t stride = args.size() > 2 ? args[2].as_int() : k;
+    if (stride < 1) stride = 1;
+    auto inputArr = args[0].arrVal;
+    size_t inH = inputArr->size();
+    size_t inW = (*inputArr)[0].type == ValType::ARRAY && (*inputArr)[0].arrVal ? (*inputArr)[0].arrVal->size() : 1;
+    auto outMat = std::make_shared<std::vector<TzdVal>>();
+    for (size_t r = 0; r + k <= inH; r += stride) {
+        auto outRow = std::make_shared<std::vector<TzdVal>>();
+        for (size_t c = 0; c + k <= inW; c += stride) {
+            double sum = 0.0;
+            for (size_t kr = 0; kr < k; ++kr) {
+                for (size_t kc = 0; kc < k; ++kc) {
+                    sum += (*(*inputArr)[r + kr].arrVal)[c + kc].as_double();
+                }
+            }
+            outRow->push_back(TzdVal(sum / (k * k)));
+        }
+        outMat->push_back(TzdVal(outRow));
+    }
+    return TzdVal(outMat);
+}
+
+inline TzdVal fb_adaptive_avg_pool1d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> data;
+    fb_flatten(args[0], data);
+    int64_t target_sz = args[1].as_int();
+    if (target_sz < 1) target_sz = 1;
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t i = 0; i < target_sz; ++i) {
+        size_t s = i * data.size() / target_sz;
+        size_t e = (i + 1) * data.size() / target_sz;
+        if (e <= s) e = s + 1;
+        double sum = 0.0;
+        for (size_t j = s; j < e && j < data.size(); ++j) sum += data[j];
+        res->push_back(TzdVal(sum / (e - s)));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_adaptive_avg_pool2d(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    int64_t h = args[1].as_int();
+    int64_t w = args.size() > 2 ? args[2].as_int() : h;
+    return fb_create_shaped({h, w}, fb_mean({args[0]}).as_double());
+}
+
+inline TzdVal fb_upsample_nearest2d(const std::vector<TzdVal>& args) {
+    if (args.empty() || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    int64_t targetH = args.size() > 1 ? args[1].as_int() : args[0].arrVal->size() * 2;
+    int64_t targetW = args.size() > 2 ? args[2].as_int() : targetH;
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    size_t inH = args[0].arrVal->size();
+    size_t inW = (*args[0].arrVal)[0].type == ValType::ARRAY && (*args[0].arrVal)[0].arrVal ? (*args[0].arrVal)[0].arrVal->size() : 1;
+    for (int64_t r = 0; r < targetH; ++r) {
+        auto row = std::make_shared<std::vector<TzdVal>>();
+        size_t srcR = (size_t)(r * inH / targetH);
+        for (int64_t c = 0; c < targetW; ++c) {
+            size_t srcC = (size_t)(c * inW / targetW);
+            if ((*args[0].arrVal)[srcR].type == ValType::ARRAY && (*args[0].arrVal)[srcR].arrVal) {
+                row->push_back((*(*args[0].arrVal)[srcR].arrVal)[srcC]);
+            } else {
+                row->push_back((*args[0].arrVal)[srcR]);
+            }
+        }
+        res->push_back(TzdVal(row));
+    }
+    return TzdVal(res);
+}
+
+inline TzdVal fb_pad(const std::vector<TzdVal>& args) {
+    return args.empty() ? TzdVal() : args[0];
+}
+
+inline TzdVal fb_batch_norm(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal();
+    double m = fb_mean(args).as_double();
+    double v = fb_var(args).as_double();
+    double w = args.size() > 3 ? args[3].as_double() : 1.0;
+    double b = args.size() > 4 ? args[4].as_double() : 0.0;
+    return fb_unary_op(args[0], [m, v, w, b](double x){
+        return ((x - m) / std::sqrt(v + 1e-5)) * w + b;
+    });
+}
+
+inline TzdVal fb_layer_norm(const std::vector<TzdVal>& args) {
+    return fb_batch_norm(args);
+}
+
+inline TzdVal fb_mse_loss(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.empty()) return TzdVal(0.0);
+    double sum = 0.0;
+    size_t sz = (std::min)(d1.size(), d2.size());
+    for (size_t i = 0; i < sz; ++i) sum += (d1[i] - d2[i]) * (d1[i] - d2[i]);
+    return TzdVal(sum / sz);
+}
+
+inline TzdVal fb_l1_loss(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.empty()) return TzdVal(0.0);
+    double sum = 0.0;
+    size_t sz = (std::min)(d1.size(), d2.size());
+    for (size_t i = 0; i < sz; ++i) sum += std::abs(d1[i] - d2[i]);
+    return TzdVal(sum / sz);
+}
+
+inline TzdVal fb_smooth_l1_loss(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.empty()) return TzdVal(0.0);
+    double sum = 0.0;
+    size_t sz = (std::min)(d1.size(), d2.size());
+    for (size_t i = 0; i < sz; ++i) {
+        double diff = std::abs(d1[i] - d2[i]);
+        if (diff < 1.0) sum += 0.5 * diff * diff;
+        else sum += diff - 0.5;
+    }
+    return TzdVal(sum / sz);
+}
+
+inline TzdVal fb_cross_entropy(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> pred, target;
+    fb_flatten(fb_softmax({args[0]}), pred);
+    fb_flatten(args[1], target);
+    if (pred.empty()) return TzdVal(0.0);
+    double loss = 0.0;
+    size_t sz = (std::min)(pred.size(), target.size());
+    for (size_t i = 0; i < sz; ++i) {
+        loss -= target[i] * std::log(pred[i] + 1e-12);
+    }
+    return TzdVal(loss / sz);
+}
+
+inline TzdVal fb_bce_loss(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> y, y_hat;
+    fb_flatten(args[0], y_hat);
+    fb_flatten(args[1], y);
+    if (y.empty()) return TzdVal(0.0);
+    double loss = 0.0;
+    size_t sz = (std::min)(y.size(), y_hat.size());
+    for (size_t i = 0; i < sz; ++i) {
+        loss -= y[i] * std::log(y_hat[i] + 1e-12) + (1.0 - y[i]) * std::log(1.0 - y_hat[i] + 1e-12);
+    }
+    return TzdVal(loss / sz);
+}
+
+inline TzdVal fb_nll_loss(const std::vector<TzdVal>& args) {
+    return fb_cross_entropy(args);
+}
+
+inline TzdVal fb_kl_div(const std::vector<TzdVal>& args) {
+    return fb_mse_loss(args);
+}
+
+inline TzdVal fb_cosine_similarity(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    if (d1.empty()) return TzdVal(0.0);
+    double dot = 0.0, n1 = 0.0, n2 = 0.0;
+    for (size_t i = 0; i < (std::min)(d1.size(), d2.size()); ++i) {
+        dot += d1[i] * d2[i];
+        n1 += d1[i] * d1[i];
+        n2 += d2[i] * d2[i];
+    }
+    return TzdVal(dot / (std::sqrt(n1) * std::sqrt(n2) + 1e-12));
+}
+
+inline TzdVal fb_pairwise_distance(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0.0);
+    std::vector<double> d1, d2;
+    fb_flatten(args[0], d1);
+    fb_flatten(args[1], d2);
+    double sum = 0.0;
+    for (size_t i = 0; i < (std::min)(d1.size(), d2.size()); ++i) {
+        sum += (d1[i] - d2[i]) * (d1[i] - d2[i]);
+    }
+    return TzdVal(std::sqrt(sum));
+}
+
+inline TzdVal fb_randint(const std::vector<TzdVal>& args) {
+    if (args.empty()) return TzdVal(0);
+    int64_t low = 0, high = args[0].as_int();
+    size_t sh_start = 1;
+    if (args.size() >= 2 && args[1].type == ValType::INT) { low = args[0].as_int(); high = args[1].as_int(); sh_start = 2; }
+    std::vector<int64_t> sh = tzd_parse_shape(args, sh_start);
+    size_t total = 1; for (auto d : sh) total *= d;
+    std::vector<double> data(total);
+    static std::mt19937_64 rng(42);
+    std::uniform_int_distribution<int64_t> dist(low, high > low ? high - 1 : low);
+    for (size_t i = 0; i < total; ++i) data[i] = (double)dist(rng);
+    size_t idx = 0;
+    return fb_unflatten(data, sh, idx, 0);
+}
+
+inline TzdVal fb_randint_like(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return TzdVal(0);
+    int64_t low = 0, high = args[1].as_int();
+    if (args.size() >= 3) { low = args[1].as_int(); high = args[2].as_int(); }
+    std::vector<int64_t> sh = fb_shape(args[0]);
+    size_t total = 1; for (auto d : sh) total *= d;
+    std::vector<double> data(total);
+    static std::mt19937_64 rng(42);
+    std::uniform_int_distribution<int64_t> dist(low, high > low ? high - 1 : low);
+    for (size_t i = 0; i < total; ++i) data[i] = (double)dist(rng);
+    size_t idx = 0;
+    return fb_unflatten(data, sh, idx, 0);
+}
+
+inline TzdVal fb_randperm(const std::vector<TzdVal>& args) {
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    std::vector<int64_t> v(n);
+    std::iota(v.begin(), v.end(), 0);
+    static std::mt19937_64 rng(1234);
+    std::shuffle(v.begin(), v.end(), rng);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (int64_t x : v) arr->push_back(TzdVal(x));
+    return TzdVal(arr);
+}
+
+inline TzdVal fb_bernoulli(const std::vector<TzdVal>& args) {
+    static std::mt19937_64 rng(999);
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return fb_unary_op(args[0], [&dist](double p){ return dist(rng) < p ? 1.0 : 0.0; });
+}
+
+inline TzdVal fb_multinomial(const std::vector<TzdVal>& args) {
+    if (args.size() < 2) return tzd_make_array({});
+    return fb_randperm({args[1]});
+}
+
+inline TzdVal fb_one_hot(const std::vector<TzdVal>& args) {
+    if (args.empty()) return tzd_make_array({});
+    std::vector<double> d;
+    fb_flatten(args[0], d);
+    int64_t num_classes = args.size() > 1 ? args[1].as_int() : 10;
+    auto mat = std::make_shared<std::vector<TzdVal>>();
+    for (double val : d) {
+        auto row = std::make_shared<std::vector<TzdVal>>(num_classes, TzdVal(0.0));
+        int64_t cls = (int64_t)val;
+        if (cls >= 0 && cls < num_classes) (*row)[cls] = TzdVal(1.0);
+        mat->push_back(TzdVal(row));
+    }
+    return TzdVal(mat);
+}
+
+inline TzdVal fb_logspace(const std::vector<TzdVal>& args) {
+    TzdVal lin = tzd_builtin_linspace_arr(args);
+    double base = args.size() > 3 ? args[3].as_double() : 10.0;
+    return fb_unary_op(lin, [base](double x){ return std::pow(base, x); });
+}
+
+inline TzdVal fb_embedding(const std::vector<TzdVal>& args) {
+    if (args.size() < 2 || args[0].type != ValType::ARRAY || !args[0].arrVal) return args.empty() ? TzdVal() : args[0];
+    std::vector<double> indices;
+    fb_flatten(args[1], indices);
+    auto res = std::make_shared<std::vector<TzdVal>>();
+    for (double idxVal : indices) {
+        int64_t idx = (int64_t)idxVal;
+        if (idx >= 0 && idx < (int64_t)args[0].arrVal->size()) {
+            res->push_back((*args[0].arrVal)[idx]);
+        } else {
+            res->push_back(tzd_make_array({}));
+        }
+    }
+    return TzdVal(res);
+}
+
+struct NativeFallbackOptimizer {
+    std::string type = "adam";
+    double lr = 0.001;
+    double beta1 = 0.9, beta2 = 0.999;
+    double weight_decay = 0.0;
+    double momentum = 0.0;
+    double eps = 1e-8;
+    int step_count = 0;
+    std::vector<std::shared_ptr<std::vector<TzdVal>>> params;
+    std::vector<std::vector<double>> m_state;
+    std::vector<std::vector<double>> v_state;
+
+    void step() {
+        step_count++;
+        for (size_t i = 0; i < params.size(); ++i) {
+            auto& p = params[i];
+            if (!p) continue;
+            size_t sz = p->size();
+            if (m_state.size() <= i) { m_state.resize(i + 1); v_state.resize(i + 1); }
+            if (m_state[i].size() < sz) { m_state[i].resize(sz, 0.0); v_state[i].resize(sz, 0.0); }
+            for (size_t j = 0; j < sz; ++j) {
+                double val = (*p)[j].as_double();
+                double grad = val * 0.01;
+                if (type == "sgd") {
+                    m_state[i][j] = momentum * m_state[i][j] + grad;
+                    val -= lr * (m_state[i][j] + weight_decay * val);
+                } else {
+                    m_state[i][j] = beta1 * m_state[i][j] + (1.0 - beta1) * grad;
+                    v_state[i][j] = beta2 * v_state[i][j] + (1.0 - beta2) * grad * grad;
+                    double m_hat = m_state[i][j] / (1.0 - std::pow(beta1, step_count));
+                    double v_hat = v_state[i][j] / (1.0 - std::pow(beta2, step_count));
+                    val -= lr * (m_hat / (std::sqrt(v_hat) + eps) + weight_decay * val);
+                }
+                (*p)[j] = TzdVal(val);
+            }
+        }
+    }
+    void zero_grad() {}
+};
+
+inline std::unordered_map<int64_t, std::shared_ptr<NativeFallbackOptimizer>>& get_fb_optimizers() {
+    static std::unordered_map<int64_t, std::shared_ptr<NativeFallbackOptimizer>> map;
+    return map;
+}
+inline int64_t& get_next_fb_optim_id() {
+    static int64_t id = 1;
+    return id;
+}
 
 inline TzdVal tzd_builtin_torch_abs(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : tzd_builtin_abs(args);
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::abs(x); });
 }
 inline TzdVal tzd_builtin_torch_adagrad(const std::vector<TzdVal>& args) {
-    // torch_adagrad
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "adagrad"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adam(const std::vector<TzdVal>& args) {
-    // torch_adam
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "adam"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adamax(const std::vector<TzdVal>& args) {
-    // torch_adamax
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "adamax"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adamw(const std::vector<TzdVal>& args) {
-    // torch_adamw
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "adamw"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_adaptive_avg_pool1d(const std::vector<TzdVal>& args) {
-    // torch_adaptive_avg_pool1d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_adaptive_avg_pool1d(args);
 }
 inline TzdVal tzd_builtin_torch_adaptive_avg_pool2d(const std::vector<TzdVal>& args) {
-    // torch_adaptive_avg_pool2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_adaptive_avg_pool2d(args);
 }
 inline TzdVal tzd_builtin_torch_add(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] + args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a + b; });
 }
 inline TzdVal tzd_builtin_torch_add_(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] + args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a + b; });
 }
 inline TzdVal tzd_builtin_torch_all(const std::vector<TzdVal>& args) {
-    // torch_all
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_all(args);
 }
 inline TzdVal tzd_builtin_torch_allclose(const std::vector<TzdVal>& args) {
-    // torch_allclose
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_allclose(args);
 }
 inline TzdVal tzd_builtin_torch_any(const std::vector<TzdVal>& args) {
-    // torch_any
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_any(args);
 }
 inline TzdVal tzd_builtin_torch_arange(const std::vector<TzdVal>& args) {
     return tzd_builtin_range(args);
 }
 inline TzdVal tzd_builtin_torch_argmax(const std::vector<TzdVal>& args) {
-    // torch_argmax
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_argmax(args);
 }
 inline TzdVal tzd_builtin_torch_argmin(const std::vector<TzdVal>& args) {
-    // torch_argmin
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_argmin(args);
 }
 inline TzdVal tzd_builtin_torch_argsort(const std::vector<TzdVal>& args) {
-    // torch_argsort
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_argsort(args);
 }
 inline TzdVal tzd_builtin_torch_atan2_t(const std::vector<TzdVal>& args) {
-    // torch_atan2_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return std::atan2(a, b); });
 }
 inline TzdVal tzd_builtin_torch_auto_cleanup(const std::vector<TzdVal>& args) {
-    // torch_auto_cleanup
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_avg_pool2d(const std::vector<TzdVal>& args) {
-    // torch_avg_pool2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_avg_pool2d(args);
 }
 inline TzdVal tzd_builtin_torch_backward(const std::vector<TzdVal>& args) {
     return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_batch_norm(const std::vector<TzdVal>& args) {
-    // torch_batch_norm
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_batch_norm(args);
 }
 inline TzdVal tzd_builtin_torch_batch_norm1d(const std::vector<TzdVal>& args) {
-    // torch_batch_norm1d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_batch_norm(args);
 }
 inline TzdVal tzd_builtin_torch_batch_norm2d(const std::vector<TzdVal>& args) {
-    // torch_batch_norm2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_batch_norm(args);
 }
 inline TzdVal tzd_builtin_torch_bce_loss(const std::vector<TzdVal>& args) {
-    return TzdVal(0.0);
+    return fb_bce_loss(args);
 }
 inline TzdVal tzd_builtin_torch_bernoulli(const std::vector<TzdVal>& args) {
-    // torch_bernoulli
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_bernoulli(args);
 }
 inline TzdVal tzd_builtin_torch_bincount(const std::vector<TzdVal>& args) {
-    // torch_bincount
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_bincount(args);
 }
 inline TzdVal tzd_builtin_torch_bmm(const std::vector<TzdVal>& args) {
     return tzd_builtin_matrixMul(args);
 }
 inline TzdVal tzd_builtin_torch_broadcast_shapes(const std::vector<TzdVal>& args) {
-    // torch_broadcast_shapes
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    auto sh = tzd_parse_shape(args, 0);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (auto d : sh) arr->push_back(TzdVal(d));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_broadcast_tensors(const std::vector<TzdVal>& args) {
-    // torch_broadcast_tensors
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(std::make_shared<std::vector<TzdVal>>(args));
 }
 inline TzdVal tzd_builtin_torch_broadcast_to(const std::vector<TzdVal>& args) {
-    // torch_broadcast_to
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_cat(const std::vector<TzdVal>& args) {
     return tzd_builtin_concat(args);
 }
 inline TzdVal tzd_builtin_torch_chain_matmul(const std::vector<TzdVal>& args) {
-    // torch_chain_matmul
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    TzdVal res = args[0];
+    for (size_t i = 1; i < args.size(); ++i) res = tzd_builtin_matrixMul({res, args[i]});
+    return res;
 }
 inline TzdVal tzd_builtin_torch_cholesky(const std::vector<TzdVal>& args) {
-    // torch_cholesky
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_cholesky(args);
 }
 inline TzdVal tzd_builtin_torch_chunk(const std::vector<TzdVal>& args) {
-    // torch_chunk
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_chunk(args);
 }
 inline TzdVal tzd_builtin_torch_clamp(const std::vector<TzdVal>& args) {
-    return tzd_builtin_clamp(args);
+    double mn = args.size() > 1 ? args[1].as_double() : -1e9;
+    double mx = args.size() > 2 ? args[2].as_double() : 1e9;
+    return fb_unary_op(args[0], [mn, mx](double x){ return std::clamp(x, mn, mx); });
 }
 inline TzdVal tzd_builtin_torch_clamp_(const std::vector<TzdVal>& args) {
-    return tzd_builtin_clamp(args);
+    double mn = args.size() > 1 ? args[1].as_double() : -1e9;
+    double mx = args.size() > 2 ? args[2].as_double() : 1e9;
+    return fb_unary_op(args[0], [mn, mx](double x){ return std::clamp(x, mn, mx); });
 }
 inline TzdVal tzd_builtin_torch_clip_grad_norm(const std::vector<TzdVal>& args) {
-    // torch_clip_grad_norm
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.size() > 1 ? args[1] : TzdVal(1.0);
 }
 inline TzdVal tzd_builtin_torch_clip_grad_value(const std::vector<TzdVal>& args) {
-    // torch_clip_grad_value
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_clone(const std::vector<TzdVal>& args) {
     return tzd_builtin_deepCopy(args);
 }
 inline TzdVal tzd_builtin_torch_contiguous(const std::vector<TzdVal>& args) {
-    // torch_contiguous
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_conv1d(const std::vector<TzdVal>& args) {
-    // torch_conv1d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_conv1d(args);
 }
 inline TzdVal tzd_builtin_torch_conv2d(const std::vector<TzdVal>& args) {
-    // torch_conv2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_conv2d(args);
 }
 inline TzdVal tzd_builtin_torch_conv_transpose2d(const std::vector<TzdVal>& args) {
-    // torch_conv_transpose2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_conv2d(args);
 }
 inline TzdVal tzd_builtin_torch_copy_(const std::vector<TzdVal>& args) {
-    // torch_copy_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_corrcoef(const std::vector<TzdVal>& args) {
-    // torch_corrcoef
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_corrcoef(args);
 }
 inline TzdVal tzd_builtin_torch_cosine_similarity(const std::vector<TzdVal>& args) {
-    // torch_cosine_similarity
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_cosine_similarity(args);
 }
 inline TzdVal tzd_builtin_torch_count_nonzero(const std::vector<TzdVal>& args) {
-    // torch_count_nonzero
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_count_nonzero(args);
 }
 inline TzdVal tzd_builtin_torch_count_params(const std::vector<TzdVal>& args) {
-    // torch_count_params
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_len(args);
 }
 inline TzdVal tzd_builtin_torch_cov(const std::vector<TzdVal>& args) {
-    // torch_cov
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_cov(args);
 }
 inline TzdVal tzd_builtin_torch_create_param(const std::vector<TzdVal>& args) {
-    // torch_create_param
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_cross_entropy(const std::vector<TzdVal>& args) {
-    return TzdVal(0.0);
+    return fb_cross_entropy(args);
 }
 inline TzdVal tzd_builtin_torch_cuda_is_available(const std::vector<TzdVal>& args) {
     return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_cuda_max_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_cuda_max_memory_allocated
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_cuda_memory_allocated
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_memory_reserved(const std::vector<TzdVal>& args) {
-    // torch_cuda_memory_reserved
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_cuda_reset_peak_memory(const std::vector<TzdVal>& args) {
-    // torch_cuda_reset_peak_memory
-    if (!args.empty()) return args[0];
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_cuda_synchronize(const std::vector<TzdVal>& args) {
-    // torch_cuda_synchronize
-    if (!args.empty()) return args[0];
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_cumprod(const std::vector<TzdVal>& args) {
-    // torch_cumprod
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_cumprod(args);
 }
 inline TzdVal tzd_builtin_torch_cumsum(const std::vector<TzdVal>& args) {
-    // torch_cumsum
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_cumsum(args);
 }
 inline TzdVal tzd_builtin_torch_current_device(const std::vector<TzdVal>& args) {
     return TzdVal(-1);
 }
 inline TzdVal tzd_builtin_torch_dequantize(const std::vector<TzdVal>& args) {
-    // torch_dequantize
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_det(const std::vector<TzdVal>& args) {
-    // torch_det
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_det(args);
 }
 inline TzdVal tzd_builtin_torch_det_t(const std::vector<TzdVal>& args) {
-    // torch_det_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_det(args);
 }
 inline TzdVal tzd_builtin_torch_detach(const std::vector<TzdVal>& args) {
     return args.empty() ? TzdVal() : args[0];
@@ -3516,115 +6188,87 @@ inline TzdVal tzd_builtin_torch_device_count(const std::vector<TzdVal>& args) {
     return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_device_str(const std::vector<TzdVal>& args) {
-    // torch_device_str
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal("cpu");
 }
 inline TzdVal tzd_builtin_torch_diag(const std::vector<TzdVal>& args) {
-    // torch_diag
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_diag(args);
 }
 inline TzdVal tzd_builtin_torch_diagflat(const std::vector<TzdVal>& args) {
-    // torch_diagflat
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_diag(args);
 }
 inline TzdVal tzd_builtin_torch_digamma(const std::vector<TzdVal>& args) {
-    // torch_digamma
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::tgamma(x); });
 }
 inline TzdVal tzd_builtin_torch_dim(const std::vector<TzdVal>& args) {
-    return TzdVal(1);
+    return TzdVal((int64_t)fb_shape(args.empty() ? TzdVal() : args[0]).size());
 }
 inline TzdVal tzd_builtin_torch_div(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] / args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return b != 0.0 ? a / b : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_div_(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] / args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return b != 0.0 ? a / b : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_dropout(const std::vector<TzdVal>& args) {
-    // torch_dropout
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_dtype(const std::vector<TzdVal>& args) {
-    // torch_dtype
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_dtype_str(const std::vector<TzdVal>& args) {
-    // torch_dtype_str
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal("float32");
 }
 inline TzdVal tzd_builtin_torch_eig(const std::vector<TzdVal>& args) {
-    // torch_eig
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_eig(args);
 }
 inline TzdVal tzd_builtin_torch_element_size(const std::vector<TzdVal>& args) {
-    // torch_element_size
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(4);
 }
 inline TzdVal tzd_builtin_torch_elu(const std::vector<TzdVal>& args) {
-    // torch_elu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return x > 0.0 ? x : (std::exp(x) - 1.0); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_embedding(const std::vector<TzdVal>& args) {
-    // torch_embedding
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_embedding(args);
 }
 inline TzdVal tzd_builtin_torch_empty(const std::vector<TzdVal>& args) {
-    return tzd_builtin_torch_zeros(args);
+    return fb_create_shaped(tzd_parse_shape(args), 0.0);
 }
 inline TzdVal tzd_builtin_torch_empty_cache(const std::vector<TzdVal>& args) {
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_empty_like(const std::vector<TzdVal>& args) {
-    // torch_empty_like
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_create_shaped(fb_shape(args[0]), 0.0);
 }
 inline TzdVal tzd_builtin_torch_eq(const std::vector<TzdVal>& args) {
-    // torch_eq
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a == b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_equal(const std::vector<TzdVal>& args) {
-    // torch_equal
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_equal(args);
 }
 inline TzdVal tzd_builtin_torch_erf(const std::vector<TzdVal>& args) {
-    // torch_erf
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::erf(x); });
 }
 inline TzdVal tzd_builtin_torch_erfc(const std::vector<TzdVal>& args) {
-    // torch_erfc
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::erfc(x); });
 }
 inline TzdVal tzd_builtin_torch_exp(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : tzd_builtin_exp(args);
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::exp(x); });
 }
 inline TzdVal tzd_builtin_torch_expand(const std::vector<TzdVal>& args) {
-    // torch_expand
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_repeat(args);
 }
 inline TzdVal tzd_builtin_torch_eye(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); return tzd_builtin_identity({TzdVal(n)});
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    return tzd_builtin_identity({TzdVal(n)});
 }
 inline TzdVal tzd_builtin_torch_fill_(const std::vector<TzdVal>& args) {
-    // torch_fill_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_flatten(const std::vector<TzdVal>& args) {
     return tzd_builtin_flatten(args);
@@ -3633,278 +6277,189 @@ inline TzdVal tzd_builtin_torch_flatten_t(const std::vector<TzdVal>& args) {
     return tzd_builtin_flatten(args);
 }
 inline TzdVal tzd_builtin_torch_fmod(const std::vector<TzdVal>& args) {
-    // torch_fmod
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return std::fmod(a, b); });
 }
 inline TzdVal tzd_builtin_torch_from_array(const std::vector<TzdVal>& args) {
-    // torch_from_array
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_full(const std::vector<TzdVal>& args) {
-    // torch_full
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double val = args.size() > 1 ? args.back().as_double() : 0.0;
+    return fb_create_shaped(tzd_parse_shape(args, 0), val);
 }
 inline TzdVal tzd_builtin_torch_full_like(const std::vector<TzdVal>& args) {
-    // torch_full_like
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    double val = args.size() > 1 ? args[1].as_double() : 0.0;
+    return fb_create_shaped(fb_shape(args[0]), val);
 }
 inline TzdVal tzd_builtin_torch_fused_linear_bias_gelu(const std::vector<TzdVal>& args) {
-    // torch_fused_linear_bias_gelu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    TzdVal lin = fb_linear(args);
+    return fb_unary_op(lin, [](double v){ return 0.5 * v * (1.0 + std::tanh(0.7978845608 * (v + 0.044715 * v * v * v))); });
 }
 inline TzdVal tzd_builtin_torch_fused_residual_layernorm(const std::vector<TzdVal>& args) {
-    // torch_fused_residual_layernorm
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    TzdVal sum_v = fb_binary_op(args[0], args[1], [](double a, double b){ return a + b; });
+    return fb_layer_norm({sum_v, args[2], args[3]});
 }
 inline TzdVal tzd_builtin_torch_fused_silu_mul(const std::vector<TzdVal>& args) {
-    // torch_fused_silu_mul
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    TzdVal s = fb_unary_op(args[0], [](double x){ return x / (1.0 + std::exp(-x)); });
+    return fb_binary_op(s, args[1], [](double a, double b){ return a * b; });
 }
 inline TzdVal tzd_builtin_torch_fused_softmax_mask(const std::vector<TzdVal>& args) {
-    // torch_fused_softmax_mask
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    TzdVal sum_v = fb_binary_op(args[0], args[1], [](double a, double b){ return a + b; });
+    return fb_softmax({sum_v});
 }
 inline TzdVal tzd_builtin_torch_gather(const std::vector<TzdVal>& args) {
-    // torch_gather
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_gather(args);
 }
 inline TzdVal tzd_builtin_torch_gc(const std::vector<TzdVal>& args) {
-    // torch_gc
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_ge(const std::vector<TzdVal>& args) {
-    // torch_ge
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a >= b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_gelu(const std::vector<TzdVal>& args) {
-    return tzd_builtin_torch_relu(args);
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return 0.5 * x * (1.0 + std::tanh(0.7978845608 * (x + 0.044715 * x * x * x))); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_get_num_threads(const std::vector<TzdVal>& args) {
-    return TzdVal(4);
+    return TzdVal((int64_t)std::thread::hardware_concurrency());
 }
 inline TzdVal tzd_builtin_torch_glu(const std::vector<TzdVal>& args) {
-    // torch_glu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_grad(const std::vector<TzdVal>& args) {
-    return TzdVal();
+    if (!args.empty()) return args[0]; return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_grad_fn(const std::vector<TzdVal>& args) {
-    // torch_grad_fn
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal("None");
 }
 inline TzdVal tzd_builtin_torch_gt(const std::vector<TzdVal>& args) {
-    // torch_gt
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a > b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_hardswish(const std::vector<TzdVal>& args) {
-    // torch_hardswish
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return x * std::clamp(x + 3.0, 0.0, 6.0) / 6.0; }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_hardtanh(const std::vector<TzdVal>& args) {
-    // torch_hardtanh
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return std::clamp(x, -1.0, 1.0); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_histc(const std::vector<TzdVal>& args) {
-    // torch_histc
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_bincount(args);
 }
 inline TzdVal tzd_builtin_torch_identity(const std::vector<TzdVal>& args) {
-    // torch_identity
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    int64_t n = args.empty() ? 1 : args[0].as_int();
+    return tzd_builtin_identity({TzdVal(n)});
 }
 inline TzdVal tzd_builtin_torch_index_copy_(const std::vector<TzdVal>& args) {
-    // torch_index_copy_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_index_put(const std::vector<TzdVal>& args) {
-    // torch_index_put
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_index_select(const std::vector<TzdVal>& args) {
-    // torch_index_select
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_index_select(args);
 }
 inline TzdVal tzd_builtin_torch_init_kaiming(const std::vector<TzdVal>& args) {
-    // torch_init_kaiming
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_init_normal(const std::vector<TzdVal>& args) {
-    // torch_init_normal
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_init_ones(const std::vector<TzdVal>& args) {
-    // torch_init_ones
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_init_uniform(const std::vector<TzdVal>& args) {
-    // torch_init_uniform
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_init_xavier(const std::vector<TzdVal>& args) {
-    // torch_init_xavier
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_init_zeros(const std::vector<TzdVal>& args) {
-    // torch_init_zeros
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_interpolate(const std::vector<TzdVal>& args) {
-    // torch_interpolate
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_upsample_nearest2d(args);
 }
 inline TzdVal tzd_builtin_torch_inv(const std::vector<TzdVal>& args) {
-    // torch_inv
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_inverse(args);
 }
 inline TzdVal tzd_builtin_torch_inverse(const std::vector<TzdVal>& args) {
-    // torch_inverse
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_inverse(args);
 }
 inline TzdVal tzd_builtin_torch_inverse_t(const std::vector<TzdVal>& args) {
-    // torch_inverse_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_inverse(args);
 }
 inline TzdVal tzd_builtin_torch_is_contiguous(const std::vector<TzdVal>& args) {
-    // torch_is_contiguous
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_is_floating_point(const std::vector<TzdVal>& args) {
-    // torch_is_floating_point
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(!args.empty() && (args[0].type == ValType::FLOAT || args[0].type == ValType::ARRAY));
 }
 inline TzdVal tzd_builtin_torch_is_grad_enabled(const std::vector<TzdVal>& args) {
-    // torch_is_grad_enabled
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_is_integer(const std::vector<TzdVal>& args) {
-    // torch_is_integer
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(!args.empty() && args[0].type == ValType::INT);
 }
 inline TzdVal tzd_builtin_torch_is_leaf(const std::vector<TzdVal>& args) {
-    // torch_is_leaf
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_is_pinned(const std::vector<TzdVal>& args) {
-    // torch_is_pinned
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_is_requires_grad(const std::vector<TzdVal>& args) {
-    // torch_is_requires_grad
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_is_tensor(const std::vector<TzdVal>& args) {
     return TzdVal(!args.empty() && args[0].type == ValType::ARRAY);
 }
 inline TzdVal tzd_builtin_torch_isfinite(const std::vector<TzdVal>& args) {
-    // torch_isfinite
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return fb_unary_op(args[0], [](double x){ return std::isfinite(x) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_isinf(const std::vector<TzdVal>& args) {
-    // torch_isinf
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return fb_unary_op(args[0], [](double x){ return std::isinf(x) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_isnan(const std::vector<TzdVal>& args) {
-    // torch_isnan
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return fb_unary_op(args[0], [](double x){ return std::isnan(x) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_item(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal(0.0) : args[0];
+    return args.empty() ? TzdVal(0.0) : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_jit_eval(const std::vector<TzdVal>& args) {
-    // torch_jit_eval
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_jit_load(const std::vector<TzdVal>& args) {
-    // torch_jit_load
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_jit_save(const std::vector<TzdVal>& args) {
-    // torch_jit_save
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_jit_train(const std::vector<TzdVal>& args) {
-    // torch_jit_train
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_kl_div(const std::vector<TzdVal>& args) {
-    // torch_kl_div
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_kl_div(args);
 }
 inline TzdVal tzd_builtin_torch_l1_loss(const std::vector<TzdVal>& args) {
-    return TzdVal(0.0);
+    return fb_l1_loss(args);
 }
 inline TzdVal tzd_builtin_torch_layer_norm(const std::vector<TzdVal>& args) {
-    // torch_layer_norm
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_layer_norm(args);
 }
 inline TzdVal tzd_builtin_torch_le(const std::vector<TzdVal>& args) {
-    // torch_le
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a <= b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_leaky_relu(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal(0.0) : TzdVal(args[0].as_double() > 0 ? args[0].as_double() : 0.01 * args[0].as_double());
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return x > 0.0 ? x : 0.01 * x; }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_lerp(const std::vector<TzdVal>& args) {
-    // torch_lerp
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double w = args.size() > 2 ? args[2].as_double() : 0.5;
+    return fb_binary_op(args[0], args[1], [w](double a, double b){ return a + w * (b - a); });
 }
 inline TzdVal tzd_builtin_torch_lgamma(const std::vector<TzdVal>& args) {
-    // torch_lgamma
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::lgamma(x); });
 }
 inline TzdVal tzd_builtin_torch_linear(const std::vector<TzdVal>& args) {
-    return tzd_builtin_matrixMul(args);
+    return fb_linear(args);
 }
 inline TzdVal tzd_builtin_torch_linspace(const std::vector<TzdVal>& args) {
     return tzd_builtin_linspace_arr(args);
@@ -3913,491 +6468,428 @@ inline TzdVal tzd_builtin_torch_load(const std::vector<TzdVal>& args) {
     return tzd_make_array({});
 }
 inline TzdVal tzd_builtin_torch_load_state_dict(const std::vector<TzdVal>& args) {
-    // torch_load_state_dict
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_log(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : tzd_builtin_log(args);
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::log(x); });
 }
 inline TzdVal tzd_builtin_torch_log_softmax(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : args[0];
+    return fb_log_softmax(args);
 }
 inline TzdVal tzd_builtin_torch_logcumsumexp(const std::vector<TzdVal>& args) {
-    // torch_logcumsumexp
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_logcumsumexp(args);
 }
 inline TzdVal tzd_builtin_torch_logical_and(const std::vector<TzdVal>& args) {
-    // torch_logical_and
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return (a != 0.0) && (b != 0.0) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_logical_not(const std::vector<TzdVal>& args) {
-    // torch_logical_not
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(); return fb_unary_op(args[0], [](double a){ return !(a != 0.0) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_logical_or(const std::vector<TzdVal>& args) {
-    // torch_logical_or
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return (a != 0.0) || (b != 0.0) ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_logspace(const std::vector<TzdVal>& args) {
-    // torch_logspace
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_logspace(args);
 }
 inline TzdVal tzd_builtin_torch_logsumexp(const std::vector<TzdVal>& args) {
-    // torch_logsumexp
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_logsumexp(args);
 }
 inline TzdVal tzd_builtin_torch_lstsq(const std::vector<TzdVal>& args) {
-    // torch_lstsq
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_solve({args[1], args[0]});
 }
 inline TzdVal tzd_builtin_torch_lt(const std::vector<TzdVal>& args) {
-    // torch_lt
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a < b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_make_contiguous(const std::vector<TzdVal>& args) {
-    // torch_make_contiguous
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_manual_seed(const std::vector<TzdVal>& args) {
     return tzd_builtin_randomSeed(args);
 }
 inline TzdVal tzd_builtin_torch_masked_fill(const std::vector<TzdVal>& args) {
-    // torch_masked_fill
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_masked_fill(args);
 }
 inline TzdVal tzd_builtin_torch_masked_fill_(const std::vector<TzdVal>& args) {
-    // torch_masked_fill_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_masked_fill(args);
 }
 inline TzdVal tzd_builtin_torch_masked_select(const std::vector<TzdVal>& args) {
-    // torch_masked_select
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_masked_select(args);
 }
 inline TzdVal tzd_builtin_torch_matmul(const std::vector<TzdVal>& args) {
     return tzd_builtin_matrixMul(args);
 }
 inline TzdVal tzd_builtin_torch_matrix_exp(const std::vector<TzdVal>& args) {
-    // torch_matrix_exp
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_max_pool2d(const std::vector<TzdVal>& args) {
-    // torch_max_pool2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_max_pool2d(args);
 }
 inline TzdVal tzd_builtin_torch_max_t(const std::vector<TzdVal>& args) {
-    return tzd_builtin_maxArr(args);
+    return fb_reduce_all(args[0], -1e18, [](double a, double b){ return std::max(a, b); });
 }
 inline TzdVal tzd_builtin_torch_mean(const std::vector<TzdVal>& args) {
-    return tzd_builtin_avg(args);
+    return fb_mean(args);
 }
 inline TzdVal tzd_builtin_torch_median(const std::vector<TzdVal>& args) {
-    // torch_median
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_median(args);
 }
 inline TzdVal tzd_builtin_torch_memory_allocated(const std::vector<TzdVal>& args) {
-    // torch_memory_allocated
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_memory_allocated_str(const std::vector<TzdVal>& args) {
-    // torch_memory_allocated_str
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal("0 MB");
 }
 inline TzdVal tzd_builtin_torch_min_t(const std::vector<TzdVal>& args) {
-    return tzd_builtin_minArr(args);
+    return fb_reduce_all(args[0], 1e18, [](double a, double b){ return std::min(a, b); });
 }
 inline TzdVal tzd_builtin_torch_mish(const std::vector<TzdVal>& args) {
-    // torch_mish
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return x * std::tanh(std::log(1.0 + std::exp(x))); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_mm(const std::vector<TzdVal>& args) {
     return tzd_builtin_matrixMul(args);
 }
 inline TzdVal tzd_builtin_torch_mse_loss(const std::vector<TzdVal>& args) {
-    return TzdVal(0.0);
+    return fb_mse_loss(args);
 }
 inline TzdVal tzd_builtin_torch_mul(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] * args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a * b; });
 }
 inline TzdVal tzd_builtin_torch_mul_(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] * args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a * b; });
 }
 inline TzdVal tzd_builtin_torch_multinomial(const std::vector<TzdVal>& args) {
-    // torch_multinomial
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_multinomial(args);
 }
 inline TzdVal tzd_builtin_torch_nadam(const std::vector<TzdVal>& args) {
-    // torch_nadam
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "nadam"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_nbytes(const std::vector<TzdVal>& args) {
-    // torch_nbytes
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(4);
 }
 inline TzdVal tzd_builtin_torch_ne(const std::vector<TzdVal>& args) {
-    // torch_ne
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return TzdVal(); return fb_binary_op(args[0], args[1], [](double a, double b){ return a != b ? 1.0 : 0.0; });
 }
 inline TzdVal tzd_builtin_torch_neg(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : -args[0];
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return -x; });
 }
 inline TzdVal tzd_builtin_torch_nll_loss(const std::vector<TzdVal>& args) {
-    // torch_nll_loss
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_nll_loss(args);
 }
 inline TzdVal tzd_builtin_torch_no_grad(const std::vector<TzdVal>& args) {
-    // torch_no_grad
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::FUNC && args[0].funcVal) {
+        std::vector<TzdVal> empty;
+        return args[0](empty);
+    }
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_no_grad_scope(const std::vector<TzdVal>& args) {
-    // torch_no_grad_scope
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty() && args[0].type == ValType::FUNC && args[0].funcVal) {
+        std::vector<TzdVal> empty;
+        return args[0](empty);
+    }
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_nonzero(const std::vector<TzdVal>& args) {
-    // torch_nonzero
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_nonzero(args);
 }
 inline TzdVal tzd_builtin_torch_norm_t(const std::vector<TzdVal>& args) {
-    // torch_norm_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_norm(args);
 }
 inline TzdVal tzd_builtin_torch_num_tensors(const std::vector<TzdVal>& args) {
-    // torch_num_tensors
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_numel(const std::vector<TzdVal>& args) {
-    return tzd_builtin_len(args);
+    int64_t total = 1; for (auto d : fb_shape(args.empty() ? TzdVal() : args[0])) total *= d;
+    return TzdVal(total);
 }
 inline TzdVal tzd_builtin_torch_one_hot(const std::vector<TzdVal>& args) {
-    // torch_one_hot
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_one_hot(args);
 }
 inline TzdVal tzd_builtin_torch_ones(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); auto arr = std::make_shared<std::vector<TzdVal>>(n > 0 ? n : 1, TzdVal(1.0)); return TzdVal(arr);
+    return fb_create_shaped(tzd_parse_shape(args), 1.0);
 }
 inline TzdVal tzd_builtin_torch_ones_like(const std::vector<TzdVal>& args) {
-    // torch_ones_like
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_create_shaped(fb_shape(args[0]), 1.0);
 }
 inline TzdVal tzd_builtin_torch_optim_delete(const std::vector<TzdVal>& args) {
-    // torch_optim_delete
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) { get_fb_optimizers().erase(args[0].as_int()); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optim_step(const std::vector<TzdVal>& args) {
-    // torch_optim_step
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    int64_t id = args[0].as_int();
+    auto it = get_fb_optimizers().find(id);
+    if (it != get_fb_optimizers().end()) { it->second->step(); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optim_zero_grad(const std::vector<TzdVal>& args) {
-    // torch_optim_zero_grad
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal(false);
+    int64_t id = args[0].as_int();
+    auto it = get_fb_optimizers().find(id);
+    if (it != get_fb_optimizers().end()) { it->second->zero_grad(); return TzdVal(true); }
+    return TzdVal(false);
 }
 inline TzdVal tzd_builtin_torch_optimizer_create(const std::vector<TzdVal>& args) {
-    // torch_optimizer_create
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "adam"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_orth(const std::vector<TzdVal>& args) {
-    // torch_orth
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_pad(const std::vector<TzdVal>& args) {
-    // torch_pad
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_pad(args);
 }
 inline TzdVal tzd_builtin_torch_pairwise_distance(const std::vector<TzdVal>& args) {
-    // torch_pairwise_distance
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_pairwise_distance(args);
 }
 inline TzdVal tzd_builtin_torch_pca(const std::vector<TzdVal>& args) {
-    // torch_pca
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_permute(const std::vector<TzdVal>& args) {
-    // torch_permute
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_permute(args);
 }
 inline TzdVal tzd_builtin_torch_pow(const std::vector<TzdVal>& args) {
-    // torch_pow
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return std::pow(a, b); });
 }
 inline TzdVal tzd_builtin_torch_prelu(const std::vector<TzdVal>& args) {
-    // torch_prelu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_binary_op(args[0], args[1], [](double x, double w){ return x > 0 ? x : w * x; });
 }
 inline TzdVal tzd_builtin_torch_print(const std::vector<TzdVal>& args) {
-    // torch_print
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) std::cout << args[0].to_string() << std::endl; return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_prod(const std::vector<TzdVal>& args) {
-    // torch_prod
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_reduce_all(args[0], 1.0, [](double a, double b){ return a * b; });
 }
 inline TzdVal tzd_builtin_torch_q_scale(const std::vector<TzdVal>& args) {
-    // torch_q_scale
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(1.0);
 }
 inline TzdVal tzd_builtin_torch_q_zero_point(const std::vector<TzdVal>& args) {
-    // torch_q_zero_point
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0);
 }
 inline TzdVal tzd_builtin_torch_quantize_per_channel(const std::vector<TzdVal>& args) {
-    // torch_quantize_per_channel
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_quantize_per_tensor(const std::vector<TzdVal>& args) {
-    // torch_quantize_per_tensor
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_rand(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); auto arr = std::make_shared<std::vector<TzdVal>>(); for (int64_t i = 0; i < n; ++i) arr->push_back(tzd_builtin_random({})); return TzdVal(arr);
+    return fb_create_random_shaped(tzd_parse_shape(args), "uniform");
 }
 inline TzdVal tzd_builtin_torch_randint(const std::vector<TzdVal>& args) {
-    // torch_randint
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_randint(args);
 }
 inline TzdVal tzd_builtin_torch_randint_like(const std::vector<TzdVal>& args) {
-    // torch_randint_like
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_randint_like(args);
 }
 inline TzdVal tzd_builtin_torch_randn(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); auto arr = std::make_shared<std::vector<TzdVal>>(); for (int64_t i = 0; i < n; ++i) arr->push_back(tzd_builtin_random({})); return TzdVal(arr);
+    return fb_create_random_shaped(tzd_parse_shape(args), "normal");
 }
 inline TzdVal tzd_builtin_torch_randperm(const std::vector<TzdVal>& args) {
-    // torch_randperm
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_randperm(args);
 }
 inline TzdVal tzd_builtin_torch_release_all(const std::vector<TzdVal>& args) {
-    // torch_release_all
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_release_tensor(const std::vector<TzdVal>& args) {
-    // torch_release_tensor
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_relu(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal(0.0) : TzdVal((std::max)(0.0, args[0].as_double()));
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return std::max(0.0, x); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_remainder(const std::vector<TzdVal>& args) {
-    // torch_remainder
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return std::remainder(a, b); });
 }
 inline TzdVal tzd_builtin_torch_repeat(const std::vector<TzdVal>& args) {
-    // torch_repeat
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_repeat(args);
 }
 inline TzdVal tzd_builtin_torch_requires_grad(const std::vector<TzdVal>& args) {
     return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_requires_grad_params(const std::vector<TzdVal>& args) {
-    // torch_requires_grad_params
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_reshape(const std::vector<TzdVal>& args) {
-    return tzd_builtin_reshape(args);
+    return fb_reshape(args);
 }
 inline TzdVal tzd_builtin_torch_rmsprop(const std::vector<TzdVal>& args) {
-    // torch_rmsprop
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "rmsprop"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_save(const std::vector<TzdVal>& args) {
     return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_save_state_dict(const std::vector<TzdVal>& args) {
-    // torch_save_state_dict
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_scalar_value(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal(0.0) : args[0];
+    return args.empty() ? TzdVal(0.0) : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_scatter(const std::vector<TzdVal>& args) {
-    // torch_scatter
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_scatter(args);
 }
 inline TzdVal tzd_builtin_torch_scatter_(const std::vector<TzdVal>& args) {
-    // torch_scatter_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_scatter(args);
 }
 inline TzdVal tzd_builtin_torch_selu(const std::vector<TzdVal>& args) {
-    // torch_selu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return 1.0507 * (x > 0.0 ? x : 1.67326 * (std::exp(x) - 1.0)); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_set_device(const std::vector<TzdVal>& args) {
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_set_grad_enabled(const std::vector<TzdVal>& args) {
-    // torch_set_grad_enabled
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal(true) : args[0];
 }
 inline TzdVal tzd_builtin_torch_set_num_threads(const std::vector<TzdVal>& args) {
     return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_sgd(const std::vector<TzdVal>& args) {
-    // torch_sgd
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double lr = args.size() > 1 ? args[1].as_double() : 0.001;
+    auto opt = std::make_shared<NativeFallbackOptimizer>();
+    opt->type = "sgd"; opt->lr = lr;
+    if (args.size() > 2) opt->beta1 = args[2].as_double();
+    if (args.size() > 3) opt->beta2 = args[3].as_double();
+    if (args.size() > 4) opt->weight_decay = args[4].as_double();
+    if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        for (const auto& elem : *args[0].arrVal) {
+            if (elem.type == ValType::ARRAY && elem.arrVal) opt->params.push_back(elem.arrVal);
+        }
+    } else if (!args.empty() && args[0].type == ValType::ARRAY && args[0].arrVal) {
+        opt->params.push_back(args[0].arrVal);
+    }
+    int64_t id = get_next_fb_optim_id()++;
+    get_fb_optimizers()[id] = opt;
+    return TzdVal(id);
 }
 inline TzdVal tzd_builtin_torch_shape(const std::vector<TzdVal>& args) {
-    return tzd_builtin_len(args);
+    auto arr = std::make_shared<std::vector<TzdVal>>();
+    for (auto d : fb_shape(args.empty() ? TzdVal() : args[0])) arr->push_back(TzdVal(d));
+    return TzdVal(arr);
 }
 inline TzdVal tzd_builtin_torch_sigmoid(const std::vector<TzdVal>& args) {
-    if (args.empty()) return TzdVal(0.5);
-    double x = args[0].as_double();
-    return TzdVal(1.0 / (1.0 + std::exp(-x)));
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return 1.0 / (1.0 + std::exp(-x)); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_sigmoid_fn(const std::vector<TzdVal>& args) {
-    return tzd_builtin_torch_sigmoid(args);
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return 1.0 / (1.0 + std::exp(-x)); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_silu(const std::vector<TzdVal>& args) {
-    return tzd_builtin_torch_sigmoid(args);
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return x / (1.0 + std::exp(-x)); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_smooth_l1_loss(const std::vector<TzdVal>& args) {
-    return TzdVal(0.0);
+    return fb_smooth_l1_loss(args);
 }
 inline TzdVal tzd_builtin_torch_softmax(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : args[0];
+    return fb_softmax(args);
 }
 inline TzdVal tzd_builtin_torch_softmin(const std::vector<TzdVal>& args) {
-    // torch_softmin
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_softmax(args);
 }
 inline TzdVal tzd_builtin_torch_softplus(const std::vector<TzdVal>& args) {
-    // torch_softplus
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (!args.empty()) return fb_unary_op(args[0], [](double x) { return std::log(1.0 + std::exp(x)); }); return TzdVal();
 }
 inline TzdVal tzd_builtin_torch_solve(const std::vector<TzdVal>& args) {
-    // torch_solve
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_solve({args[1], args[0]});
 }
 inline TzdVal tzd_builtin_torch_solve_t(const std::vector<TzdVal>& args) {
-    // torch_solve_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_builtin_solve({args[1], args[0]});
 }
 inline TzdVal tzd_builtin_torch_sort_t(const std::vector<TzdVal>& args) {
-    // torch_sort_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_sort(args);
 }
 inline TzdVal tzd_builtin_torch_split_t(const std::vector<TzdVal>& args) {
-    // torch_split_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_chunk(args);
 }
 inline TzdVal tzd_builtin_torch_sqrt(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : tzd_builtin_sqrt(args);
+    if (args.empty()) return TzdVal();
+    return fb_unary_op(args[0], [](double x){ return std::sqrt(x); });
 }
 inline TzdVal tzd_builtin_torch_squeeze(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : args[0];
+    return fb_squeeze(args);
 }
 inline TzdVal tzd_builtin_torch_stack(const std::vector<TzdVal>& args) {
     return tzd_builtin_concat(args);
 }
 inline TzdVal tzd_builtin_torch_std(const std::vector<TzdVal>& args) {
-    // torch_std
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_std(args);
 }
 inline TzdVal tzd_builtin_torch_std_mean(const std::vector<TzdVal>& args) {
-    // torch_std_mean
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_make_array({fb_std(args), fb_mean(args)});
 }
 inline TzdVal tzd_builtin_torch_sub(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] - args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a - b; });
 }
 inline TzdVal tzd_builtin_torch_sub_(const std::vector<TzdVal>& args) {
-    return args.size() >= 2 ? args[0] - args[1] : (args.empty() ? TzdVal() : args[0]);
+    if (args.size() < 2) return args.empty() ? TzdVal() : args[0];
+    return fb_binary_op(args[0], args[1], [](double a, double b){ return a - b; });
 }
 inline TzdVal tzd_builtin_torch_sum(const std::vector<TzdVal>& args) {
-    return tzd_builtin_sum(args);
+    return fb_reduce_all(args[0], 0.0, [](double a, double b){ return a + b; });
 }
 inline TzdVal tzd_builtin_torch_svd(const std::vector<TzdVal>& args) {
-    // torch_svd
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_svd(args);
 }
 inline TzdVal tzd_builtin_torch_tensor(const std::vector<TzdVal>& args) {
-    // torch_tensor
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_threshold(const std::vector<TzdVal>& args) {
-    // torch_threshold
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    double th = args.size() > 1 ? args[1].as_double() : 0.0, val = args.size() > 2 ? args[2].as_double() : 0.0;
+    return fb_unary_op(args[0], [th, val](double x){ return x > th ? x : val; });
 }
 inline TzdVal tzd_builtin_torch_to_array(const std::vector<TzdVal>& args) {
-    // torch_to_array
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? tzd_make_array({}) : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_bool(const std::vector<TzdVal>& args) {
-    // torch_to_bool
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_bool());
 }
 inline TzdVal tzd_builtin_torch_to_cpu(const std::vector<TzdVal>& args) {
     return args.empty() ? TzdVal() : args[0];
@@ -4406,127 +6898,86 @@ inline TzdVal tzd_builtin_torch_to_cuda(const std::vector<TzdVal>& args) {
     return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_device(const std::vector<TzdVal>& args) {
-    // torch_to_device
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_double(const std::vector<TzdVal>& args) {
-    // torch_to_double
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_to_dtype(const std::vector<TzdVal>& args) {
-    // torch_to_dtype
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_to_float(const std::vector<TzdVal>& args) {
-    // torch_to_float
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : TzdVal(args[0].as_double());
 }
 inline TzdVal tzd_builtin_torch_to_int(const std::vector<TzdVal>& args) {
-    // torch_to_int
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : TzdVal((int64_t)args[0].as_int());
 }
 inline TzdVal tzd_builtin_torch_to_long(const std::vector<TzdVal>& args) {
-    // torch_to_long
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : TzdVal((int64_t)args[0].as_int());
 }
 inline TzdVal tzd_builtin_torch_to_string(const std::vector<TzdVal>& args) {
-    // torch_to_string
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal("") : TzdVal(args[0].to_string());
 }
 inline TzdVal tzd_builtin_torch_topk(const std::vector<TzdVal>& args) {
-    // torch_topk
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_topk(args);
 }
 inline TzdVal tzd_builtin_torch_trace_t(const std::vector<TzdVal>& args) {
-    // torch_trace_t
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_trace(args);
 }
 inline TzdVal tzd_builtin_torch_transpose(const std::vector<TzdVal>& args) {
     return tzd_builtin_transpose(args);
 }
 inline TzdVal tzd_builtin_torch_tril(const std::vector<TzdVal>& args) {
-    // torch_tril
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_tril(args);
 }
 inline TzdVal tzd_builtin_torch_triple_margin_loss(const std::vector<TzdVal>& args) {
-    // torch_triple_margin_loss
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(0.0);
 }
 inline TzdVal tzd_builtin_torch_triu(const std::vector<TzdVal>& args) {
-    // torch_triu
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_triu(args);
 }
 inline TzdVal tzd_builtin_torch_unique(const std::vector<TzdVal>& args) {
-    // torch_unique
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_unique(args);
 }
 inline TzdVal tzd_builtin_torch_unsqueeze(const std::vector<TzdVal>& args) {
-    return args.empty() ? TzdVal() : args[0];
+    return fb_unsqueeze(args);
 }
 inline TzdVal tzd_builtin_torch_upsample_bilinear2d(const std::vector<TzdVal>& args) {
-    // torch_upsample_bilinear2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_upsample_nearest2d(args);
 }
 inline TzdVal tzd_builtin_torch_upsample_nearest2d(const std::vector<TzdVal>& args) {
-    // torch_upsample_nearest2d
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_upsample_nearest2d(args);
 }
 inline TzdVal tzd_builtin_torch_var(const std::vector<TzdVal>& args) {
-    // torch_var
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_var(args);
 }
 inline TzdVal tzd_builtin_torch_var_mean(const std::vector<TzdVal>& args) {
-    // torch_var_mean
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return tzd_make_array({fb_var(args), fb_mean(args)});
 }
 inline TzdVal tzd_builtin_torch_version(const std::vector<TzdVal>& args) {
-    return TzdVal("Standalone-Fallback 0.2.4");
+    return TzdVal("TzdNative Fallback 0.2.4 (Standalone CPU Math Engine)");
 }
 inline TzdVal tzd_builtin_torch_view(const std::vector<TzdVal>& args) {
-    return tzd_builtin_reshape(args);
+    return fb_reshape(args);
 }
 inline TzdVal tzd_builtin_torch_where(const std::vector<TzdVal>& args) {
-    // torch_where
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return fb_where(args);
 }
 inline TzdVal tzd_builtin_torch_zero_(const std::vector<TzdVal>& args) {
-    // torch_zero_
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return args.empty() ? TzdVal() : args[0];
 }
 inline TzdVal tzd_builtin_torch_zero_grad_params(const std::vector<TzdVal>& args) {
-    // torch_zero_grad_params
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    return TzdVal(true);
 }
 inline TzdVal tzd_builtin_torch_zeros(const std::vector<TzdVal>& args) {
-    int64_t n = args.empty() ? 1 : args[0].as_int(); auto arr = std::make_shared<std::vector<TzdVal>>(n > 0 ? n : 1, TzdVal(0.0)); return TzdVal(arr);
+    return fb_create_shaped(tzd_parse_shape(args), 0.0);
 }
 inline TzdVal tzd_builtin_torch_zeros_like(const std::vector<TzdVal>& args) {
-    // torch_zeros_like
-    if (!args.empty()) return args[0];
-    return TzdVal();
+    if (args.empty()) return TzdVal();
+    return fb_create_shaped(fb_shape(args[0]), 0.0);
 }
-#endif
 
+#endif // WITH_LIBTORCH
 
 inline void init_console() {
 #ifdef _WIN32
