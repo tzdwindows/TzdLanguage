@@ -4,6 +4,9 @@
 // ============================================================================
 
 #include "TzdNativeCodegen.h"
+#include "Generated/TzdLangLexer.h"
+#include "Generated/TzdLangParser.h"
+#include <fstream>
 #include <regex>
 #include <iostream>
 
@@ -56,7 +59,12 @@ std::string TzdNativeCodegen::exprToStr(antlr4::tree::ParseTree* tree) {
     return "TzdVal()";
 }
 
-std::string TzdNativeCodegen::generate(TzdLangParser::ProgramContext* tree, const std::string& scriptName, bool cpuOnly) {
+std::string TzdNativeCodegen::generate(
+    TzdLangParser::ProgramContext* tree,
+    const std::string& scriptName,
+    bool cpuOnly,
+    const std::vector<std::string>& importedFiles)
+{
     m_cpuOnly = cpuOnly;
     m_forwardDecls.str("");
     m_classDecls.str("");
@@ -67,6 +75,34 @@ std::string TzdNativeCodegen::generate(TzdLangParser::ProgramContext* tree, cons
     m_currentClass.clear();
     m_inClass = false;
     m_inMethod = false;
+
+    // Parse and process all imported .tzd library files first
+    std::vector<std::unique_ptr<antlr4::ANTLRInputStream>> inputStreams;
+    std::vector<std::unique_ptr<TzdLangLexer>> lexers;
+    std::vector<std::unique_ptr<antlr4::CommonTokenStream>> tokenStreams;
+    std::vector<std::unique_ptr<TzdLangParser>> parsers;
+
+    for (const auto& impPath : importedFiles) {
+        std::ifstream f(impPath);
+        if (f.is_open()) {
+            std::stringstream ss;
+            ss << f.rdbuf();
+            std::string impCode = ss.str();
+            auto input = std::make_unique<antlr4::ANTLRInputStream>(impCode);
+            auto lexer = std::make_unique<TzdLangLexer>(input.get());
+            auto tokens = std::make_unique<antlr4::CommonTokenStream>(lexer.get());
+            tokens->fill();
+            auto parser = std::make_unique<TzdLangParser>(tokens.get());
+            auto* impTree = parser->program();
+            if (parser->getNumberOfSyntaxErrors() == 0 && impTree) {
+                visitProgram(impTree);
+            }
+            inputStreams.push_back(std::move(input));
+            lexers.push_back(std::move(lexer));
+            tokenStreams.push_back(std::move(tokens));
+            parsers.push_back(std::move(parser));
+        }
+    }
 
     visitProgram(tree);
 
@@ -404,7 +440,18 @@ std::any TzdNativeCodegen::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
 
 std::any TzdNativeCodegen::visitForInit(TzdLangParser::ForInitContext* ctx) {
     if (ctx->variableDeclaration()) return visitVariableDeclaration(ctx->variableDeclaration());
-    if (ctx->expression()) return exprToStr(ctx->expression());
+    if (ctx->expression()) {
+        if (auto assignCtx = dynamic_cast<TzdLangParser::AssignmentExprContext*>(ctx->expression())) {
+            if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(assignCtx->expression(0))) {
+                if (auto idExpr = dynamic_cast<TzdLangParser::IdExprContext*>(atomExpr->atom())) {
+                    std::string varName = idExpr->IDENTIFIER()->getText();
+                    std::string rhs = exprToStr(assignCtx->expression(1));
+                    return "TzdVal " + varName + " = " + rhs;
+                }
+            }
+        }
+        return exprToStr(ctx->expression());
+    }
     return std::string();
 }
 
@@ -598,34 +645,95 @@ std::any TzdNativeCodegen::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
     std::string callee = exprToStr(ctx->atom());
 
-    // Standard builtins mapping
-    static const std::unordered_set<std::string> builtins = {
-        "print", "println", "len", "str", "toString", "int", "toInt", "parseInt",
-        "float", "toFloat", "parseDouble", "bool", "toBool", "type", "isNone", "isNull",
-        "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh",
-        "sqrt", "cbrt", "pow", "exp", "log", "log10", "log2", "abs", "floor", "ceil", "round", "trunc",
-        "min", "max", "clamp", "random", "randInt", "factorial",
-        "time", "clock", "sleep", "exit", "assert", "input",
-        "push", "pop", "insert", "remove", "clear", "contains", "indexOf", "slice", "join", "reverse", "sort",
-        "readFile", "writeFile", "appendFile", "fileExists", "removeFile",
-        "keys", "values", "hasKey",
-        "torch_tensor", "torch_zeros", "torch_ones", "torch_randn", "torch_empty",
-        "torch_matmul", "torch_add", "torch_sub", "torch_mul", "torch_div",
-        "torch_sigmoid", "torch_relu", "torch_softmax", "torch_mean", "torch_sum",
-        "torch_scalar_value", "torch_shape", "torch_is_tensor", "torch_cuda_is_available"
-    };
-
-    if (builtins.count(callee)) {
-        return "tzd_builtin_" + callee + "({" + argsStr.str() + "})";
-    }
-
     // Class instantiation without new: Point(x, y)
     if (m_declaredClasses.count(callee)) {
         return "new_" + callee + "({" + argsStr.str() + "})";
     }
 
-    // Regular function call
-    if (callee == "main") callee = "main_func";
+    // Local user function
+    if (m_declaredFuncs.count(callee) || (callee == "main" && m_declaredFuncs.count("main_func"))) {
+        if (callee == "main") callee = "main_func";
+        return callee + "({" + argsStr.str() + "})";
+    }
+
+    // Comprehensive built-in and standard library function registry (552 functions)
+    static const std::unordered_set<std::string> builtins = {
+        "E", "EPSILON", "GOLDEN_RATIO", "INF", "NAN", "PI", "Runtime", "SQRT2",
+        "TAU", "abs", "acos", "addIncludePath", "appendFile", "argmax", "argmin", "asin",
+        "assert", "assert_t", "atan", "atan2", "avg", "base64Decode", "base64Encode", "bigint",
+        "bigintFactorial", "bigintGcd", "bit", "bool", "cbrt", "ceil", "changeDir", "charAt",
+        "charCode", "clamp", "clear", "clock", "comb", "concat", "contains", "copyFile",
+        "cos", "cosh", "countSubstr", "crc32", "cumsum", "currentDir", "dateDiff", "dateParts",
+        "deepCopy", "degrees", "derivative", "det", "diff", "dirExists", "dot", "endsWith",
+        "erf", "escape", "exit", "exp", "expm1", "factorial", "fib", "fileExists",
+        "fileSize", "fill", "filter", "find", "flatten", "float", "floor", "format",
+        "formatTime", "fromBinary", "fromCharCode", "fromHex", "fromJSON", "gcd", "getArraysInfo", "getBigIntMaxDigits",
+        "getClassInfo", "getEnv", "getFunctions", "getNativeFunctions", "getOsInfo", "getScriptDir", "getScriptPath", "getSymbols",
+        "has", "hasKey", "hash", "hexDump", "hypot", "identity", "includes", "indexOf",
+        "indexOfArr", "input", "insert", "int", "inverse", "isBigint", "isFinite", "isNaN",
+        "isNone", "isNull", "isPowerOf2", "isPrime", "isfinite_t", "isinf_t", "isnan_t", "join",
+        "jsonParse", "jsonStringify", "keys", "lcm", "len", "lerp", "levenshtein", "linspace_arr",
+        "listDir", "log", "log10", "log1p", "log2", "logBase", "makeDir", "map",
+        "mapEntries", "mapFilter", "mapFromEntries", "mapGet", "mapHas", "mapKeys", "mapMap", "mapMerge",
+        "mapValues", "match", "matrixMul", "max", "maxArr", "measure", "min", "minArr",
+        "moveFile", "nextPowerOf2", "norm", "now", "ones", "padLeft", "padRight", "parseDouble",
+        "parseFloat", "parseInt", "perm", "plot", "pop", "pow", "powmod", "print",
+        "println", "push", "queuePop", "queuePopAll", "queuePush", "radians", "randInt", "random",
+        "randomInt", "randomSeed", "range", "rank", "rational", "rationalAdd", "rationalMul", "readFile",
+        "readLines", "reduce", "remove", "removeDir", "removeFile", "repeat", "replace", "replaceRegex",
+        "reshape", "reverse", "reverseStr", "round", "sample", "setAdd", "setBigIntMaxDigits", "setContains",
+        "setCreate", "setDifference", "setEnv", "setIntersect", "setRemove", "setSize", "setUnion", "shift",
+        "shuffle", "sign", "simplifySym", "sin", "sinh", "sleep", "slice", "solve",
+        "solveEq", "solveIneq", "solveSym", "sort", "split", "splitRegex", "sqrt", "stackPop",
+        "stackPush", "startsWith", "str", "substr", "substring", "sum", "sys_thread_detach", "sys_thread_join",
+        "sys_thread_start", "tan", "tanh", "tgamma", "time", "timestamp", "toBinary", "toBool",
+        "toCamelCase", "toFixed", "toFloat", "toFraction", "toHex", "toInt", "toJSON", "toLower",
+        "toPrecision", "toSnakeCase", "toString", "toTitleCase", "toUpper", "torch_abs", "torch_adagrad", "torch_adam",
+        "torch_adamax", "torch_adamw", "torch_adaptive_avg_pool1d", "torch_adaptive_avg_pool2d", "torch_add", "torch_add_", "torch_all", "torch_allclose",
+        "torch_any", "torch_arange", "torch_argmax", "torch_argmin", "torch_argsort", "torch_atan2_t", "torch_auto_cleanup", "torch_avg_pool2d",
+        "torch_backward", "torch_batch_norm", "torch_batch_norm1d", "torch_batch_norm2d", "torch_bce_loss", "torch_bernoulli", "torch_bincount", "torch_bmm",
+        "torch_broadcast_shapes", "torch_broadcast_tensors", "torch_broadcast_to", "torch_cat", "torch_chain_matmul", "torch_cholesky", "torch_chunk", "torch_clamp",
+        "torch_clamp_", "torch_clip_grad_norm", "torch_clip_grad_value", "torch_clone", "torch_contiguous", "torch_conv1d", "torch_conv2d", "torch_conv_transpose2d",
+        "torch_copy_", "torch_corrcoef", "torch_cosine_similarity", "torch_count_nonzero", "torch_count_params", "torch_cov", "torch_create_param", "torch_cross_entropy",
+        "torch_cuda_is_available", "torch_cuda_max_memory_allocated", "torch_cuda_memory_allocated", "torch_cuda_memory_reserved", "torch_cuda_reset_peak_memory", "torch_cuda_synchronize", "torch_cumprod", "torch_cumsum",
+        "torch_current_device", "torch_dequantize", "torch_det", "torch_det_t", "torch_detach", "torch_device_count", "torch_device_str", "torch_diag",
+        "torch_diagflat", "torch_digamma", "torch_dim", "torch_div", "torch_div_", "torch_dropout", "torch_dtype", "torch_dtype_str",
+        "torch_eig", "torch_element_size", "torch_elu", "torch_embedding", "torch_empty", "torch_empty_cache", "torch_empty_like", "torch_eq",
+        "torch_equal", "torch_erf", "torch_erfc", "torch_exp", "torch_expand", "torch_eye", "torch_fill_", "torch_flatten",
+        "torch_flatten_t", "torch_fmod", "torch_from_array", "torch_full", "torch_full_like", "torch_fused_linear_bias_gelu", "torch_fused_residual_layernorm", "torch_fused_silu_mul",
+        "torch_fused_softmax_mask", "torch_gather", "torch_gc", "torch_ge", "torch_gelu", "torch_get_num_threads", "torch_glu", "torch_grad",
+        "torch_grad_fn", "torch_gt", "torch_hardswish", "torch_hardtanh", "torch_histc", "torch_identity", "torch_index_copy_", "torch_index_put",
+        "torch_index_select", "torch_init_kaiming", "torch_init_normal", "torch_init_ones", "torch_init_uniform", "torch_init_xavier", "torch_init_zeros", "torch_interpolate",
+        "torch_inv", "torch_inverse", "torch_inverse_t", "torch_is_contiguous", "torch_is_floating_point", "torch_is_grad_enabled", "torch_is_integer", "torch_is_leaf",
+        "torch_is_pinned", "torch_is_requires_grad", "torch_is_tensor", "torch_isfinite", "torch_isinf", "torch_isnan", "torch_item", "torch_jit_eval",
+        "torch_jit_load", "torch_jit_save", "torch_jit_train", "torch_kl_div", "torch_l1_loss", "torch_layer_norm", "torch_le", "torch_leaky_relu",
+        "torch_lerp", "torch_lgamma", "torch_linear", "torch_linspace", "torch_load", "torch_load_state_dict", "torch_log", "torch_log_softmax",
+        "torch_logcumsumexp", "torch_logical_and", "torch_logical_not", "torch_logical_or", "torch_logspace", "torch_logsumexp", "torch_lstsq", "torch_lt",
+        "torch_make_contiguous", "torch_manual_seed", "torch_masked_fill", "torch_masked_fill_", "torch_masked_select", "torch_matmul", "torch_matrix_exp", "torch_max_pool2d",
+        "torch_max_t", "torch_mean", "torch_median", "torch_memory_allocated", "torch_memory_allocated_str", "torch_min_t", "torch_mish", "torch_mm",
+        "torch_mse_loss", "torch_mul", "torch_mul_", "torch_multinomial", "torch_nadam", "torch_nbytes", "torch_ne", "torch_neg",
+        "torch_nll_loss", "torch_no_grad", "torch_no_grad_scope", "torch_nonzero", "torch_norm_t", "torch_num_tensors", "torch_numel", "torch_one_hot",
+        "torch_ones", "torch_ones_like", "torch_optim_delete", "torch_optim_step", "torch_optim_zero_grad", "torch_optimizer_create", "torch_orth", "torch_pad",
+        "torch_pairwise_distance", "torch_pca", "torch_permute", "torch_pow", "torch_prelu", "torch_print", "torch_prod", "torch_q_scale",
+        "torch_q_zero_point", "torch_quantize_per_channel", "torch_quantize_per_tensor", "torch_rand", "torch_randint", "torch_randint_like", "torch_randn", "torch_randperm",
+        "torch_release_all", "torch_release_tensor", "torch_relu", "torch_remainder", "torch_repeat", "torch_requires_grad", "torch_requires_grad_params", "torch_reshape",
+        "torch_rmsprop", "torch_save", "torch_save_state_dict", "torch_scalar_value", "torch_scatter", "torch_scatter_", "torch_selu", "torch_set_device",
+        "torch_set_grad_enabled", "torch_set_num_threads", "torch_sgd", "torch_shape", "torch_sigmoid", "torch_sigmoid_fn", "torch_silu", "torch_smooth_l1_loss",
+        "torch_softmax", "torch_softmin", "torch_softplus", "torch_solve", "torch_solve_t", "torch_sort_t", "torch_split_t", "torch_sqrt",
+        "torch_squeeze", "torch_stack", "torch_std", "torch_std_mean", "torch_sub", "torch_sub_", "torch_sum", "torch_svd",
+        "torch_tensor", "torch_threshold", "torch_to_array", "torch_to_bool", "torch_to_cpu", "torch_to_cuda", "torch_to_device", "torch_to_double",
+        "torch_to_dtype", "torch_to_float", "torch_to_int", "torch_to_long", "torch_to_string", "torch_topk", "torch_trace_t", "torch_transpose",
+        "torch_tril", "torch_triple_margin_loss", "torch_triu", "torch_unique", "torch_unsqueeze", "torch_upsample_bilinear2d", "torch_upsample_nearest2d", "torch_var",
+        "torch_var_mean", "torch_version", "torch_view", "torch_where", "torch_zero_", "torch_zero_grad_params", "torch_zeros", "torch_zeros_like",
+        "trace", "transpose", "trim", "trunc", "type", "unescape", "unique", "unshift",
+        "uuid", "values", "warn", "wordCount", "writeFile", "writeLines", "zeros", "zip"
+    };
+
+    if (builtins.count(callee) || callee.rfind("torch_", 0) == 0) {
+        return "tzd_builtin_" + callee + "({" + argsStr.str() + "})";
+    }
+
+    // Otherwise, callable variable or function object
     return callee + "({" + argsStr.str() + "})";
 }
 

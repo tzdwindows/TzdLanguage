@@ -23,7 +23,11 @@ public:
     virtual ~TzdNativeCodegen() = default;
 
     // Compile an ANTLR4 AST into complete standalone C++20 source code
-    std::string generate(TzdLangParser::ProgramContext* tree, const std::string& scriptName, bool cpuOnly = false);
+    std::string generate(
+        TzdLangParser::ProgramContext* tree,
+        const std::string& scriptName,
+        bool cpuOnly = false,
+        const std::vector<std::string>& importedFiles = {});
 
     // ---- Statement visitors ----
     virtual std::any visitProgram(TzdLangParser::ProgramContext* ctx) override;

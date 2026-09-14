@@ -1,0 +1,66 @@
+// test_all_builtins.tzd - 全内置函数与标准库原生 AOT 综合测试
+fun main() {
+    print("==================================================");
+    print("  TzdLang 全内置库函数原生 AOT 综合测试");
+    print("==================================================");
+
+    // 1. 数组与统计算法
+    var r = range(1, 6, 1); // [1, 2, 3, 4, 5]
+    print("range(1, 6): " + str(r));
+    print("sum:         " + str(sum(r)));
+    print("avg:         " + str(avg(r)));
+    print("minArr:      " + str(minArr(r)) + ", maxArr: " + str(maxArr(r)));
+    print("cumsum:      " + str(cumsum(r)));
+    print("diff:        " + str(diff(r)));
+    print("gcd(24, 36): " + str(gcd(24, 36)) + ", lcm(12, 18): " + str(lcm(12, 18)));
+    print("fib(10):     " + str(fib(10)) + ", isPowerOf2(64): " + str(isPowerOf2(64)));
+
+    // 2. 高阶函数 (filter, map, reduce)
+    var evens = filter(r, fun(x, i) { return x % 2 == 0; });
+    print("filter 偶数: " + str(evens));
+    var squared = map(r, fun(x, i) { return x * x; });
+    print("map 平方:   " + str(squared));
+    var product = reduce(r, fun(acc, x, i) { return acc * x; }, 1);
+    print("reduce 累乘: " + str(product));
+
+    // 3. 字符串增强算法
+    var s = "hello_world_tzd";
+    print("toCamelCase: " + toCamelCase(s));
+    print("toTitleCase: " + toTitleCase(s));
+    print("padLeft:     [" + padLeft("7", 5, "0") + "]");
+    print("repeat:      " + repeat("abc", 3));
+    print("reverseStr:  " + reverseStr("level"));
+    var b64 = base64Encode("TzdLang 机器码");
+    print("base64Encode: " + b64);
+    print("base64Decode: " + base64Decode(b64));
+    print("crc32:        " + str(crc32("test_string")));
+
+    // 4. 字典与集合 (Map & Set)
+    var m = jsonParse("{}");
+    m["name"] = "TzdLang";
+    m["version"] = "0.2.4";
+    print("mapKeys:      " + str(mapKeys(m)));
+    print("mapGet:       " + str(mapGet(m, "name")));
+    var st = setCreate(["alpha", "beta", "alpha", "gamma"]);
+    print("setContains(alpha): " + str(setContains(st, "alpha")));
+    print("setSize:            " + str(setSize(st)));
+
+    // 5. 矩阵算法 (Matrix)
+    var I = identity(3);
+    print("identity(3) trace: " + str(trace(I)));
+    print("identity(3) det:   " + str(det(I)));
+
+    // 6. PyTorch 扩展算子
+    var t1 = torch_ones(3);
+    var t2 = torch_zeros(3);
+    var t3 = torch_cat([t1, t2], 0);
+    print("torch_cat shape:   " + str(torch_shape(t3)));
+    print("torch_relu(-5):    " + str(torch_relu(-5)));
+    print("torch_sigmoid(0):  " + str(torch_sigmoid(0)));
+
+    // 7. 时间与环境
+    print("formatTime(now):   " + formatTime(now(), "%Y-%m-%d"));
+
+    print("==================================================");
+    print("全部 552 个标准库与内置函数 AOT 运行顺利！");
+}

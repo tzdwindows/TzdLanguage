@@ -954,8 +954,15 @@ ExeCompileResult TzdExeCompiler::compileSource(
         printProgressBar(60, "正在生成原生机器码 IR/C++ 高性能源码...");
         if (options.onProgress) options.onProgress("Generating native C++...", 60);
 
+        // Resolve imported .tzd libraries so their classes and functions are compiled natively
+        std::vector<std::string> resolvedImports;
+        if (options.bundleStdlib) {
+            fs::path baseDir = fs::current_path();
+            resolvedImports = scanAndResolveImports(sourceCode, baseDir.string(), options.extraIncludePaths);
+        }
+
         TzdNativeCodegen codegen;
-        std::string cppCode = codegen.generate(tree, entryName, options.cpuOnly);
+        std::string cppCode = codegen.generate(tree, entryName, options.cpuOnly, resolvedImports);
 
         fs::path outPath(targetExe);
         fs::path outDir = outPath.parent_path();
