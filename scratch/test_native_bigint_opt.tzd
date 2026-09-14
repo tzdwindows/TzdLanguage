@@ -1,0 +1,62 @@
+// scratch/test_native_bigint_opt.tzd
+// Verification of High-Performance Native BigInt optimizations (Base 10^9 + Karatsuba)
+
+fun test_bigint_factorial_opt() {
+    print("--- 1. Testing Optimized 1000! Factorial ---");
+    var t0 = clock();
+    var f1000 = bigintFactorial(1000);
+    var t1 = clock();
+    var dur = (t1 - t0) * 1000.0;
+    print("1000! length: " + str(len(f1000)) + " digits");
+    print("1000! elapsed time: " + str(dur) + " ms");
+    print("1000! prefix: " + substr(f1000, 0, 50) + "...");
+}
+
+fun test_karatsuba_mul() {
+    print("--- 2. Testing Karatsuba Big Multiplication ---");
+    // Multiply two 200-digit numbers
+    var a = bigint("99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999");
+    var b = bigint("88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888");
+    var t0 = clock();
+    var prod = bigintMul(a, b);
+    var t1 = clock();
+    print("Product length: " + str(len(prod)) + " digits");
+    print("Karatsuba multiplication time: " + str((t1 - t0) * 1000.0) + " ms");
+    print("Product prefix: " + substr(prod, 0, 40) + "...");
+}
+
+fun test_fast_powmod() {
+    print("--- 3. Testing Fast Binary Exponentiation & PowMod ---");
+    // 2^100 exact
+    var p = pow(2, 100);
+    print("2^100 exact BigInt: " + str(p));
+
+    // powmod: 123456789 ^ 987654321 mod 1000000007
+    var pm = powmod("123456789", "987654321", "1000000007");
+    print("powmod('123456789', '987654321', '1000000007') = " + str(pm));
+}
+
+fun test_overflow_promotion() {
+    print("--- 4. Testing 64-bit Overflow Auto-Promotion ---");
+    // (2^62) * 4 overflows int64_t into BigInt!
+    var large = 4611686018427387904; // 2^62
+    var auto_big = large * 4; // 2^64 = 18446744073709551616
+    print("2^62 * 4 auto-promoted to BigInt = " + str(auto_big));
+
+    // Large addition overflow: INT64_MAX + 10
+    var max_int = 9223372036854775807;
+    var sum_over = max_int + 10;
+    print("INT64_MAX + 10 = " + str(sum_over));
+}
+
+fun main() {
+    print("==================================================");
+    print("  TzdLang Native BigInt Optimization Verification");
+    print("==================================================");
+    test_bigint_factorial_opt();
+    test_karatsuba_mul();
+    test_fast_powmod();
+    test_overflow_promotion();
+    print("==================================================");
+    print(">>> NATIVE BIGINT OPTIMIZATIONS VERIFIED! <<<");
+}

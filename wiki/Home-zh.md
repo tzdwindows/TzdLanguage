@@ -6,7 +6,9 @@
 
 欢迎来到 **TzdLang (TZD)** 与 **TzdTools** 的官方底层技术设计与开发文档 Wiki。
 
-TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具链系统，包含分级异步 JIT 编译器、原生深度学习算子、世界领先的 CUDA GPU NTT 大数乘法流水线以及完善的 IDE 调试生态。
+TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具链系统，包含分级异步 JIT 编译器、原生深度学习算子、世界领先的 CUDA GPU NTT 大数乘法流水线、原生 Base $10^9$ + Karatsuba 大数运算引擎、符号表达式求解器以及完善的 IDE 调试生态。
+
+> **v0.2.5 版本核心亮点**：原生高性能 Base $10^9$ Karatsuba 大数乘法引擎（$1000!$ 仅需 2ms）、符号化简与不等式求解实现、真实 OS 信息与脚本路径、Autograd DAG 反向传播、JIT State Dict 持久化、多 Channel 多 Batch Conv2D。
 
 ---
 

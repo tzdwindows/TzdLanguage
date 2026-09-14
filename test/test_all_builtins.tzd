@@ -38,7 +38,7 @@ fun main() {
     // 4. 字典与集合 (Map & Set)
     var m = jsonParse("{}");
     m["name"] = "TzdLang";
-    m["version"] = "0.2.4";
+    m["version"] = "0.2.5";
     print("mapKeys:      " + str(mapKeys(m)));
     print("mapGet:       " + str(mapGet(m, "name")));
     var st = setCreate(["alpha", "beta", "alpha", "gamma"]);

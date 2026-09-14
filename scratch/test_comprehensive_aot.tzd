@@ -1,0 +1,113 @@
+// scratch/test_comprehensive_aot.tzd
+// Comprehensive test of all fixed built-ins and PyTorch fallback/runtime in TzdLang AOT compiler
+
+fun test_math_lin_alg() {
+    print("--- 1. Testing Linear Algebra (inverse, solve, rank) ---");
+    var A = [[1.0, 2.0], [3.0, 4.0]];
+    var invA = inverse(A);
+    print("inv([[1,2],[3,4]]) = " + str(invA));
+
+    // solve [ [2, 1], [1, -1] ] * x = [ 5, 1 ] => x = [ 2, 1 ]
+    var M = [[2.0, 1.0], [1.0, -1.0]];
+    var b = [5.0, 1.0];
+    var x = solve(M, b);
+    print("solve([[2,1],[1,-1]], [5,1]) = " + str(x));
+
+    var R = [[1.0, 2.0], [2.0, 4.0]];
+    var rk = rank(R);
+    print("rank([[1,2],[2,4]]) = " + str(rk));
+}
+
+fun test_fractions_and_bigint() {
+    print("--- 2. Testing toFraction & isBigint ---");
+    var f1 = toFraction(0.125);
+    print("toFraction(0.125) = " + str(f1));
+    var f2 = toFraction(0.3333333333333333);
+    print("toFraction(1/3) = " + str(f2));
+
+    var is_b1 = isBigint("12345678901234567890");
+    var is_b2 = isBigint("123a456");
+    print("isBigint('12345678901234567890') = " + str(is_b1) + ", isBigint('123a') = " + str(is_b2));
+}
+
+fun test_json_and_symbols() {
+    print("--- 3. Testing JSON Parser, Serializer & Reflection ---");
+    var rawJson = '{"title":"TzdLang","version":2.0,"features":["AOT","PyTorch"],"ready":true}';
+    var parsed = jsonParse(rawJson);
+    print("jsonParse result keys = " + str(keys(parsed)));
+
+    var serialized = jsonStringify(parsed);
+    print("jsonStringify result = " + serialized);
+
+    var syms = getSymbols();
+    print("getSymbols() count = " + str(len(syms)));
+    var nfuncs = getNativeFunctions();
+    print("getNativeFunctions() count = " + str(len(nfuncs)));
+}
+
+fun test_numerical_and_plot() {
+    print("--- 4. Testing Derivative, Equation Solver & Plot ---");
+    // derivative of x^2 at x = 3 is 6
+    var d = derivative("x^2", 3.0);
+    print("d/dx(x^2) at x=3 = " + str(d));
+
+    // solveEq x^2 - 4 = 0 around 1.5 => 2.0
+    var root = solveEq("x^2 - 4", 1.5);
+    print("solveEq('x^2 - 4', 1.5) = " + str(root));
+
+    // plot sin(x) from 0 to 6.28
+    print("Calling plot('sin(x)', 0, 6.28):");
+    plot("sin(x)", 0.0, 6.2831853);
+}
+
+fun test_multithreading() {
+    print("--- 5. Testing Multi-threading ---");
+    var t1 = sys_thread_start(fun() {
+        print("Worker thread running!");
+    });
+    print("Thread started, id = " + str(t1));
+    sys_thread_join(t1);
+    print("Thread joined successfully!");
+}
+
+fun test_pytorch_ops() {
+    print("--- 6. Testing PyTorch Built-in Operators ---");
+    var z = torch_zeros(4);
+    print("torch_zeros(4) = " + str(z));
+    var o = torch_ones(4);
+    print("torch_ones(4) = " + str(o));
+    var s = torch_add(z, o);
+    print("torch_add(z, o) = " + str(s));
+
+    // Conv2d test: 1 batch, 1 channel, 3x3 input, 1x1 kernel of 1s
+    var inp = [[[ [1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0] ]]];
+    var weight = [[[[ 1.0 ]]]];
+    var conv_out = torch_conv2d(inp, weight);
+    print("torch_conv2d out = " + str(conv_out));
+
+    // Loss test
+    var pred = [1.0, 2.0, 3.0];
+    var target = [1.0, 2.0, 5.0];
+    var loss = torch_mse_loss(pred, target);
+    print("torch_mse_loss([1,2,3], [1,2,5]) = " + str(loss));
+
+    // Optimizer test
+    var p = [10.0, -5.0];
+    var grad = [1.0, -0.5];
+    var opt_step = torch_adam(p, grad, 0.1);
+    print("torch_adam step = " + str(opt_step));
+}
+
+fun main() {
+    print("==================================================");
+    print("  TzdLang Comprehensive Builtin & PyTorch Test");
+    print("==================================================");
+    test_math_lin_alg();
+    test_fractions_and_bigint();
+    test_json_and_symbols();
+    test_numerical_and_plot();
+    test_multithreading();
+    test_pytorch_ops();
+    print("==================================================");
+    print(">>> ALL COMPREHENSIVE TESTS FINISHED! <<<");
+}

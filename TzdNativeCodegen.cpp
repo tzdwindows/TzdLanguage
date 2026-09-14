@@ -729,7 +729,7 @@ std::any TzdNativeCodegen::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         "uuid", "values", "warn", "wordCount", "writeFile", "writeLines", "zeros", "zip"
     };
 
-    if (builtins.count(callee) || callee.rfind("torch_", 0) == 0) {
+    if (builtins.count(callee) || callee.rfind("torch_", 0) == 0 || callee.rfind("bigint", 0) == 0) {
         return "tzd_builtin_" + callee + "({" + argsStr.str() + "})";
     }
 

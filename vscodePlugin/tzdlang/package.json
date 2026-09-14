@@ -2,7 +2,7 @@
     "name": "tzdlang",
     "displayName": "TzdLang",
     "description": "现代化、高性能面向对象编程语言 TzdLang 官方插件，支持语法高亮、LSP代码补全、DAP可视化交互断点调试",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "publisher": "tzdwindows7",
     "repository": {
         "type": "git",

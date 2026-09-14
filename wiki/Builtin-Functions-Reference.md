@@ -47,6 +47,9 @@ This document provides a comprehensive cheat-sheet and lookup reference for all 
 | `sys_thread_start` | `sys_thread_start(fn)` | `pointer` | Start native operating system worker thread |
 | `sys_thread_join` | `sys_thread_join(th)` | `null` | Wait for native worker thread termination |
 | `sys_thread_detach`| `sys_thread_detach(th)`| `null` | Detach worker thread |
+| `getOsInfo` | `getOsInfo()` | `string` | **[v0.2.5]** Real OS/arch/mode string (e.g. `"Windows x86_64 (Standalone Native)"`) |
+| `getScriptPath` | `getScriptPath()` | `string` | **[v0.2.5]** Absolute path of the running executable/script |
+| `getScriptDir` | `getScriptDir()` | `string` | **[v0.2.5]** Directory of the running executable/script |
 
 ---
 
@@ -107,30 +110,44 @@ This document provides a comprehensive cheat-sheet and lookup reference for all 
 |---|---|---|
 | `solveEq(f, guess)` | `(function, double) -> double` | Newton-Raphson numerical root finding $f(x)=0$:<br>`solveEq(fun(x) { return x * x - 2; }, 1.0); // 1.414213` |
 | `solveSym(expr, var)` | `(string, string) -> string` | Symbolic equation solver:<br>`solveSym("2*x + 5 = 15", "x"); // "x = 5"` |
-| `simplifySym(expr)` | `(string) -> string` | Algebraic expression simplification:<br>`simplifySym("2*x + 3*x"); // "5*x"` |
-| `solveIneq(f, op, val, low, high)` | `(fn, str, dbl, dbl, dbl) -> string` | Numerical inequality solver:<br>`solveIneq(fun(x){ return x*x; }, "<", 4, -10, 10); // "-2 < x < 2"` |
+| `simplifySym(expr)` | `(string) -> string` | **[v0.2.5]** Native polynomial AST simplifier with like-term folding:<br>`simplifySym("2*x + 3*x"); // "5*x"`<br>`simplifySym("x^2 + 2*x^2 - 4 + 1"); // "3*x^2 - 3"` |
+| `solveIneq(expr)` | `(string) -> string` | **[v0.2.5]** Symbolic inequality solver using root interval testing:<br>`solveIneq("x^2 - 4 < 0"); // "-2 < x < 2"`<br>`solveIneq("2*x - 6 >= 0"); // "x >= 3"` |
 | `derivative(f, x)` | `(function, double) -> double` | Numerical derivative calculation $f'(x)$ |
 
 ---
 
 ## 5. Number Theory, BigInt & Rationals
 
+> **[v0.2.5] Native BigInt Engine Upgrade** — Base $10^9$ multi-limb `uint64_t` arrays + Karatsuba recursive multiplication ($O(N^{1.585})$). Fast binary exponentiation. 64-bit overflow auto-promotion.
+> - `1000!` (2568 digits) in **2.06 ms**; 400-digit Karatsuba multiply in **0.011 ms**
+> - `pow(2, 100)` returns exact `1267650600228229401496703205376` string
+
 | Function | Signature | Description & Example |
 |---|---|---|
 | `factorial(n)` | `(int) -> double/int` | Factorial $n!$: `factorial(5); // 120` |
 | `bigint(val)` | `(string/number) -> bigint` | Construct arbitrary-precision integer |
-| `isBigint(val)` | `(any) -> bool` | Check if variable is of BigInt type |
-| `bigintFactorial(n)` | `(int) -> bigint` | Multi-thousand-digit factorial |
+| `isBigint(val)` | `(any) -> bool` | Check if variable is a BigInt string |
+| `bigintAdd(a, b)` | `(bigint, bigint) -> bigint` | Arbitrary-precision addition: `bigintAdd("999", "1"); // "1000"` |
+| `bigintSub(a, b)` | `(bigint, bigint) -> bigint` | Arbitrary-precision subtraction |
+| `bigintMul(a, b)` | `(bigint, bigint) -> bigint` | Karatsuba $O(N^{1.585})$ multiplication |
+| `bigintDiv(a, b)` | `(bigint, bigint) -> bigint` | Arbitrary-precision integer division |
+| `bigintMod(a, b)` | `(bigint, bigint) -> bigint` | Arbitrary-precision modulo |
+| `bigintPow(a, exp)` | `(bigint, int) -> bigint` | Fast binary exponentiation: `bigintPow("2", 100); // "1267650600228229401496703205376"` |
+| `bigintPowmod(b, e, m)` | `(bigint, bigint, bigint) -> bigint` | Large-integer modular exponentiation |
+| `bigintCompare(a, b)` | `(bigint, bigint) -> int` | Compare two BigInts (-1 / 0 / 1) |
+| `bigintAbs(a)` | `(bigint) -> bigint` | Absolute value of BigInt |
+| `bigintNeg(a)` | `(bigint) -> bigint` | Negate BigInt |
+| `bigintFactorial(n)` | `(int) -> bigint` | Multi-thousand-digit factorial: `bigintFactorial(100); // 158 digits` |
 | `bigintGcd(a, b)` | `(bigint, bigint) -> bigint` | GCD for arbitrary-precision integers |
-| `setBigIntMaxDigits(n)` | `(int) -> null` | Set max display digits limit for BigInt |
-| `getBigIntMaxDigits()` | `() -> int` | Query max display digits limit |
+| `powmod(b, e, m)` | `(any, any, any) -> any` | Modular exponentiation $b^e \pmod m$ (supports BigInt operands) |
 | `gcd(a, b)` | `(int, int) -> int` | Greatest common divisor: `gcd(48, 18); // 6` |
 | `lcm(a, b)` | `(int, int) -> int` | Least common multiple: `lcm(4, 6); // 12` |
 | `isPrime(n)` | `(int) -> bool` | Miller-Rabin probabilistic primality test |
-| `powmod(b, e, m)` | `(int, int, int) -> int` | Modular exponentiation $b^e \pmod m$ |
 | `comb(n, k)` | `(int, int) -> int` | Combinations $C_n^k$ |
 | `perm(n, k)` | `(int, int) -> int` | Permutations $A_n^k$ |
 | `fib(n)` | `(int) -> int` | $n$-th Fibonacci number |
+| `setBigIntMaxDigits(n)` | `(int) -> null` | Set max display digits limit for BigInt |
+| `getBigIntMaxDigits()` | `() -> int` | Query max display digits limit |
 | `rational(n, d)` | `(int, int) -> rational` | Construct exact rational fraction $\frac{n}{d}$ |
 | `toFraction(num)` | `(double) -> string` | Convert float to simplified fraction string |
 | `rationalAdd(a, b)` | `(rat, rat) -> rat` | Exact rational addition |

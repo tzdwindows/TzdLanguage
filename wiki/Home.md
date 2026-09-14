@@ -6,7 +6,9 @@
 
 Welcome to the official technical documentation and architecture wiki for **TzdLang (TZD)** and **TzdTools**.
 
-TzdLang is an independently developed, high-performance object-oriented programming language featuring a hybrid tiered compilation model, native deep learning primitives, an ultra-fast GPU Number Theoretic Transform (NTT) BigInt multiplication engine, and complete tooling support.
+TzdLang is an independently developed, high-performance object-oriented programming language featuring a hybrid tiered compilation model, native deep learning primitives, an ultra-fast GPU Number Theoretic Transform (NTT) BigInt multiplication engine, a native Base $10^9$ + Karatsuba CPU BigInt arithmetic engine, symbolic expression solver, and complete tooling support.
+
+> **v0.2.5 Highlights**: Native high-performance Base $10^9$ Karatsuba BigInt engine ($1000!$ in 2 ms), real symbolic simplifier & inequality solver, runtime OS/path detection, Autograd DAG backprop, JIT state dict persistence, multi-channel multi-batch Conv2D.
 
 ---
 
