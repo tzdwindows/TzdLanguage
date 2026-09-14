@@ -598,18 +598,25 @@ std::any TzdNativeCodegen::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
     std::string callee = exprToStr(ctx->atom());
 
-    // Standard builtins
-    if (callee == "clock") {
-        return std::string("TzdVal(tzd_clock())");
-    }
-    if (callee == "len") {
-        return "tzd_len(" + (args.empty() ? "TzdVal()" : args[0]) + ")";
-    }
-    if (callee == "toString") {
-        return "tzd_toString(" + (args.empty() ? "TzdVal()" : args[0]) + ")";
-    }
-    if (callee == "print") {
-        return "tzd_print_vec({" + argsStr.str() + "})";
+    // Standard builtins mapping
+    static const std::unordered_set<std::string> builtins = {
+        "print", "println", "len", "str", "toString", "int", "toInt", "parseInt",
+        "float", "toFloat", "parseDouble", "bool", "toBool", "type", "isNone", "isNull",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh",
+        "sqrt", "cbrt", "pow", "exp", "log", "log10", "log2", "abs", "floor", "ceil", "round", "trunc",
+        "min", "max", "clamp", "random", "randInt", "factorial",
+        "time", "clock", "sleep", "exit", "assert", "input",
+        "push", "pop", "insert", "remove", "clear", "contains", "indexOf", "slice", "join", "reverse", "sort",
+        "readFile", "writeFile", "appendFile", "fileExists", "removeFile",
+        "keys", "values", "hasKey",
+        "torch_tensor", "torch_zeros", "torch_ones", "torch_randn", "torch_empty",
+        "torch_matmul", "torch_add", "torch_sub", "torch_mul", "torch_div",
+        "torch_sigmoid", "torch_relu", "torch_softmax", "torch_mean", "torch_sum",
+        "torch_scalar_value", "torch_shape", "torch_is_tensor", "torch_cuda_is_available"
+    };
+
+    if (builtins.count(callee)) {
+        return "tzd_builtin_" + callee + "({" + argsStr.str() + "})";
     }
 
     // Class instantiation without new: Point(x, y)

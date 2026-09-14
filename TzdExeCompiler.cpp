@@ -306,6 +306,151 @@ std::string TzdExeCompiler::findMsvcVcvars() {
     return "";
 }
 
+std::string TzdExeCompiler::findLlvmCompiler(std::string& outKind) {
+    // 1. Check alongside current running executable
+    wchar_t currentExe[MAX_PATH];
+    if (GetModuleFileNameW(NULL, currentExe, MAX_PATH)) {
+        fs::path p(currentExe);
+        fs::path exeDir = p.parent_path();
+        std::vector<fs::path> relCandidates = {
+            exeDir / "llvm" / "bin" / "clang++.exe",
+            exeDir / "bin" / "clang++.exe",
+            exeDir / "clang++.exe",
+            exeDir.parent_path() / "llvm" / "bin" / "clang++.exe",
+            exeDir.parent_path() / "bin" / "clang++.exe",
+        };
+        for (const auto& c : relCandidates) {
+            if (fs::exists(c)) { outKind = "clang++"; return c.string(); }
+        }
+    }
+
+    // 2. Check known SDK install directories
+    std::vector<std::string> knownPaths = {
+        "E:\\LLVM_SDK\\bin\\clang++.exe",
+        "C:\\Program Files\\LLVM\\bin\\clang++.exe",
+        "C:\\LLVM\\bin\\clang++.exe",
+        "D:\\LLVM\\bin\\clang++.exe",
+        "E:\\LLVM\\bin\\clang++.exe",
+    };
+    for (const auto& p : knownPaths) {
+        if (fs::exists(p)) { outKind = "clang++"; return p; }
+    }
+
+    // 3. Search in system PATH via where.exe
+    FILE* pipe = _popen("where.exe clang++.exe 2>nul", "r");
+    if (pipe) {
+        char buf[512];
+        if (fgets(buf, sizeof(buf), pipe)) {
+            std::string s(buf);
+            while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
+            if (fs::exists(s)) { _pclose(pipe); outKind = "clang++"; return s; }
+        }
+        _pclose(pipe);
+    }
+
+    // 4. Fallback: MinGW g++
+    std::string gcc = findGccCompiler();
+    if (!gcc.empty()) {
+        outKind = "g++";
+        return gcc;
+    }
+
+    return "";
+}
+
+std::string TzdExeCompiler::findGccCompiler() {
+    std::vector<std::string> knownGcc = {
+        "C:\\msys64\\mingw64\\bin\\g++.exe",
+        "C:\\mingw64\\bin\\g++.exe",
+        "C:\\MinGW\\bin\\g++.exe",
+        "D:\\msys64\\mingw64\\bin\\g++.exe",
+        "D:\\mingw64\\bin\\g++.exe",
+    };
+    for (const auto& p : knownGcc) {
+        if (fs::exists(p)) return p;
+    }
+
+    FILE* pipe = _popen("where.exe g++.exe 2>nul", "r");
+    if (pipe) {
+        char buf[512];
+        if (fgets(buf, sizeof(buf), pipe)) {
+            std::string s(buf);
+            while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
+            if (fs::exists(s)) { _pclose(pipe); return s; }
+        }
+        _pclose(pipe);
+    }
+    return "";
+}
+
+bool TzdExeCompiler::copyTorchDependencies(const std::string& targetExeDir, bool isGpu) {
+    fs::path targetDir = fs::absolute(targetExeDir);
+    std::error_code ec;
+    if (!fs::exists(targetDir, ec)) {
+        fs::create_directories(targetDir, ec);
+    }
+
+    std::vector<fs::path> srcDirs;
+    wchar_t currentExe[MAX_PATH];
+    if (GetModuleFileNameW(NULL, currentExe, MAX_PATH)) {
+        fs::path p(currentExe);
+        fs::path exeDir = p.parent_path();
+        srcDirs.push_back(exeDir);
+        srcDirs.push_back(exeDir / "lib");
+        srcDirs.push_back(exeDir.parent_path() / "lib");
+    }
+    srcDirs.push_back(fs::path("dist") / (isGpu ? "TzdTools" : "TzdTools_CPU"));
+    srcDirs.push_back(fs::path("dist") / "TzdTools");
+    srcDirs.push_back(fs::path("External") / "libtorch" / "lib");
+    srcDirs.push_back(fs::path("x64") / "Release");
+
+    fs::path validSrcDir;
+    for (const auto& d : srcDirs) {
+        if (fs::exists(d / "torch_cpu.dll", ec) || fs::exists(d / "c10.dll", ec)) {
+            validSrcDir = d;
+            break;
+        }
+    }
+
+    if (validSrcDir.empty()) {
+        std::cerr << "  [PyTorch] 警告: 未找到 PyTorch 运行库源目录，跳过 DLL 拷贝。" << std::endl;
+        return false;
+    }
+
+    std::vector<std::string> cpuDlls = {
+        "torch_cpu.dll", "torch.dll", "c10.dll", "fbgemm.dll", "libiomp5md.dll",
+        "asmjit.dll", "mkl_core.1.dll", "mkl_intel_thread.1.dll", "vcomp140.dll",
+        "pytorch_jni.dll", "torch_global_deps.dll", "uv.dll"
+    };
+
+    std::vector<std::string> gpuDlls = {
+        "torch_cuda.dll", "c10_cuda.dll", "caffe2_nvrtc.dll",
+        "cublas64_12.dll", "cublasLt64_12.dll", "cudart64_12.dll",
+        "cudnn64_8.dll", "cufft64_11.dll", "curand64_10.dll",
+        "cusolver64_11.dll", "cusparse64_12.dll", "nvJitLink_120_0.dll",
+        "nvrtc-builtins64_126.dll", "nvrtc-builtins64_121.dll", "nvrtc64_120_0.dll"
+    };
+
+    std::vector<std::string> toCopy = cpuDlls;
+    if (isGpu) {
+        for (const auto& g : gpuDlls) toCopy.push_back(g);
+    }
+
+    int copied = 0;
+    for (const auto& dll : toCopy) {
+        fs::path srcFile = validSrcDir / dll;
+        fs::path dstFile = targetDir / dll;
+        if (fs::exists(srcFile, ec) && !fs::equivalent(validSrcDir, targetDir, ec)) {
+            fs::copy_file(srcFile, dstFile, fs::copy_options::overwrite_existing, ec);
+            if (!ec) copied++;
+        }
+    }
+
+    std::cout << "\n  [PyTorch 依赖配置] 成功将 " << copied << " 个核心运行库 DLL 部署至目标目录 ("
+              << (isGpu ? "GPU CUDA 完整版" : "CPU 轻量版") << ")。" << std::endl;
+    return true;
+}
+
 bool TzdExeCompiler::compileCppToExe(
     const std::string& cppPath,
     const std::string& exePath,
@@ -341,33 +486,127 @@ bool TzdExeCompiler::compileCppToExe(
 
     // Copy TzdNativeRuntime.hpp to target directory so include always succeeds
     std::error_code ec;
+    bool copiedHeader = false;
     if (fs::exists(repoDir / "TzdNativeRuntime.hpp", ec)) {
-        fs::copy_file(repoDir / "TzdNativeRuntime.hpp", targetDir / "TzdNativeRuntime.hpp",
-                      fs::copy_options::overwrite_existing, ec);
+        if (!fs::equivalent(repoDir, targetDir, ec)) {
+            fs::copy_file(repoDir / "TzdNativeRuntime.hpp", targetDir / "TzdNativeRuntime.hpp",
+                          fs::copy_options::overwrite_existing, ec);
+            if (!ec) copiedHeader = true;
+        }
     }
 
-    std::string incFlag = "/I\"" + repoDir.string() + "\" /I\"" + targetDir.string() + "\"";
-
-    std::string optFlag = "/O2";
-    if (opts.optLevel == 0) optFlag = "/Od";
-    else if (opts.optLevel == 1) optFlag = "/O1";
-    else if (opts.optLevel == 2) optFlag = "/O2";
-    else if (opts.optLevel >= 3) optFlag = "/Ox";
-
+    // Select Toolchain
     std::string vcvars = findMsvcVcvars();
+    std::string gccCompiler = findGccCompiler();
+    std::string llvmKind;
+    std::string llvmCompiler = findLlvmCompiler(llvmKind);
+
+    bool useMsvc = false;
+    bool useLlvm = false;
+    std::string selectedCompiler;
+
+    if (opts.toolchain == CompilerToolchain::MSVC) {
+        useMsvc = true;
+    } else if (opts.toolchain == CompilerToolchain::GCC) {
+        useLlvm = true;
+        selectedCompiler = !gccCompiler.empty() ? gccCompiler : "g++";
+    } else if (opts.toolchain == CompilerToolchain::LLVM) {
+        useLlvm = true;
+        selectedCompiler = !llvmCompiler.empty() ? llvmCompiler : "clang++";
+    } else {
+        // AUTO mode
+        if (!vcvars.empty()) {
+            useMsvc = true;
+        } else if (!gccCompiler.empty()) {
+            useLlvm = true;
+            selectedCompiler = gccCompiler;
+            std::cout << "\n  [编译工具链] 未检测到 Visual Studio 环境，已自动启用内置 GCC/MinGW 编译器:\n               "
+                      << gccCompiler << std::endl;
+        } else if (!llvmCompiler.empty()) {
+            useLlvm = true;
+            selectedCompiler = llvmCompiler;
+            std::cout << "\n  [编译工具链] 未检测到 Visual Studio 环境，已自动启用内置 LLVM / Clang 编译器:\n               "
+                      << llvmCompiler << std::endl;
+        } else {
+            useMsvc = true; // Attempt cl.exe in PATH
+        }
+    }
+
     fs::path batPath = targetDir / "_tzd_compile.bat";
     fs::path logPath = targetDir / "_tzd_compile.log";
+
+    // LibTorch configurations
+    fs::path libtorchDir = repoDir / "External" / "libtorch";
+    if (!fs::exists(libtorchDir, ec)) {
+        if (fs::exists(fs::path("External") / "libtorch", ec)) libtorchDir = fs::path("External") / "libtorch";
+    }
+
     {
         std::ofstream bat(batPath);
         bat << "@echo off\n";
-        if (!vcvars.empty()) {
-            bat << "call \"" << vcvars << "\" >nul 2>&1\n";
+
+        if (useMsvc) {
+            if (!vcvars.empty()) {
+                bat << "call \"" << vcvars << "\" >nul 2>&1\n";
+            }
+            std::string optFlag = "/O2";
+            if (opts.optLevel == 0) optFlag = "/Od";
+            else if (opts.optLevel == 1) optFlag = "/O1";
+            else if (opts.optLevel == 2) optFlag = "/O2";
+            else if (opts.optLevel >= 3) optFlag = "/Ox /fp:fast";
+
+            std::string incFlag = "/I\"" + repoDir.string() + "\" /I\"" + targetDir.string() + "\"";
+            std::string extraDefs = "";
+            std::string linkLibs = "";
+
+            if (opts.forceTorch && fs::exists(libtorchDir, ec)) {
+                incFlag += " /I\"" + (libtorchDir / "include").string() + "\"";
+                incFlag += " /I\"" + (libtorchDir / "include" / "torch" / "csrc" / "api" / "include").string() + "\"";
+                extraDefs += " /DWITH_LIBTORCH /D_GLIBCXX_USE_CXX11_ABI=0";
+                if (opts.torchGpu) {
+                    extraDefs += " /DWITH_CUDA /I\"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\include\"";
+                    linkLibs += " /LIBPATH:\"" + (libtorchDir / "lib").string() + "\" torch.lib torch_cpu.lib torch_cuda.lib c10.lib c10_cuda.lib";
+                } else {
+                    linkLibs += " /LIBPATH:\"" + (libtorchDir / "lib").string() + "\" torch.lib torch_cpu.lib c10.lib";
+                }
+            }
+
+            fs::path exactObjP = targetDir / (cppP.stem().string() + ".obj");
+            bat << "cl.exe /nologo /MT " << optFlag << " /EHsc /std:c++20 /utf-8 "
+                << extraDefs << " " << incFlag << " \"" << cppP.string() << "\" /Fe:\""
+                << targetExeP.string() << "\" /Fo:\"" << exactObjP.string() << "\" "
+                << (linkLibs.empty() ? "" : ("/link " + linkLibs)) << " >\""
+                << logPath.string() << "\" 2>&1\n";
+        } else {
+            // LLVM / Clang++ or MinGW g++
+            std::string optFlag = "-O2 -s";
+            if (opts.optLevel == 0) optFlag = "-O0 -g";
+            else if (opts.optLevel == 1) optFlag = "-O1";
+            else if (opts.optLevel == 2) optFlag = "-O2 -s";
+            else if (opts.optLevel >= 3) optFlag = "-O3 -s";
+
+            std::string incFlag = "-I\"" + repoDir.string() + "\" -I\"" + targetDir.string() + "\"";
+            std::string extraDefs = "";
+            std::string linkLibs = "";
+
+            if (opts.forceTorch && fs::exists(libtorchDir, ec)) {
+                incFlag += " -I\"" + (libtorchDir / "include").string() + "\"";
+                incFlag += " -I\"" + (libtorchDir / "include" / "torch" / "csrc" / "api" / "include").string() + "\"";
+                extraDefs += " -DWITH_LIBTORCH -D_GLIBCXX_USE_CXX11_ABI=0";
+                linkLibs += " -L\"" + (libtorchDir / "lib").string() + "\" -ltorch -ltorch_cpu -lc10";
+                if (opts.torchGpu) {
+                    extraDefs += " -DWITH_CUDA -I\"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\include\"";
+                    linkLibs += " -ltorch_cuda -lc10_cuda";
+                }
+            }
+
+            std::string compExe = !selectedCompiler.empty() ? selectedCompiler : (!llvmCompiler.empty() ? llvmCompiler : "clang++");
+            bat << "\"" << compExe << "\" -std=c++20 " << optFlag << " -static -finput-charset=UTF-8 -fexec-charset=UTF-8 "
+                << extraDefs << " " << incFlag << " \"" << cppP.string() << "\" -o \""
+                << targetExeP.string() << "\" " << linkLibs << " >\""
+                << logPath.string() << "\" 2>&1\n";
         }
-        fs::path exactObjP = targetDir / (cppP.stem().string() + ".obj");
-        bat << "cl.exe /nologo /MT " << optFlag << " /EHsc /std:c++20 "
-            << incFlag << " \"" << cppP.string() << "\" /Fe:\""
-            << targetExeP.string() << "\" /Fo:\"" << exactObjP.string() << "\" >\""
-            << logPath.string() << "\" 2>&1\n";
+
         bat << "exit /b %ERRORLEVEL%\n";
     }
 
@@ -383,10 +622,16 @@ bool TzdExeCompiler::compileCppToExe(
     fs::path objPath = targetDir / (cppP.stem().string() + ".obj");
     fs::remove(objPath, ec);
     fs::remove(batPath, ec);
-    fs::remove(targetDir / "TzdNativeRuntime.hpp", ec);
+    if (copiedHeader) {
+        fs::remove(targetDir / "TzdNativeRuntime.hpp", ec);
+    }
 
     if (ret == 0 && fs::exists(targetExeP, ec) && fs::file_size(targetExeP, ec) > 0) {
         fs::remove(logPath, ec);
+        // If PyTorch was forced, deploy companion runtime DLLs to target directory
+        if (opts.forceTorch) {
+            copyTorchDependencies(targetDir.string(), opts.torchGpu);
+        }
         return true;
     }
 
@@ -400,7 +645,8 @@ bool TzdExeCompiler::compileCppToExe(
         fs::remove(logPath, ec);
     }
 
-    err = "MSVC cl.exe compiler returned code " + std::to_string(ret);
+    err = (useMsvc ? "MSVC cl.exe" : ("LLVM / " + (!llvmCompiler.empty() ? llvmCompiler : "clang++"))) +
+          " compiler returned code " + std::to_string(ret);
     if (!logContent.empty()) {
         err += ":\n" + logContent;
     }

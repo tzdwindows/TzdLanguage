@@ -32,6 +32,13 @@ enum class PayloadFormat : uint32_t {
     HYBRID = 3           // Both BytecodeModule and source code for maximum performance & dynamic OOP
 };
 
+enum class CompilerToolchain : uint32_t {
+    AUTO = 0,   // Auto-detect: MSVC if available, else LLVM/Clang or MinGW
+    MSVC = 1,   // Force MSVC (cl.exe via vcvars64.bat)
+    LLVM = 2,   // Force LLVM / Clang (clang++ / clang-cl)
+    GCC = 3     // Force GCC / MinGW (g++)
+};
+
 /**
  * Compilation options
  */
@@ -47,6 +54,11 @@ struct ExeCompileOptions {
     bool enableJit = true;                  // Enable JIT tiering engine inside generated executable
     bool copyDependencies = false;          // Copy dependent runtime DLLs to output directory (default: OFF)
     int optLevel = 2;                       // Optimization level (0-3)
+
+    // === Compiler Backend & PyTorch Integration ===
+    CompilerToolchain toolchain = CompilerToolchain::AUTO; // Backend toolchain (AUTO: MSVC -> LLVM -> GCC)
+    bool forceTorch = false;                // Force integrate PyTorch runtime
+    bool torchGpu = true;                   // When forceTorch is true: true = GPU, false = CPU
 
     // === Smart / CPU-only build flags ===
     bool cpuOnly = false;                   // --buildCpu: strip ALL GPU/CUDA/torch modules; pure CPU standalone
@@ -192,6 +204,21 @@ public:
      * Locate MSVC vcvars64.bat environment script.
      */
     static std::string findMsvcVcvars();
+
+    /**
+     * Locate LLVM / Clang compiler executable (clang++.exe or clang-cl.exe).
+     */
+    static std::string findLlvmCompiler(std::string& outKind);
+
+    /**
+     * Locate GCC / MinGW compiler executable (g++.exe).
+     */
+    static std::string findGccCompiler();
+
+    /**
+     * Copy PyTorch runtime dependencies (CPU or GPU edition) to target directory.
+     */
+    static bool copyTorchDependencies(const std::string& targetExeDir, bool isGpu);
 
     /**
      * Generate standalone C++ source code embedding the bytecode and runtime initialization.

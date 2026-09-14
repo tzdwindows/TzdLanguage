@@ -280,6 +280,28 @@ void TzdCommandSystem::handleBuildExe(const std::vector<std::string>& args) {
         // CPU-only mode: strip all GPU/CUDA/torch
         else if (a == "--buildCpu" || a == "--build-cpu" || a == "--cpu-only" || a == "--cpuOnly") {
             options.cpuOnly = true;
+            options.torchGpu = false;
+        }
+        // Force Torch integration
+        else if (a == "--torch" || a == "--torch-gpu") {
+            options.forceTorch = true;
+            options.torchGpu = true;
+            options.cpuOnly = false;
+        }
+        else if (a == "--torch-cpu") {
+            options.forceTorch = true;
+            options.torchGpu = false;
+            options.cpuOnly = true;
+        }
+        // Compiler toolchain selection: --llvm, --clang, --msvc, --gcc, --mingw
+        else if (a == "--llvm" || a == "--clang" || a == "--compiler=llvm" || a == "--compiler=clang") {
+            options.toolchain = tzd::CompilerToolchain::LLVM;
+        }
+        else if (a == "--msvc" || a == "--compiler=msvc") {
+            options.toolchain = tzd::CompilerToolchain::MSVC;
+        }
+        else if (a == "--gcc" || a == "--mingw" || a == "--compiler=gcc" || a == "--compiler=mingw") {
+            options.toolchain = tzd::CompilerToolchain::GCC;
         }
         else if (a == "--codegen") {
             options.targetMode = tzd::ExeTargetMode::NATIVE_CODEGEN;
@@ -726,8 +748,8 @@ void TzdCommandSystem::enterInteractiveMode() {
 void TzdCommandSystem::start(int argc, char* argv[]) {
     init();
 
-    // 0. 命令行独立子命令: build / -b
-    if (argc > 1 && (_stricmp(argv[1], "build") == 0 || _stricmp(argv[1], "-b") == 0)) {
+    // 0. 命令行独立子命令: build / -b / --build
+    if (argc > 1 && (_stricmp(argv[1], "build") == 0 || _stricmp(argv[1], "-b") == 0 || _stricmp(argv[1], "--build") == 0)) {
         std::vector<std::string> buildArgs;
         for (int i = 2; i < argc; ++i) {
             buildArgs.push_back(argv[i]);
