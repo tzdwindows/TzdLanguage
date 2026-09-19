@@ -50,7 +50,7 @@ TzdLang is an independently developed, high-performance object-oriented programm
    - Visual Studio 2022 / 2026 MSBuild setup
    - Dependency management (CUDA, LibTorch, LLVM, vcpkg)
 8. [**VS Code Extension & DAP Debugger**](VSCode-Extension-and-Debugger.md)
-   - Official extension v0.2.3 with native JIT debugging & Selective Deoptimization
+   - Official extension v0.2.5 with native JIT debugging & Selective Deoptimization
    - Dedicated `JIT Engine` Scope in Variables panel for real-time status inspection
    - Setting breakpoints, stepping, variable inspection, stack traces
    - Dynamic LLVM IR dumping and syntax-highlighted inspection

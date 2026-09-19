@@ -50,7 +50,7 @@ TzdLang 是一个现代面向对象、工业级混合编译编程语言与工具
    - Visual Studio 2022 / 2026 MSBuild 编译步骤
    - 外部依赖配置（CUDA, LibTorch, LLVM, vcpkg）
 8. [**VS Code 扩展与 DAP 调试器**](VSCode-Extension-and-Debugger-zh.md)
-   - 官方插件 v0.2.3 原生 JIT 调试支持与选择性回退（Selective Deoptimization）
+   - 官方插件 v0.2.5 原生 JIT 调试支持与选择性回退（Selective Deoptimization）
    - 调试变量面板独创 `JIT 引擎 (JIT Engine)` 状态实时监视作用域
    - 断点控制、单步执行、变量监视与调用栈查看
    - 动态导出与查看指定函数的底层 LLVM IR 汇编

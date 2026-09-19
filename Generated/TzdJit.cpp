@@ -202,6 +202,7 @@ static_assert(TZD_TYPE_OFFSET > 0, "type offset must be > 0 (after annotations v
 static std::string getParamName(TzdLangParser::ParamContext* p) {
     if (!p) return "arg";
     if (p->IDENTIFIER()) return p->IDENTIFIER()->getText();
+    if (p->T_FUNCTION()) return p->T_FUNCTION()->getText();
     if (p->T_INT()) return p->T_INT()->getText();
     if (p->T_STRING()) return p->T_STRING()->getText();
     if (p->T_FLOAT()) return p->T_FLOAT()->getText();
@@ -210,6 +211,25 @@ static std::string getParamName(TzdLangParser::ParamContext* p) {
     if (p->T_PTR()) return p->T_PTR()->getText();
     if (p->KW_RET()) return p->KW_RET()->getText();
     return p->getText();
+}
+
+static bool isNonNumericParam(TzdLangParser::ParamContext* p) {
+    if (!p) return false;
+    if (p->T_FUNCTION()) return true;
+    if (p->T_STRING()) return true;
+    if (p->T_PTR()) return true;
+    if (p->T_VOID()) return true;
+    if (p->typeType()) {
+        std::string t = p->typeType()->getText();
+        if (t == "function" || t == "fn" || t == "string" || t == "ptr" ||
+            t == "pointer" || t == "void" || t.find("[]") != std::string::npos) {
+            return true;
+        }
+        if (t != "int" && t != "float" && t != "double" && t != "number" && t != "bool") {
+            return true;
+        }
+    }
+    return false;
 }
 // #endregion
 
@@ -1697,7 +1717,14 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     // Phase B: Create native double worker for function specialization.
     // Only for functions with parameters — 0-param functions have no benefit.
     Function* nativeWorkerFunc = nullptr;
-    if (argCount > 0) {
+    bool hasNonNumericParam = false;
+    if (ctx->paramList()) {
+        auto pList = ctx->paramList()->param();
+        for (int i = 0; i < argCount; ++i) {
+            if (isNonNumericParam(pList[i])) { hasNonNumericParam = true; break; }
+        }
+    }
+    if (argCount > 0 && !hasNonNumericParam) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -1745,6 +1772,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             Value* argIdx = ConstantInt::get(Type::getInt32Ty(m_context), i);
             Value* argRaw = m_builder.CreateCall(getRtFunc("rt_get_arg"), { argIdx });
             Value* destPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
+            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { destPtr, argRaw });
         }
     }
     m_builder.CreateCall(workerFunc, { interp, retVal, argsArray });
@@ -1780,10 +1808,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             m_namedValues[pName] = boxedAlloc;
 
             // Native double version — unbox at entry for fast numeric access + native worker
-            Value* nativeVal = inlineToDoubleFast(argPtr);
-            AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
-            m_builder.CreateStore(nativeVal, nativeAlloc);
-            m_nativeDoubleLocals[pName] = nativeAlloc;
+            if (!isNonNumericParam(pList[i])) {
+                Value* nativeVal = inlineToDoubleFast(argPtr);
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeVal, nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
         }
     }
 
@@ -1944,7 +1974,14 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     // Phase B: Create native double worker for function specialization.
     // Only for functions with parameters — 0-param functions have no benefit.
     Function* nativeWorkerFunc = nullptr;
-    if (argCount > 0) {
+    bool hasNonNumericParam = false;
+    if (params) {
+        auto pList = params->param();
+        for (int i = 0; i < argCount; ++i) {
+            if (isNonNumericParam(pList[i])) { hasNonNumericParam = true; break; }
+        }
+    }
+    if (argCount > 0 && !hasNonNumericParam) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -2032,7 +2069,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             // visitIdExpr checks m_nativeDoubleLocals first, returning the double.
             // Inline unbox: direct GEP+Load on dVal field (no function call)
             // Skip "this" — it's an instance pointer, not a numeric value!
-            if (pName != "this") {
+            if (pName != "this" && !isNonNumericParam(pList[i])) {
                 Value* nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -4461,8 +4498,8 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
     Value* argsArray = nullptr;
 
-    // 【核心改进 1】：若处于尾部，且参数个数不大于当前函数参数个数，直接复用当前函数的输入参数数组，避免分配新的栈内存
-    if (s_inTailPosition && s_currentWorkerFunc && argCount <= (int)s_currentFuncParamNames.size()) {
+    // 【核心改进 1】：若处于尾部且为自递归，且参数个数不大于当前函数参数个数，直接复用当前函数的输入参数数组，避免分配新的栈内存
+    if (funcName == baseName && s_inTailPosition && s_currentWorkerFunc && argCount <= (int)s_currentFuncParamNames.size()) {
         argsArray = s_currentWorkerFunc->getArg(2);
     }
     else {
@@ -4505,6 +4542,14 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             return std::any((Value*)resPtr);
         }
         Value* callee = castAnyToValue(visit(ctx->atom()), "visitCallExpr.callee");
+        Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { callee, m_builder.getInt32(argCount), argsArray });
+        return std::any((Value*)resPtr);
+    }
+
+    // If callee is a local variable or parameter holding a function/callback object (e.g. op(val)),
+    // invoke it directly via rt_call_value_fast instead of resolving as a global function name.
+    if (m_namedValues.count(funcName)) {
+        Value* callee = m_builder.CreateLoad(m_ptrTy, m_namedValues[funcName], funcName + "_callee");
         Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { callee, m_builder.getInt32(argCount), argsArray });
         return std::any((Value*)resPtr);
     }

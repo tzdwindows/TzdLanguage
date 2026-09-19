@@ -444,6 +444,31 @@ function getMembersIncludingInherited(className, seen = new Set()) {
   return result;
 }
 
+function extractParamInfo(arg) {
+  let s = arg.trim();
+  if (!s) return null;
+  if (s.includes("=")) {
+    s = s.split("=")[0].trim();
+  }
+  let type = "any";
+  let name = "";
+  if (s.includes(":")) {
+    const parts = s.split(":");
+    name = parts[0].trim();
+    type = parts[1].trim();
+  } else {
+    const parts = s.split(/\s+/);
+    if (parts.length > 1) {
+      type = parts[0];
+      name = parts[parts.length - 1];
+    } else {
+      name = parts[0];
+    }
+  }
+  name = name.replace(/^[^\w]+|[^\w]+$/g, "");
+  return name ? { name, type } : null;
+}
+
 // ⭐ 彻底修复：增强局部变量、带类型变量、函数参数的提取
 function extractVisibleLocals(text) {
   const lines = text.split("\n");
@@ -463,13 +488,13 @@ function extractVisibleLocals(text) {
     );
     if (m) locals.set(m[2], { kind: "variable", type: m[1], line: i });
 
-    // 3. 函数声明自身及参数 (如 fun aaa(x, y))
+    // 3. 函数声明自身及参数 (如 fun aaa(x, y), static fun apply(op: function, val))
     m = line.match(/\bfun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/);
     if (m) {
-      locals.set(m[1], { kind: "function", line: i }); // ⭐ 修复1：将函数名 aaa 加入白名单
+      locals.set(m[1], { kind: "function", line: i });
       m[2].split(",").forEach((arg) => {
-        const p = arg.trim().split(/\s+/).pop();
-        if (p) locals.set(p, { kind: "parameter", line: i });
+        const info = extractParamInfo(arg);
+        if (info) locals.set(info.name, { kind: "parameter", type: info.type, line: i });
       });
     }
 
@@ -477,14 +502,14 @@ function extractVisibleLocals(text) {
     m = line.match(
       /(?:^|[{};]\s*)\b([a-zA-Z_]\w*)\s*(?:\+|-|\*|\/|%|&|\||\^)?=/,
     );
-    if (m) locals.set(m[1], { kind: "variable", line: i }); // ⭐ 修复2：支持无关键字的变量直接赋值，例如 c = 10
+    if (m) locals.set(m[1], { kind: "variable", line: i });
 
     // 5. 构造函数参数 (如 Thread(target))
     m = line.match(/^\s*[A-Z]\w*\s*\((.*?)\)/);
     if (m) {
       m[1].split(",").forEach((arg) => {
-        const p = arg.trim().split(/\s+/).pop();
-        if (p) locals.set(p, { kind: "parameter", line: i });
+        const info = extractParamInfo(arg);
+        if (info) locals.set(info.name, { kind: "parameter", type: info.type, line: i });
       });
     }
 

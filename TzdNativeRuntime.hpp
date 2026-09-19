@@ -102,6 +102,7 @@ struct TzdVal {
     TzdVal(std::shared_ptr<std::vector<TzdVal>> arr) : type(ValType::ARRAY), arrVal(std::move(arr)) {}
     TzdVal(std::shared_ptr<std::unordered_map<std::string, TzdVal>> m) : type(ValType::MAP), mapVal(std::move(m)) {}
     TzdVal(std::function<TzdVal(std::vector<TzdVal>&)> fn) : type(ValType::FUNC), funcVal(std::move(fn)) {}
+    TzdVal(TzdVal (*fn)(std::vector<TzdVal>)) : type(ValType::FUNC), funcVal([fn](std::vector<TzdVal>& args) { return fn(args); }) {}
 #ifdef WITH_LIBTORCH
     TzdVal(const at::Tensor& t) : type(ValType::TENSOR), tensorVal(std::make_shared<at::Tensor>(t)) {}
     TzdVal(std::shared_ptr<at::Tensor> t) : type(ValType::TENSOR), tensorVal(std::move(t)) {}

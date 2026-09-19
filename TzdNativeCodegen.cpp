@@ -230,6 +230,7 @@ std::any TzdNativeCodegen::visitClassDeclaration(TzdLangParser::ClassDeclaration
     std::ostringstream methods;
     std::ostringstream methodDispatch;
     std::vector<std::string> fieldNames;
+    std::vector<std::string> constFieldNames;
 
     if (ctx->classBody()) {
         for (auto member : ctx->classBody()->classMember()) {
@@ -249,8 +250,10 @@ std::any TzdNativeCodegen::visitClassDeclaration(TzdLangParser::ClassDeclaration
             }
             else if (auto fConst = dynamic_cast<TzdLangParser::FieldConstDeclContext*>(mDecl)) {
                 std::string fName = fConst->IDENTIFIER()->getText();
-                fieldNames.push_back(fName);
-                fields << "    TzdVal " << fName << ";\n";
+                constFieldNames.push_back(fName);
+                std::string init = "TzdVal()";
+                if (fConst->expression()) init = exprToStr(fConst->expression());
+                fields << "    inline static const TzdVal " << fName << " = " << init << ";\n";
             }
             // Constructor
             else if (auto ctorCtx = dynamic_cast<TzdLangParser::ConstructorDeclContext*>(mDecl)) {
@@ -264,6 +267,29 @@ std::any TzdNativeCodegen::visitClassDeclaration(TzdLangParser::ClassDeclaration
                 m_inMethod = true;
                 ctorBody << exprToStr(ctorCtx->block());
                 m_inMethod = false;
+            }
+            // Static Methods (static fun)
+            else if (auto smMethod = dynamic_cast<TzdLangParser::MethodStaticDeclContext*>(mDecl)) {
+                std::string mName = smMethod->IDENTIFIER()->getText();
+                std::vector<std::string> mParams;
+                if (smMethod->paramList()) {
+                    for (auto p : smMethod->paramList()->param()) {
+                        if (p->IDENTIFIER()) mParams.push_back(p->IDENTIFIER()->getText());
+                        else mParams.push_back(p->getText());
+                    }
+                }
+
+                m_inMethod = true;
+                std::string mBody = exprToStr(smMethod->block());
+                m_inMethod = false;
+
+                methods << "    static TzdVal " << mName << "(std::vector<TzdVal> m_args = {}) {\n";
+                for (size_t i = 0; i < mParams.size(); ++i) {
+                    methods << "        TzdVal " << mParams[i] << " = m_args.size() > " << i << " ? m_args[" << i << "] : TzdVal();\n";
+                }
+                methods << "        " << mBody << "\n";
+                methods << "        return TzdVal();\n";
+                methods << "    }\n\n";
             }
             // Methods
             else if (auto mMethod = dynamic_cast<TzdLangParser::MethodDeclContext*>(mDecl)) {
@@ -320,6 +346,9 @@ std::any TzdNativeCodegen::visitClassDeclaration(TzdLangParser::ClassDeclaration
     for (const auto& fn : fieldNames) {
         m_classDecls << "        if (name == \"" << fn << "\") return " << fn << ";\n";
     }
+    for (const auto& fn : constFieldNames) {
+        m_classDecls << "        if (name == \"" << fn << "\") return " << fn << ";\n";
+    }
     m_classDecls << "        return " << baseClass << "::get_field(name);\n";
     m_classDecls << "    }\n\n";
 
@@ -327,6 +356,9 @@ std::any TzdNativeCodegen::visitClassDeclaration(TzdLangParser::ClassDeclaration
     m_classDecls << "    void set_field(const std::string& name, const TzdVal& val) override {\n";
     for (const auto& fn : fieldNames) {
         m_classDecls << "        if (name == \"" << fn << "\") { " << fn << " = val; return; }\n";
+    }
+    for (const auto& fn : constFieldNames) {
+        m_classDecls << "        if (name == \"" << fn << "\") { return; }\n";
     }
     m_classDecls << "        " << baseClass << "::set_field(name, val);\n";
     m_classDecls << "    }\n\n";
@@ -611,6 +643,9 @@ std::any TzdNativeCodegen::visitMemberAccessExpr(TzdLangParser::MemberAccessExpr
     if (obj == "this") {
         return "this->get_field(\"" + member + "\")";
     }
+    if (m_declaredClasses.count(obj)) {
+        return obj + "_Instance::" + member;
+    }
     return obj + ".get_member(\"" + member + "\")";
 }
 
@@ -639,6 +674,9 @@ std::any TzdNativeCodegen::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         std::string method = memCtx->IDENTIFIER()->getText();
         if (obj == "this") {
             return "this->call_method(\"" + method + "\", {" + argsStr.str() + "})";
+        }
+        if (m_declaredClasses.count(obj)) {
+            return obj + "_Instance::" + method + "({" + argsStr.str() + "})";
         }
         return obj + ".call_method(\"" + method + "\", {" + argsStr.str() + "})";
     }

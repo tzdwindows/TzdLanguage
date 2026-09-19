@@ -1,0 +1,16 @@
+class MathToolkit {
+    const PI = 3.1415926535;
+    static fun square(x) {
+        return x * x;
+    }
+    static fun apply(op: function, val) {
+        return op(val);
+    }
+}
+
+fun cube(n) {
+    return n * n * n;
+}
+
+print("Square: " + MathToolkit.square(6));
+print("Callback Cube: " + MathToolkit.apply(cube, 3));

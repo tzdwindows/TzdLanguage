@@ -211,7 +211,7 @@ t.join();
 - ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals-zh.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、-O0~-O3 优化等级、混合多级内联流水线与零开销调试选择性回退。
 - 🧠 [**LibTorch 深度学习引擎集成**](wiki/Deep-Learning-and-PyTorch-zh.md) - 原生 Tensor 抽象、自动微分、神经网络层与 CUDA 后端。
 - 🔨 [**构建指南与工具链环境搭建**](wiki/Building-and-Toolchain-zh.md) - MSBuild 与 CMake 构建配置指南。
-- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 官方插件 v0.2.3、JIT 调试支持、选择性回退断点、JIT Engine 变量面板与 LLVM IR 导出。
+- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 官方插件 v0.2.5、JIT 调试支持、选择性回退断点、JIT Engine 变量面板与 LLVM IR 导出。
 - 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
 - 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
 - 🎛️ [**启动参数与命令行体系完整参考手册**](wiki/CLI-and-Startup-Options-zh.md) - 全量命令行参数、执行引擎选项与底层系统指令详解。
