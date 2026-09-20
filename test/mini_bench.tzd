@@ -1,0 +1,20 @@
+class MathBench {
+    fun instSquare(x) {
+        return x * x;
+    }
+    static fun testInstance(iterations) {
+        var bench = new MathBench();
+        var acc = 0;
+        var i = 0;
+        while (i < iterations) {
+            var sq = bench.instSquare(i);
+            print("i=" + i + " sq=" + sq + " acc_before=" + acc);
+            acc = acc + sq;
+            print("acc_after=" + acc);
+            i = i + 1;
+        }
+        return acc;
+    }
+}
+var instRes = MathBench.testInstance(5);
+print("Final Result: " + instRes);

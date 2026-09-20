@@ -326,7 +326,11 @@ void TzdOopManager::registerClass(TzdClassDef* cls) {
     while (cur) {
         hierarchy.insert(hierarchy.begin(), cur);
         if (cur->parentName.empty()) break;
-        cur = TzdOopManager::getClass(cur->parentName);
+        std::string pName = cur->parentName;
+        cur = TzdOopManager::getClass(pName);
+        if (!cur) {
+            throw std::runtime_error("找不到父类/基类定义: '" + pName + "'");
+        }
     }
 
     int currentFieldIndex = 0; // 字段在数组中的物理位置

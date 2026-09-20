@@ -1,0 +1,22 @@
+import "torch/Module.tzd";
+
+print("=== Test 1: Map Property Access ===");
+var m = { "key1": 100, "key2": 200 };
+print("map key1=" + m.key1);
+print("map key2=" + m.key2);
+m.key1 = 999;
+print("after update map key1=" + m.key1);
+
+print("=== Test 2: DebugMod ===");
+class DebugMod extends Module {
+    DebugMod() {
+        super("DebugMod");
+        var t = torch_zeros(3);
+        this.registerParameter("weight", t);
+        print("  After register: mapKeys = " + toString(len(mapKeys(this._params))));
+    }
+};
+
+print("1. Create DebugMod...");
+var mod = new DebugMod();
+print("2. DebugMod created successfully!");

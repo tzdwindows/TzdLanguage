@@ -1331,6 +1331,12 @@ std::any TzdBytecodeCompiler::visitArrayLiteralExpr(
     return std::any();
 }
 
+std::any TzdBytecodeCompiler::visitMapLiteralExpr(
+    TzdLangParser::MapLiteralExprContext* ctx) {
+    emit(OpCode::PUSH_NULL);
+    return std::any();
+}
+
 std::any TzdBytecodeCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
     std::string className = ctx->qualifiedName()->getText();
     int argCount = ctx->exprList() ? (int)ctx->exprList()->expression().size() : 0;

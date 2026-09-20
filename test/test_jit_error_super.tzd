@@ -1,0 +1,11 @@
+class Base {
+    Base(a, b) {
+        print("Base ctor");
+    }
+}
+class Derived extends Base {
+    Derived() {
+        super("onlyOneArg");
+    }
+}
+var d = new Derived();

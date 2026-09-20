@@ -1,0 +1,9 @@
+fun main() {
+    print("Testing 1,000,000 digits multiplication...");
+    var a = 10 ^ 500000;
+    var b = 10 ^ 500000;
+    var t1 = clock();
+    var c = a * b;
+    var t2 = clock();
+    print("1,000,000 digits result done in " + toString(t2-t1) + " ms");
+}

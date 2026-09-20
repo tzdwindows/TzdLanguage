@@ -1100,6 +1100,29 @@ void TzdCommandSystem::start(int argc, char* argv[]) {
         trimCmd.erase(trimCmd.find_last_not_of(" \t\r\n") + 1);
 
         if (!trimCmd.empty()) {
+            std::string candidatePath = stripQuotes(trimCmd);
+            if (std::filesystem::exists(candidatePath) &&
+                (candidatePath.size() >= 4 && (candidatePath.rfind(".tzd") == candidatePath.size() - 4 || candidatePath.rfind(".tzdc") == candidatePath.size() - 5)))
+            {
+                try {
+                    interpreter->loadScriptFromFile(candidatePath);
+                    if (!interpreter->scopes.empty() && interpreter->scopes[0].count("main")) {
+                        TzdValue mainFunc = interpreter->scopes[0]["main"];
+                        if (mainFunc.type == TzdValue::FUNCTION) {
+                            if (bigint_gpu_suitable(0)) {
+                                bigint_gpu_warmup(2097152);
+                            }
+                            interpreter->callFunction(mainFunc, {});
+                        }
+                    }
+                }
+                catch (const std::exception& e) {
+                    std::fprintf(stderr, TzdErr::EXECUTION, e.what());
+                    std::cerr << std::endl;
+                }
+                fflush(stdout); fflush(stderr);
+                TerminateProcess(GetCurrentProcess(), 0);
+            }
             process(trimCmd);
         }
         else {

@@ -404,4 +404,5 @@ compile_commands.json
 
 # Installer artifacts and staging
 dist/
-installer/*.7z
+installer/*.7z
+scratch/

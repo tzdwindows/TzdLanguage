@@ -1986,7 +1986,7 @@ inline TzdVal tzd_builtin_getArraysInfo(const std::vector<TzdVal>& args) {
     return TzdVal(m);
 }
 
-inline TzdVal tzd_builtin_Runtime(const std::vector<TzdVal>& = {}) { return TzdVal("TzdNativeRuntime 0.2.5 (Full Machine Code)"); }
+inline TzdVal tzd_builtin_Runtime(const std::vector<TzdVal>& = {}) { return TzdVal("TzdNativeRuntime 0.2.6 (Full Machine Code)"); }
 inline TzdVal tzd_builtin_bit(const std::vector<TzdVal>& args) { return args.empty() ? TzdVal(0) : args[0]; }
 
 // ── Complete Recursive-Descent JSON Parser ──
@@ -8109,7 +8109,7 @@ inline TzdVal tzd_builtin_torch_var_mean(const std::vector<TzdVal>& args) {
     return tzd_make_array({fb_var(args), fb_mean(args)});
 }
 inline TzdVal tzd_builtin_torch_version(const std::vector<TzdVal>& args) {
-    return TzdVal("TzdNative Fallback 0.2.5 (Standalone CPU Math Engine)");
+    return TzdVal("TzdNative Fallback 0.2.6 (Standalone CPU Math Engine)");
 }
 inline TzdVal tzd_builtin_torch_view(const std::vector<TzdVal>& args) {
     return fb_reshape(args);

@@ -2,7 +2,7 @@
 # TzdTools Installer One-Click Build Script
 # ==============================================================================
 param(
-    [string]$Version = "0.2.5"
+    [string]$Version = "0.2.6"
 )
 
 $ErrorActionPreference = "Stop"

@@ -4,6 +4,7 @@
 #include "TzdTieringEngine.h"
 #include "TzdBytecode.h"
 #include "TzdJit.h"
+#include <charconv>
 
 bool tzdStackNearOverflow() {
     static thread_local ULONG_PTR s_low = 0;
@@ -2020,38 +2021,68 @@ bool TzdInterpreter::valuesEqual(const TzdValue& l, const TzdValue& r) {
     return getAsDoubleInternal(l) == getAsDoubleInternal(r);
 }
 
-std::string TzdInterpreter::getAsString(std::any value) {
-    if (!value.has_value()) return "null";
-    TzdValue v = (value.type() == typeid(TzdValue)) ? std::any_cast<TzdValue>(value) : TzdValue();
-    if (v.type == TzdValue::NONE) return "null";
+void TzdInterpreter::appendValueToString(std::string& out, const TzdValue& v) {
+    if (v.type == TzdValue::NONE) {
+        out.append("null");
+        return;
+    }
 
     switch (v.type) {
     case TzdValue::SBYTE: case TzdValue::BYTE:
     case TzdValue::SHORT: case TzdValue::USHORT:
     case TzdValue::INT:   case TzdValue::UINT:
-    case TzdValue::LONG:  return std::to_string(v.lVal);
-    case TzdValue::ULONG: return std::to_string(v.ulVal);
+    case TzdValue::LONG: {
+        char buf[32];
+        auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), v.lVal);
+        out.append(buf, p - buf);
+        return;
+    }
+    case TzdValue::ULONG: {
+        char buf[32];
+        auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), v.ulVal);
+        out.append(buf, p - buf);
+        return;
+    }
     case TzdValue::FLOAT: case TzdValue::DOUBLE: {
-        std::string s = std::to_string(v.dVal);
-        s.erase(s.find_last_not_of('0') + 1, std::string::npos);
-        if (s.back() == '.') s.pop_back();
-        return s;
+        double d = v.dVal;
+        if (d >= -9007199254740992.0 && d <= 9007199254740992.0 && d == (double)(long long)d) {
+            char buf[32];
+            auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), (long long)d);
+            out.append(buf, p - buf);
+            return;
+        }
+        char buf[64];
+        auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), d);
+        if (ec == std::errc()) {
+            out.append(buf, p - buf);
+        } else {
+            std::string s = std::to_string(d);
+            s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+            if (s.back() == '.') s.pop_back();
+            out.append(s);
+        }
+        return;
     }
     case TzdValue::POINTER: {
-        std::stringstream ss;
-        ss << "0x" << std::setw(16) << std::setfill('0') << std::hex << std::uppercase << (uintptr_t)v.ptrVal;
-        return ss.str();
+        char buf[32];
+        snprintf(buf, sizeof(buf), "0x%016llX", (unsigned long long)(uintptr_t)v.ptrVal);
+        out.append(buf);
+        return;
     }
-    case TzdValue::STRING: return v.sVal;
-    case TzdValue::BIGINT: return v.sVal;  // Decimal digit string, directly displayable
-    case TzdValue::RATIONAL: return v.sVal; // "num/den" string, directly displayable
-    case TzdValue::BOOL:   return v.bVal ? "true" : "false";
+    case TzdValue::STRING:
+    case TzdValue::BIGINT:
+    case TzdValue::RATIONAL:
+        out.append(v.sVal);
+        return;
+    case TzdValue::BOOL:
+        out.append(v.bVal ? "true" : "false");
+        return;
     case TzdValue::ARRAY: {
         if (v.arrVal.empty()) {
-            return "[]";
+            out.append("[]");
+            return;
         }
 
-        // 1. 严格检查：数组内的每一个元素是否全都是真正的"字符"或"单字符字符串"
         bool isPureCharArray = true;
         for (const auto& item : v.arrVal) {
             if (item.type == TzdValue::STRING) {
@@ -2075,56 +2106,99 @@ std::string TzdInterpreter::getAsString(std::any value) {
             }
         }
         if (isPureCharArray) {
-            std::string textResult;
             for (const auto& item : v.arrVal) {
                 if (item.type == TzdValue::STRING) {
-                    textResult += item.sVal; // 拼接单个汉字或英文字符
+                    out.append(item.sVal);
                 }
                 else {
                     char c = (item.type == TzdValue::SBYTE) ? (char)item.lVal : (char)item.ulVal;
                     if (c == '\0') break;
-                    textResult.push_back(c);
+                    out.push_back(c);
                 }
             }
-            return textResult;
+            return;
         }
 
-        std::string res = "[";
+        out.push_back('[');
         for (size_t i = 0; i < v.arrVal.size(); ++i) {
-            res += getAsString(v.arrVal[i]);
-            if (i < v.arrVal.size() - 1) res += ", ";
+            if (i > 0) out.append(", ");
+            appendValueToString(out, v.arrVal[i]);
         }
-        return res + "]";
+        out.push_back(']');
+        return;
     }
     case TzdValue::MAP: {
-        std::string res = "{";
+        out.push_back('{');
         bool first = true;
         for (auto const& [key, val] : v.mapVal) {
-            if (!first) res += ", ";
-            res += "\"" + key + "\": " + getAsString(val);
+            if (!first) out.append(", ");
+            out.push_back('"');
+            out.append(key);
+            out.append("\": ");
+            appendValueToString(out, val);
             first = false;
         }
-        return res + "}";
+        out.push_back('}');
+        return;
     }
     case TzdValue::INSTANCE: {
-        if (!v.instanceVal) return "null instance";
-        std::string res = "Instance of " + (v.instanceVal->definition ? v.instanceVal->definition->fullName : "Unknown") + " {";
+        if (!v.instanceVal) {
+            out.append("null instance");
+            return;
+        }
+        out.append("Instance of ");
+        out.append(v.instanceVal->definition ? v.instanceVal->definition->fullName : "Unknown");
+        out.append(" {");
         bool first = true;
         if (v.instanceVal->definition) {
             for (auto const& [name, field] : v.instanceVal->definition->fields) {
-                if (!first) res += ", ";
-                res += name + ": " + getAsString(v.instanceVal->getMember(name));
+                if (!first) out.append(", ");
+                out.append(name);
+                out.append(": ");
+                appendValueToString(out, v.instanceVal->getMember(name));
                 first = false;
             }
         }
-        return res + "}";
+        out.push_back('}');
+        return;
     }
 
-    case TzdValue::CLASS_DEF: return "[Class: " + (v.classDefVal ? v.classDefVal->fullName : "null") + "]";
-    case TzdValue::FUNCTION: return "[Function: " + v.name + "]";
-    case TzdValue::NATIVE_FUNCTION: return "[Native Function: " + v.name + "]";
-    default: return "unknown";
+    case TzdValue::CLASS_DEF:
+        out.append("[Class: ");
+        out.append(v.classDefVal ? v.classDefVal->fullName : "null");
+        out.push_back(']');
+        return;
+    case TzdValue::FUNCTION:
+        out.append("[Function: ");
+        out.append(v.name);
+        out.push_back(']');
+        return;
+    case TzdValue::NATIVE_FUNCTION:
+        out.append("[Native Function: ");
+        out.append(v.name);
+        out.push_back(']');
+        return;
+    default:
+        out.append("unknown");
+        return;
     }
+}
+
+std::string TzdInterpreter::getAsString(const TzdValue& v) {
+    if (v.type == TzdValue::STRING || v.type == TzdValue::BIGINT || v.type == TzdValue::RATIONAL) {
+        return v.sVal;
+    }
+    std::string res;
+    appendValueToString(res, v);
+    return res;
+}
+
+std::string TzdInterpreter::getAsString(std::any value) {
+    if (!value.has_value()) return "null";
+    if (value.type() == typeid(TzdValue)) {
+        return getAsString(std::any_cast<const TzdValue&>(value));
+    }
+    return "null";
 }
 
 void TzdInterpreter::compileCurrentContext() {
@@ -2929,17 +3003,19 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
         this->clearJitError();
         this->m_jitUnhandledThrow.reset(); // 清除上一次遗留的异常
         g_CurrentInterpreter = this;
-        g_LastJitValue = nullptr;
+
+        if (this->m_argPtrStack.empty()) {
+            g_JitPool.reset();
+        }
 
         std::vector<TzdValue> jitArgs;
-        g_JitPool.reset();
         if (receiver != nullptr) {
             jitArgs.push_back(TzdValue(receiver));
         }
         jitArgs.insert(jitArgs.end(), args.begin(), args.end());
 
-        this->m_currentArgs = jitArgs;
-        this->m_argPtrStack.push_back(this->m_currentArgs.data());
+        this->m_argFrameStack.push_back(std::move(jitArgs));
+        this->m_argPtrStack.push_back(this->m_argFrameStack.back().data());
 
         std::unordered_map<std::string, TzdValue> jitScope;
         if (receiver) jitScope["this"] = TzdValue(receiver);
@@ -2956,27 +3032,32 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
             }
 
             if (this->m_hasJitError) {
-                TzdRuntimeException ex(m_lastJitError, nullptr, m_jitErrorTrace);
-                ex.line = this->m_jitLine;
-                ex.column = this->m_jitColumn;
+                std::string errMsg = this->m_lastJitError;
+                auto errTrace = this->m_jitErrorTrace;
+                size_t errLine = this->m_jitLine;
+                size_t errCol = this->m_jitColumn;
+                this->m_hasJitError = false;
+                this->m_lastJitError.clear();
+                if (errLine == 0 && line > 0) {
+                    errLine = (size_t)line;
+                }
+                if (errTrace.empty()) {
+                    errTrace = this->m_callStackFrames;
+                }
+                TzdRuntimeException ex(errMsg, errLine, errCol, errTrace);
                 throw ex;
-            }
-
-            if (g_LastJitValue != nullptr) {
-                result = *g_LastJitValue;
-                g_LastJitValue = nullptr;
             }
         }
         catch (...) {
             scopes.pop_back();
             this->m_argPtrStack.pop_back();
-            this->m_currentArgs.clear();
+            this->m_argFrameStack.pop_back();
             throw;
         }
 
         scopes.pop_back();
         this->m_argPtrStack.pop_back();
-        this->m_currentArgs.clear();
+        this->m_argFrameStack.pop_back();
 
         if (scopes.size() <= 1) clearJitMemory();
         return result;
@@ -3130,6 +3211,34 @@ std::any TzdInterpreter::visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprCo
 
     TzdValue res(elements);
     return res;
+}
+
+std::any TzdInterpreter::visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) {
+    std::unordered_map<std::string, TzdValue> mapData;
+    if (ctx->mapEntryList()) {
+        for (auto entry : ctx->mapEntryList()->mapEntry()) {
+            std::string keyStr;
+            auto keyCtx = entry->mapKey();
+            if (keyCtx->STRING()) {
+                std::string raw = keyCtx->STRING()->getText();
+                if (raw.size() >= 2 && (raw.front() == '"' || raw.front() == '\'')) {
+                    keyStr = raw.substr(1, raw.size() - 2);
+                } else {
+                    keyStr = raw;
+                }
+            } else if (keyCtx->IDENTIFIER()) {
+                keyStr = keyCtx->IDENTIFIER()->getText();
+            } else if (keyCtx->INTEGER()) {
+                keyStr = keyCtx->INTEGER()->getText();
+            } else if (keyCtx->expression()) {
+                TzdValue keyVal = std::any_cast<TzdValue>(visit(keyCtx->expression()));
+                keyStr = getAsString(keyVal);
+            }
+            TzdValue val = std::any_cast<TzdValue>(visit(entry->expression()));
+            mapData[keyStr] = val;
+        }
+    }
+    return TzdValue(mapData);
 }
 
 std::any TzdInterpreter::visitIndexExpr(TzdLangParser::IndexExprContext* ctx) {
@@ -3622,6 +3731,33 @@ std::any TzdInterpreter::visitAssignmentExpr(TzdLangParser::AssignmentExprContex
             return nullptr;
         }
 
+        // 处理成员访问 m.key
+        if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(subCtx)) {
+            return getLValuePointer(atomExpr->atom());
+        }
+        if (auto memCtx = dynamic_cast<TzdLangParser::MemberAccessExprContext*>(subCtx)) {
+            std::string fieldName = memCtx->IDENTIFIER()->getText();
+            TzdValue* basePtr = getLValuePointer(memCtx->atom());
+            if (basePtr) {
+                if (basePtr->type == TzdValue::MAP) {
+                    return &(basePtr->mapVal[fieldName]);
+                }
+                if (basePtr->type == TzdValue::INSTANCE && basePtr->instanceVal) {
+                    return basePtr->instanceVal->getMemberPtr(fieldName);
+                }
+                if (basePtr->type == TzdValue::CLASS_DEF && basePtr->classDefVal) {
+                    return basePtr->classDefVal->findStaticValue(fieldName);
+                }
+            } else {
+                try {
+                    TzdValue baseVal = std::any_cast<TzdValue>(visit(memCtx->atom()));
+                    if (baseVal.type == TzdValue::INSTANCE && baseVal.instanceVal) {
+                        return baseVal.instanceVal->getMemberPtr(fieldName);
+                    }
+                } catch (...) {}
+            }
+        }
+
         // 递归基底：普通的变量名标识符，直接去最真实的 scopes 里面抓取变量地址
         std::string id = subCtx->getText();
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
@@ -3667,11 +3803,33 @@ std::any TzdInterpreter::visitAssignmentExpr(TzdLangParser::AssignmentExprContex
             cls->staticValues[fieldName] = finalVal;
             return finalVal;
         }
+        else if (leftBase.type == TzdValue::MAP) {
+            TzdValue* targetPtr = getLValuePointer(lhsCtx);
+            if (targetPtr) {
+                TzdValue finalVal = calculateCompound(*targetPtr, rightVal);
+                *targetPtr = finalVal;
+                return finalVal;
+            }
+        }
         throw TzdRuntimeException("Cannot assign to non-object member", ctx->getStart());
     }
 
     // 6. 普通纯变量赋值逻辑
     std::string id = lhsCtx->getText();
+
+    // Fast in-place append for string +=
+    if (ctx->PLUS_ASSIGN()) {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+            if (it->count(id)) {
+                TzdValue& cur = (*it)[id];
+                if (cur.type == TzdValue::STRING) {
+                    appendValueToString(cur.sVal, rightVal);
+                    return cur;
+                }
+                break;
+            }
+        }
+    }
 
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
         if (it->count(id)) {
@@ -3719,7 +3877,15 @@ std::any TzdInterpreter::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* c
     // --- String concatenation (highest priority for +) ---
     // Must check BEFORE BIGINT/RATIONAL so that "text" + bigint works correctly.
     if (isPlus && (left.type == TzdValue::STRING || right.type == TzdValue::STRING)) {
-        result = TzdValue(getAsString(left) + getAsString(right));
+        result.type = TzdValue::STRING;
+        if (left.type == TzdValue::STRING && right.type == TzdValue::STRING) {
+            result.sVal.reserve(left.sVal.size() + right.sVal.size());
+            result.sVal.append(left.sVal);
+            result.sVal.append(right.sVal);
+        } else {
+            appendValueToString(result.sVal, left);
+            appendValueToString(result.sVal, right);
+        }
     }
     // --- RATIONAL arithmetic (exact fractions) ---
     else if (needs_rational(left, right)) {
@@ -4328,6 +4494,15 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
         throw TzdRuntimeException("类重定义: '" + fullName + "' 已存在", ctx->getStart());
     }
 
+    if (!parentName.empty()) {
+        if (parentName == fullName) {
+            throw TzdRuntimeException("类继承错误: 类 '" + fullName + "' 不能继承自身", ctx->qualifiedName(1)->getStart());
+        }
+        if (!TzdOopManager::getClass(parentName)) {
+            throw TzdRuntimeException("找不到父类/基类定义: '" + parentName + "'", ctx->qualifiedName(1)->getStart());
+        }
+    }
+
     TzdClassDef* newClass = new TzdClassDef(fullName);
     newClass->parentName = parentName;
 
@@ -4438,7 +4613,8 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                 }
                 catch (const std::exception& e) {
                     agentLogCompile("C", "compileClassMethod", (jitName + ": " + e.what()).c_str());
-                    throw;
+                    delete newClass;
+                    throw TzdRuntimeException("类 '" + fullName + "' 的方法 '" + mName + "' JIT 编译失败: " + e.what(), methodCtx->getStart());
                 }
             }
 
@@ -4457,9 +4633,15 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             // --- JIT 编译部分 ---
             if (!m_noJit && m_jitEngine && m_compiler) {
                 std::string jitName = fullName + "_" + mName;
-                // 静态方法不需要 this
-                m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName);
-                m_pendingJitFunctions.insert(jitName);
+                try {
+                    // 静态方法不需要 this
+                    m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName);
+                    m_pendingJitFunctions.insert(jitName);
+                }
+                catch (const std::exception& e) {
+                    delete newClass;
+                    throw TzdRuntimeException("类 '" + fullName + "' 的静态方法 '" + mName + "' JIT 编译失败: " + e.what(), smCtx->getStart());
+                }
             }
 
             newClass->methods[mName] = m;
@@ -4499,7 +4681,8 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                 }
                 catch (const std::exception& e) {
                     agentLogCompile("C", "compileConstructor", (jitName + ": " + e.what()).c_str());
-                    throw;
+                    delete newClass;
+                    throw TzdRuntimeException("类 '" + fullName + "' 的构造函数 JIT 编译失败: " + e.what(), ctorCtx->getStart());
                 }
             }
 
@@ -4617,7 +4800,11 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
         while (cur) {
             hierarchy.insert(hierarchy.begin(), cur);
             if (cur->parentName.empty()) break;
-            cur = TzdOopManager::getClass(cur->parentName);
+            std::string pName = cur->parentName;
+            cur = TzdOopManager::getClass(pName);
+            if (!cur) {
+                throw TzdRuntimeException("找不到父类/基类定义: '" + pName + "'", ctx->getStart());
+            }
         }
         for (auto* currentCls : hierarchy) {
             for (auto const& [name, field] : currentCls->fields) {
@@ -4651,6 +4838,9 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
             TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
             ctorFunc.jittedPtr = ctor->jittedPtr;
             ctorFunc.setInstance(inst);
+            ctorFunc.sourceFile = ctor->sourceFile;
+            ctorFunc.line = ctor->line;
+            ctorFunc.column = ctor->column;
             this->callFunction(ctorFunc, args);
         }
     }
@@ -4753,6 +4943,15 @@ std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprCo
                 // 如果 getMember 抛出错误，直接向上抛出详细的 OOP 错误，而不是被末尾覆盖
                 throw TzdRuntimeException(e.what(), ctx->getStart());
             }
+        }
+
+        // --- 情况 B2: Map 成员访问 (map.key) ---
+        if (base.type == TzdValue::MAP) {
+            auto it = base.mapVal.find(memberName);
+            if (it != base.mapVal.end()) {
+                return it->second;
+            }
+            return TzdValue();
         }
     }
 

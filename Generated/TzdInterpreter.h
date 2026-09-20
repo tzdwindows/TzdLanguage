@@ -279,6 +279,12 @@ struct JitValuePool {
         return v;
     }
 
+    inline bool contains(const void* ptr) const {
+        if (storage.empty()) return false;
+        const TzdValue* p = (const TzdValue*)ptr;
+        return p >= storage.data() && p < storage.data() + storage.size();
+    }
+
     void reset() { cursor = 0; }
 
     ~JitValuePool() {
@@ -297,6 +303,11 @@ public:
         : std::runtime_error(msg),
         line(token ? token->getLine() : 0),
         column(token ? token->getCharPositionInLine() : 0),
+        stackTrace(std::move(trace)) {}
+    TzdRuntimeException(const std::string& msg, size_t line, size_t column = 0, std::vector<std::string> trace = {})
+        : std::runtime_error(msg),
+        line(line),
+        column(column),
         stackTrace(std::move(trace)) {}
 };
 
@@ -431,6 +442,7 @@ public:
     virtual std::any visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) override;
     virtual std::any visitBlock(TzdLangParser::BlockContext* ctx) override;
     virtual std::any visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprContext* ctx) override;
+    virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) override;
     virtual std::any visitIndexExpr(TzdLangParser::IndexExprContext* ctx) override;
     virtual std::any visitLambdaExpr(TzdLangParser::LambdaExprContext* ctx) override;
 
@@ -513,7 +525,9 @@ public:
     static double getAsDoubleInternal(const TzdValue& v);
     static bool isTruthy(const TzdValue& v);
     static bool valuesEqual(const TzdValue& l, const TzdValue& r);
+    static std::string getAsString(const TzdValue& value);
     static std::string getAsString(std::any value);
+    static void appendValueToString(std::string& out, const TzdValue& v);
 
     void compileCurrentContext();
 
@@ -532,9 +546,13 @@ public:
         m_lastJitError.clear();
     }
 
-    void reportJitError(const std::string& msg) {
+    void reportJitError(const std::string& msg, size_t line = 0, size_t col = 0) {
         m_hasJitError = true;
         m_lastJitError = msg;
+        if (line > 0) {
+            m_jitLine = line;
+            m_jitColumn = col;
+        }
         m_jitErrorTrace = m_callStackFrames;
     }
 

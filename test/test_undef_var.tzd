@@ -1,0 +1,5 @@
+fun testFun() {
+    var x = myUndefinedVar + 1;
+    print(x);
+}
+testFun();

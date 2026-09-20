@@ -173,6 +173,7 @@ public:
     virtual std::any visitIndexExpr(TzdLangParser::IndexExprContext* ctx) override;
     virtual std::any visitNewExpr(TzdLangParser::NewExprContext* ctx) override;
     virtual std::any visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprContext* ctx) override;
+    virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) override;
     virtual std::any visitParenExpr(TzdLangParser::ParenExprContext* ctx) override;
     virtual std::any visitIntExpr(TzdLangParser::IntExprContext* ctx) override;
     virtual std::any visitFloatExpr(TzdLangParser::FloatExprContext* ctx) override;

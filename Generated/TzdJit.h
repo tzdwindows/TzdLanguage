@@ -118,7 +118,7 @@ public:
     llvm::Value* inlineToDoubleFast(llvm::Value* src);
 
     // Advanced Inlining (AST-level small function inlining & math intrinsics)
-    bool tryInlineFunction(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result);
+    bool tryInlineFunction(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result, llvm::Value* receiverVal = nullptr, const std::string& explicitClassName = "");
     bool tryInlineMathIntrinsic(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result);
 
     std::unique_ptr<llvm::Module> getModule();
@@ -161,6 +161,7 @@ public:
 
     virtual std::any visitBlock(TzdLangParser::BlockContext* ctx) override;
     virtual std::any visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprContext* ctx) override;
+    virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) override;
     virtual std::any visitIndexExpr(TzdLangParser::IndexExprContext* ctx) override;
 
     virtual std::any visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) override;
@@ -249,4 +250,5 @@ private:
     std::unordered_map<std::string, int> m_currentClassFieldMap;
     TzdSelector internSelectorConstant(const std::string& name);
     std::unordered_map<std::string, TzdSelector> m_selectorIds;
+    std::unordered_map<std::string, std::string> m_varClassTypes;
 };

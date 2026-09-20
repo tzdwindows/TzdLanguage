@@ -1,0 +1,40 @@
+class MathBench {
+    static fun square(x) {
+        return x * x;
+    }
+
+    fun instSquare(x) {
+        return x * x;
+    }
+
+    static fun testStatic(iterations) {
+        var acc = 0;
+        var i = 0;
+        while (i < iterations) {
+            acc = acc + MathBench.square(i);
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    static fun testInstance(iterations) {
+        var bench = new MathBench();
+        var acc = 0;
+        var i = 0;
+        while (i < iterations) {
+            acc = acc + bench.instSquare(i);
+            i = i + 1;
+        }
+        return acc;
+    }
+}
+
+// 1. 测试静态分发吞吐（循环 100,000 次）
+print("Testing Static Dispatch (100k)...");
+var staticRes = MathBench.testStatic(1000000);
+print("Static Result: " + staticRes);
+
+// 2. 测试实例查找吞吐（循�?100,000 次）
+print("Testing Instance Dispatch (100k)...");
+var instRes = MathBench.testInstance(1000000);
+print("Instance Result: " + instRes);

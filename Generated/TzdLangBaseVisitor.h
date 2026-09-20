@@ -311,6 +311,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitNewExpr(TzdLangParser::NewExprContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -340,6 +344,18 @@ public:
   }
 
   virtual std::any visitExprList(TzdLangParser::ExprListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitMapEntryList(TzdLangParser::MapEntryListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitMapEntry(TzdLangParser::MapEntryContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitMapKey(TzdLangParser::MapKeyContext *ctx) override {
     return visitChildren(ctx);
   }
 

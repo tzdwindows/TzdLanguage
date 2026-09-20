@@ -183,7 +183,6 @@ struct TwiddleManager {
     AVX2TwTable tw_N1[3];
     AVX2TwTable tw_N2[3];
     std::vector<uint32_t> tw_N[3];
-    std::vector<uint32_t> tw_inv_N[3];
 
     void ensure_twiddles(size_t N, size_t N1, size_t N2) {
         if (cur_n == N) return;
@@ -204,18 +203,15 @@ struct TwiddleManager {
             }
         }
 
-        // Parallelize tw_N and tw_inv_N computation across primes and 8 chunks
+        // Parallelize tw_N computation across primes and 8 chunks (tw_inv_N removed: -k indexing used instead)
         #pragma omp parallel for schedule(dynamic)
-        for (int task = 0; task < 6; task++) {
-            int pi = task / 2;
-            bool is_inv = (task % 2 == 1);
+        for (int pi = 0; pi < 3; pi++) {
             uint32_t mod = P[pi], g = GEN[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
             uint32_t raw_w = npow(g, (mod - 1) / (uint32_t)N, mod);
-            uint32_t raw_winv = npow(raw_w, mod - 2, mod);
-            uint32_t step_w = is_inv ? mont_mul(raw_winv, r2, mod, p_inv) : mont_mul(raw_w, r2, mod, p_inv);
-            uint32_t raw_step = is_inv ? raw_winv : raw_w;
+            uint32_t step_w = mont_mul(raw_w, r2, mod, p_inv);
+            uint32_t raw_step = raw_w;
 
-            std::vector<uint32_t>& table = is_inv ? tw_inv_N[pi] : tw_N[pi];
+            std::vector<uint32_t>& table = tw_N[pi];
             table.resize(N);
 
             const size_t CHUNK = N / 8;
@@ -396,7 +392,7 @@ static void fused_input_transpose_mont_avx2(uint32_t* dst, const uint32_t* src, 
 //   Pass 4: AVX2 8x8 Transpose N2 x N1 -> N1 x N2 with fused n^(-1) scale directly to final_out
 // ============================================================================
 
-// ULTRA-FAST AVX2 Forward Pass 3: 8x8 Tiled Transpose with Fused Twiddles
+// ULTRA-FAST AVX2 Forward Pass 3: 8x8 Tiled Transpose with Hoisted Register Twiddles
 static void transpose_twiddle_forward_avx2(int pi, uint32_t* out, const uint32_t* sc, size_t N1, size_t N2, size_t n) {
     uint32_t mod = P[pi], p_inv = P_INV[pi];
     __m256i v_mod = _mm256_set1_epi32(mod);
@@ -406,6 +402,21 @@ static void transpose_twiddle_forward_avx2(int pi, uint32_t* out, const uint32_t
 
     #pragma omp parallel for schedule(static)
     for (int bj = 0; bj < (int)N1; bj += 8) {
+        __m256i v_col_tw[8];
+        for (int k = 0; k < 8; k++) {
+            size_t c = (size_t)bj + k;
+            v_col_tw[k] = _mm256_set_epi32(
+                tw_table[(7 * c) & mask],
+                tw_table[(6 * c) & mask],
+                tw_table[(5 * c) & mask],
+                tw_table[(4 * c) & mask],
+                tw_table[(3 * c) & mask],
+                tw_table[(2 * c) & mask],
+                tw_table[(1 * c) & mask],
+                tw_table[0]
+            );
+        }
+
         uint64_t idx0[8];
         for (int k = 0; k < 8; k++) idx0[k] = 0;
 
@@ -422,18 +433,10 @@ static void transpose_twiddle_forward_avx2(int pi, uint32_t* out, const uint32_t
             transpose8x8_avx2(r0, r1, r2_v, r3, r4, r5, r6, r7);
 
             #define APPLY_TW(r_reg, k) { \
-                size_t c = bj + k; \
-                uint64_t base = idx0[k]; \
-                __m256i v_tw = _mm256_set_epi32( \
-                    tw_table[(base + 7 * c) & mask], \
-                    tw_table[(base + 6 * c) & mask], \
-                    tw_table[(base + 5 * c) & mask], \
-                    tw_table[(base + 4 * c) & mask], \
-                    tw_table[(base + 3 * c) & mask], \
-                    tw_table[(base + 2 * c) & mask], \
-                    tw_table[(base + 1 * c) & mask], \
-                    tw_table[(base + 0 * c) & mask]  \
-                ); \
+                size_t c = (size_t)bj + k; \
+                uint32_t base_tw = tw_table[idx0[k] & mask]; \
+                __m256i v_base = _mm256_set1_epi32(base_tw); \
+                __m256i v_tw = avx2_mont_mul(v_base, v_col_tw[k], v_mod, v_pinv); \
                 r_reg = avx2_mont_mul(r_reg, v_tw, v_mod, v_pinv); \
                 _mm256_storeu_si256((__m256i*)(out + c * N2 + bi), r_reg); \
                 idx0[k] += 8 * c; \
@@ -445,16 +448,31 @@ static void transpose_twiddle_forward_avx2(int pi, uint32_t* out, const uint32_t
     }
 }
 
-// ULTRA-FAST AVX2 Inverse Pass 2: 8x8 Tiled Transpose with Fused Inverse Twiddles
+// ULTRA-FAST AVX2 Inverse Pass 2: 8x8 Tiled Transpose with Hoisted Inverse Register Twiddles
 static void transpose_twiddle_inverse_avx2(int pi, uint32_t* sc, const uint32_t* a, size_t N1, size_t N2, size_t n) {
     uint32_t mod = P[pi], p_inv = P_INV[pi];
     __m256i v_mod = _mm256_set1_epi32(mod);
     __m256i v_pinv = _mm256_set1_epi32(p_inv);
     uint32_t mask = (uint32_t)(n - 1);
-    const uint32_t* tw_inv_table = g_twManager.tw_inv_N[pi].data();
+    const uint32_t* tw_table = g_twManager.tw_N[pi].data();
 
     #pragma omp parallel for schedule(static)
     for (int bj = 0; bj < (int)N2; bj += 8) {
+        __m256i v_col_tw[8];
+        for (int k = 0; k < 8; k++) {
+            size_t c = (size_t)bj + k;
+            v_col_tw[k] = _mm256_set_epi32(
+                tw_table[(0ULL - 7 * c) & mask],
+                tw_table[(0ULL - 6 * c) & mask],
+                tw_table[(0ULL - 5 * c) & mask],
+                tw_table[(0ULL - 4 * c) & mask],
+                tw_table[(0ULL - 3 * c) & mask],
+                tw_table[(0ULL - 2 * c) & mask],
+                tw_table[(0ULL - 1 * c) & mask],
+                tw_table[0]
+            );
+        }
+
         uint64_t idx0[8];
         for (int k = 0; k < 8; k++) idx0[k] = 0;
 
@@ -471,18 +489,10 @@ static void transpose_twiddle_inverse_avx2(int pi, uint32_t* sc, const uint32_t*
             transpose8x8_avx2(r0, r1, r2_v, r3, r4, r5, r6, r7);
 
             #define APPLY_TW_INV(r_reg, k) { \
-                size_t c = bj + k; \
-                uint64_t base = idx0[k]; \
-                __m256i v_tw = _mm256_set_epi32( \
-                    tw_inv_table[(base + 7 * c) & mask], \
-                    tw_inv_table[(base + 6 * c) & mask], \
-                    tw_inv_table[(base + 5 * c) & mask], \
-                    tw_inv_table[(base + 4 * c) & mask], \
-                    tw_inv_table[(base + 3 * c) & mask], \
-                    tw_inv_table[(base + 2 * c) & mask], \
-                    tw_inv_table[(base + 1 * c) & mask], \
-                    tw_inv_table[(base + 0 * c) & mask]  \
-                ); \
+                size_t c = (size_t)bj + k; \
+                uint32_t base_tw = tw_table[(0ULL - idx0[k]) & mask]; \
+                __m256i v_base = _mm256_set1_epi32(base_tw); \
+                __m256i v_tw = avx2_mont_mul(v_base, v_col_tw[k], v_mod, v_pinv); \
                 r_reg = avx2_mont_mul(r_reg, v_tw, v_mod, v_pinv); \
                 _mm256_storeu_si256((__m256i*)(sc + c * N1 + bi), r_reg); \
                 idx0[k] += 8 * c; \
@@ -696,6 +706,131 @@ static void crt_reconstruct_and_propagate(
     out_pos = pos;
 }
 
+// Fast zero-allocation recursive Karatsuba multiplication in base 10^9
+static void karatsuba_mul_rec(uint64_t* res, const uint64_t* a, size_t na, const uint64_t* b, size_t nb, uint64_t* ws) {
+    if (na < nb) { karatsuba_mul_rec(res, b, nb, a, na, ws); return; }
+    if (nb <= 32) {
+        std::memset(res, 0, (na + nb + 2) * sizeof(uint64_t));
+        for (size_t i = 0; i < na; i++) {
+            uint64_t ai = a[i];
+            if (ai == 0) continue;
+            uint64_t carry = 0;
+            for (size_t j = 0; j < nb; j++) {
+                uint64_t cur = res[i + j] + ai * b[j] + carry;
+                res[i + j] = cur % BASE_10_9;
+                carry = cur / BASE_10_9;
+            }
+            res[i + nb] += carry;
+        }
+        return;
+    }
+
+    // Unbalanced operands: split longer operand in half
+    if (na > 2 * nb) {
+        size_t k = na / 2;
+        uint64_t* r0 = ws;
+        uint64_t* r1 = r0 + (k + nb + 4);
+        uint64_t* next_ws = r1 + (na - k + nb + 4);
+
+        karatsuba_mul_rec(r0, a, k, b, nb, next_ws);
+        karatsuba_mul_rec(r1, a + k, na - k, b, nb, next_ws);
+
+        std::memset(res, 0, (na + nb + 4) * sizeof(uint64_t));
+        for (size_t i = 0; i < k + nb; i++) res[i] = r0[i];
+
+        uint64_t c = 0;
+        for (size_t i = 0; i < (na - k + nb) || c; i++) {
+            uint64_t v = res[i + k] + (i < (na - k + nb) ? r1[i] : 0) + c;
+            res[i + k] = v % BASE_10_9;
+            c = v / BASE_10_9;
+        }
+        return;
+    }
+
+    size_t k = (na + 1) / 2;
+    size_t a0_len = (k < na) ? k : na;
+    size_t a1_len = (na > k) ? (na - k) : 0;
+    size_t b0_len = (k < nb) ? k : nb;
+    size_t b1_len = (nb > k) ? (nb - k) : 0;
+
+    const uint64_t* a0 = a;
+    const uint64_t* a1 = a + k;
+    const uint64_t* b0 = b;
+    const uint64_t* b1 = b + k;
+
+    uint64_t* z0 = ws;
+    uint64_t* z2 = z0 + 2 * k + 4;
+    uint64_t* sa = z2 + 2 * k + 4;
+    uint64_t* sb = sa + k + 4;
+    uint64_t* z1 = sb + k + 4;
+    uint64_t* next_ws = z1 + 2 * k + 8;
+
+    karatsuba_mul_rec(z0, a0, a0_len, b0, b0_len, next_ws);
+
+    if (a1_len > 0 && b1_len > 0) {
+        karatsuba_mul_rec(z2, a1, a1_len, b1, b1_len, next_ws);
+    } else {
+        std::memset(z2, 0, (a1_len + b1_len + 4) * sizeof(uint64_t));
+    }
+
+    size_t sa_len = (a0_len > a1_len ? a0_len : a1_len);
+    uint64_t c = 0;
+    for (size_t i = 0; i < sa_len; i++) {
+        uint64_t v = (i < a0_len ? a0[i] : 0) + (i < a1_len ? a1[i] : 0) + c;
+        sa[i] = v % BASE_10_9;
+        c = v / BASE_10_9;
+    }
+    if (c) { sa[sa_len++] = c; }
+
+    size_t sb_len = (b0_len > b1_len ? b0_len : b1_len);
+    c = 0;
+    for (size_t i = 0; i < sb_len; i++) {
+        uint64_t v = (i < b0_len ? b0[i] : 0) + (i < b1_len ? b1[i] : 0) + c;
+        sb[i] = v % BASE_10_9;
+        c = v / BASE_10_9;
+    }
+    if (c) { sb[sb_len++] = c; }
+
+    karatsuba_mul_rec(z1, sa, sa_len, sb, sb_len, next_ws);
+
+    size_t z0_len = a0_len + b0_len;
+    size_t z2_len = a1_len + b1_len;
+    size_t z1_len = sa_len + sb_len;
+
+    int64_t borrow = 0;
+    for (size_t i = 0; i < z1_len; i++) {
+        int64_t sub = (i < z0_len ? (int64_t)z0[i] : 0) + borrow;
+        int64_t cur = (int64_t)z1[i] - sub;
+        if (cur < 0) { cur += BASE_10_9; borrow = 1; } else { borrow = 0; }
+        z1[i] = (uint64_t)cur;
+    }
+
+    borrow = 0;
+    for (size_t i = 0; i < z1_len; i++) {
+        int64_t sub = (i < z2_len ? (int64_t)z2[i] : 0) + borrow;
+        int64_t cur = (int64_t)z1[i] - sub;
+        if (cur < 0) { cur += BASE_10_9; borrow = 1; } else { borrow = 0; }
+        z1[i] = (uint64_t)cur;
+    }
+
+    std::memset(res, 0, (na + nb + 2) * sizeof(uint64_t));
+    for (size_t i = 0; i < z0_len; i++) res[i] = z0[i];
+
+    c = 0;
+    for (size_t i = 0; i < z1_len || c; i++) {
+        uint64_t v = res[i + k] + (i < z1_len ? z1[i] : 0) + c;
+        res[i + k] = v % BASE_10_9;
+        c = v / BASE_10_9;
+    }
+
+    c = 0;
+    for (size_t i = 0; i < z2_len || c; i++) {
+        uint64_t v = res[i + 2 * k] + (i < z2_len ? z2[i] : 0) + c;
+        res[i + 2 * k] = v % BASE_10_9;
+        c = v / BASE_10_9;
+    }
+}
+
 // Schoolbook multiplication for small numbers
 static std::vector<uint64_t> schoolbook_mul(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
     if (a.empty() || b.empty()) return {};
@@ -723,8 +858,15 @@ std::vector<uint64_t> bigint_mul_experimental_cpu_limbs(const std::vector<uint64
     if (la.empty() || lb.empty()) return {};
 
     size_t tot = la.size() + lb.size();
-    if (tot <= 128) {
+    if (tot <= 64) {
         return schoolbook_mul(la, lb);
+    }
+    if (tot <= 1024) {
+        std::vector<uint64_t> r(tot + 4, 0);
+        std::vector<uint64_t> ws(tot * 16 + 1024, 0);
+        karatsuba_mul_rec(r.data(), la.data(), la.size(), lb.data(), lb.size(), ws.data());
+        while (!r.empty() && r.back() == 0) r.pop_back();
+        return r;
     }
 
     size_t n = 1;
@@ -744,85 +886,52 @@ std::vector<uint64_t> bigint_mul_experimental_cpu_limbs(const std::vector<uint64
 
     std::vector<uint32_t> fa(n), fb(n), sc(2 * n);
 
-    if (n <= 16384) {
-        for (int pi = 0; pi < 3; pi++) {
-            uint32_t mod = P[pi], g = GEN[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
-            __m256i v_mod = _mm256_set1_epi32(mod);
-            __m256i v_pinv = _mm256_set1_epi32(p_inv);
-            __m256i v_r2 = _mm256_set1_epi32(r2);
+    int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
+    int k1 = (k + 1) / 2;
+    int k2 = k - k1;
+    size_t N1 = (size_t)1 << k1;
+    size_t N2 = (size_t)1 << k2;
 
-            for (size_t i = 0; i < n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(in_a.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(in_b.data() + i));
-                va = _mm256_min_epu32(va, _mm256_sub_epi32(va, v_mod));
-                vb = _mm256_min_epu32(vb, _mm256_sub_epi32(vb, v_mod));
-                va = avx2_mont_mul(va, v_r2, v_mod, v_pinv);
-                vb = avx2_mont_mul(vb, v_r2, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fa.data() + i), va);
-                _mm256_storeu_si256((__m256i*)(fb.data() + i), vb);
-            }
+    g_twManager.ensure_twiddles(n, N1, N2);
 
-            ntt_1d_direct(fa.data(), n, false, mod, g, p_inv, r2);
-            ntt_1d_direct(fb.data(), n, false, mod, g, p_inv, r2);
+    for (int pi = 0; pi < 3; pi++) {
+        uint32_t mod = P[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
+        __m256i v_mod = _mm256_set1_epi32(mod);
+        __m256i v_pinv = _mm256_set1_epi32(p_inv);
 
-            for (size_t i = 0; i < n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(fa.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
-                __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fa.data() + i), vres);
-            }
+        // Pass 1: AVX2 Fused load + mont + transpose N1 x N2 -> N2 x N1
+        fused_input_transpose_mont_avx2(sc.data(), in_a.data(), N1, N2, mod, p_inv, r2);
+        fused_input_transpose_mont_avx2(fa.data(), in_b.data(), N1, N2, mod, p_inv, r2);
 
-            ntt_1d_direct(fa.data(), n, true, mod, g, p_inv, r2);
-            memcpy(r_ntt[pi].data(), fa.data(), n * sizeof(uint32_t));
+        // Pass 2: AVX2 Row NTT of length N1 on all N2 rows
+        #pragma omp parallel for schedule(static)
+        for (int r = 0; r < (int)N2; r++) {
+            avx2_in_l1_row_ntt(sc.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
+            avx2_in_l1_row_ntt(fa.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
         }
-    } else {
-        int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
-        int k1 = (k + 1) / 2;
-        int k2 = k - k1;
-        size_t N1 = (size_t)1 << k1;
-        size_t N2 = (size_t)1 << k2;
 
-        g_twManager.ensure_twiddles(n, N1, N2);
+        // Pass 3: AVX2 8x8 Tiled Transpose with Fused Twiddles
+        transpose_twiddle_forward_avx2(pi, fb.data(), sc.data(), N1, N2, n);
+        transpose_twiddle_forward_avx2(pi, sc.data(), fa.data(), N1, N2, n);
 
-        for (int pi = 0; pi < 3; pi++) {
-            uint32_t mod = P[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
-            __m256i v_mod = _mm256_set1_epi32(mod);
-            __m256i v_pinv = _mm256_set1_epi32(p_inv);
-
-            // Pass 1: AVX2 Fused load + mont + transpose N1 x N2 -> N2 x N1
-            fused_input_transpose_mont_avx2(sc.data(), in_a.data(), N1, N2, mod, p_inv, r2);
-            fused_input_transpose_mont_avx2(fa.data(), in_b.data(), N1, N2, mod, p_inv, r2);
-
-            // Pass 2: AVX2 Row NTT of length N1 on all N2 rows (Dual-row processing keeps twiddles hot in L1)
-            #pragma omp parallel for schedule(static)
-            for (int r = 0; r < (int)N2; r++) {
-                avx2_in_l1_row_ntt(sc.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
-                avx2_in_l1_row_ntt(fa.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
-            }
-
-            // Pass 3: AVX2 8x8 Tiled Transpose with Fused Twiddles
-            transpose_twiddle_forward_avx2(pi, fb.data(), sc.data(), N1, N2, n);
-            transpose_twiddle_forward_avx2(pi, sc.data(), fa.data(), N1, N2, n);
-
-            // Pass 4: AVX2 Row NTT of length N2 on all N1 rows
-            #pragma omp parallel for schedule(static)
-            for (int r = 0; r < (int)N1; r++) {
-                avx2_in_l1_row_ntt(fb.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
-                avx2_in_l1_row_ntt(sc.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
-            }
-
-            // Pointwise Montgomery multiplication
-            #pragma omp parallel for schedule(static)
-            for (int i = 0; i < (int)n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(sc.data() + i));
-                __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fb.data() + i), vres);
-            }
-
-            // Inverse 4-step transform
-            ntt_4step_inverse_avx2(pi, r_ntt[pi].data(), fb.data(), sc.data(), N1, N2, n);
+        // Pass 4: AVX2 Row NTT of length N2 on all N1 rows
+        #pragma omp parallel for schedule(static)
+        for (int r = 0; r < (int)N1; r++) {
+            avx2_in_l1_row_ntt(fb.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
+            avx2_in_l1_row_ntt(sc.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
         }
+
+        // Pointwise Montgomery multiplication
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)n; i += 8) {
+            __m256i va = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
+            __m256i vb = _mm256_loadu_si256((const __m256i*)(sc.data() + i));
+            __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
+            _mm256_storeu_si256((__m256i*)(fb.data() + i), vres);
+        }
+
+        // Inverse 4-step transform
+        ntt_4step_inverse_avx2(pi, r_ntt[pi].data(), fb.data(), sc.data(), N1, N2, n);
     }
 
     uint32_t* result_limbs = in_a.data();
@@ -860,6 +969,61 @@ std::string bigint_mul_experimental_cpu_str(const std::string& a, const std::str
         return r;
     }
 
+    // Medium numbers Karatsuba fast path (<= 9216 digits / 1024 limbs)
+    if (maxDigits <= 9216) {
+        int na = (int)((a_digits + 8) / 9);
+        int nb = (int)((b_digits + 8) / 9);
+        std::vector<uint64_t> la(na), lb(nb);
+        for (int k = 0; k < na; k++) {
+            int end_pos = (int)s_a.size() - k * 9;
+            int start_pos = end_pos - 9;
+            uint64_t v = 0;
+            if (start_pos >= 0) {
+                const char* p = s_a.data() + start_pos;
+                for (int i = 0; i < 9; i++) v = v * 10 + (uint64_t)(p[i] - '0');
+            } else {
+                for (int i = 0; i < end_pos; i++) v = v * 10 + (uint64_t)(s_a[i] - '0');
+            }
+            la[k] = v;
+        }
+        for (int k = 0; k < nb; k++) {
+            int end_pos = (int)s_b.size() - k * 9;
+            int start_pos = end_pos - 9;
+            uint64_t v = 0;
+            if (start_pos >= 0) {
+                const char* p = s_b.data() + start_pos;
+                for (int i = 0; i < 9; i++) v = v * 10 + (uint64_t)(p[i] - '0');
+            } else {
+                for (int i = 0; i < end_pos; i++) v = v * 10 + (uint64_t)(s_b[i] - '0');
+            }
+            lb[k] = v;
+        }
+
+        std::vector<uint64_t> lr(na + nb + 4, 0);
+        std::vector<uint64_t> ws((na + nb) * 16 + 1024, 0);
+        karatsuba_mul_rec(lr.data(), la.data(), na, lb.data(), nb, ws.data());
+
+        int pos = na + nb + 2;
+        while (pos > 0 && lr[pos - 1] == 0) pos--;
+        std::vector<uint32_t> r32(pos);
+        for (int i = 0; i < pos; i++) r32[i] = (uint32_t)lr[i];
+        std::string r = format_limbs_to_str(r32.data(), pos);
+        if (neg_a != neg_b && r != "0") r = "-" + r;
+
+        if (g_bigTime) {
+            auto t_end = std::chrono::steady_clock::now();
+            double ms_total = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+            fprintf(stderr, "[BigTime CPU] digits=%zu  total=%.2fms  sz=%zu  pre=%.30s  suf=%.30s\n",
+                    maxDigits, ms_total, r.size(), r.c_str(),
+                    r.size() > 30 ? r.c_str() + r.size() - 30 : r.c_str());
+            fprintf(stderr, "[BigTime Experimental-CPU Karatsuba] digits=%zu  total=%.2fms  sz=%zu  pre=%.30s  suf=%.30s\n",
+                    maxDigits, ms_total, r.size(), r.c_str(),
+                    r.size() > 30 ? r.c_str() + r.size() - 30 : r.c_str());
+        }
+        return r;
+    }
+
+    // Large numbers: 4-Step AVX2 NTT Pipeline
     int na = (int)((a_digits + 8) / 9);
     int nb = (int)((b_digits + 8) / 9);
     size_t tot = (size_t)na + (size_t)nb;
@@ -880,85 +1044,52 @@ std::string bigint_mul_experimental_cpu_str(const std::string& a, const std::str
 
     std::vector<uint32_t> fa(n), fb(n), sc(2 * n);
 
-    if (n <= 16384) {
-        for (int pi = 0; pi < 3; pi++) {
-            uint32_t mod = P[pi], g = GEN[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
-            __m256i v_mod = _mm256_set1_epi32(mod);
-            __m256i v_pinv = _mm256_set1_epi32(p_inv);
-            __m256i v_r2 = _mm256_set1_epi32(r2);
+    int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
+    int k1 = (k + 1) / 2;
+    int k2 = k - k1;
+    size_t N1 = (size_t)1 << k1;
+    size_t N2 = (size_t)1 << k2;
 
-            for (size_t i = 0; i < n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(in_a.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(in_b.data() + i));
-                va = _mm256_min_epu32(va, _mm256_sub_epi32(va, v_mod));
-                vb = _mm256_min_epu32(vb, _mm256_sub_epi32(vb, v_mod));
-                va = avx2_mont_mul(va, v_r2, v_mod, v_pinv);
-                vb = avx2_mont_mul(vb, v_r2, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fa.data() + i), va);
-                _mm256_storeu_si256((__m256i*)(fb.data() + i), vb);
-            }
+    g_twManager.ensure_twiddles(n, N1, N2);
 
-            ntt_1d_direct(fa.data(), n, false, mod, g, p_inv, r2);
-            ntt_1d_direct(fb.data(), n, false, mod, g, p_inv, r2);
+    for (int pi = 0; pi < 3; pi++) {
+        uint32_t mod = P[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
+        __m256i v_mod = _mm256_set1_epi32(mod);
+        __m256i v_pinv = _mm256_set1_epi32(p_inv);
 
-            for (size_t i = 0; i < n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(fa.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
-                __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fa.data() + i), vres);
-            }
+        // Pass 1: AVX2 Fused load + mont + transpose N1 x N2 -> N2 x N1
+        fused_input_transpose_mont_avx2(sc.data(), in_a.data(), N1, N2, mod, p_inv, r2);
+        fused_input_transpose_mont_avx2(fa.data(), in_b.data(), N1, N2, mod, p_inv, r2);
 
-            ntt_1d_direct(fa.data(), n, true, mod, g, p_inv, r2);
-            memcpy(r_ntt[pi].data(), fa.data(), n * sizeof(uint32_t));
+        // Pass 2: AVX2 Row NTT of length N1 on all N2 rows
+        #pragma omp parallel for schedule(static)
+        for (int r = 0; r < (int)N2; r++) {
+            avx2_in_l1_row_ntt(sc.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
+            avx2_in_l1_row_ntt(fa.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
         }
-    } else {
-        int k = 0; size_t m = n; while (m > 1) { m >>= 1; k++; }
-        int k1 = (k + 1) / 2;
-        int k2 = k - k1;
-        size_t N1 = (size_t)1 << k1;
-        size_t N2 = (size_t)1 << k2;
 
-        g_twManager.ensure_twiddles(n, N1, N2);
+        // Pass 3: AVX2 8x8 Tiled Transpose with Fused Twiddles
+        transpose_twiddle_forward_avx2(pi, fb.data(), sc.data(), N1, N2, n);
+        transpose_twiddle_forward_avx2(pi, sc.data(), fa.data(), N1, N2, n);
 
-        for (int pi = 0; pi < 3; pi++) {
-            uint32_t mod = P[pi], p_inv = P_INV[pi], r2 = R2_MOD[pi];
-            __m256i v_mod = _mm256_set1_epi32(mod);
-            __m256i v_pinv = _mm256_set1_epi32(p_inv);
-
-            // Pass 1: AVX2 Fused load + mont + transpose N1 x N2 -> N2 x N1
-            fused_input_transpose_mont_avx2(sc.data(), in_a.data(), N1, N2, mod, p_inv, r2);
-            fused_input_transpose_mont_avx2(fa.data(), in_b.data(), N1, N2, mod, p_inv, r2);
-
-            // Pass 2: AVX2 Row NTT of length N1 on all N2 rows (Dual-row processing keeps twiddles hot in L1)
-            #pragma omp parallel for schedule(static)
-            for (int r = 0; r < (int)N2; r++) {
-                avx2_in_l1_row_ntt(sc.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
-                avx2_in_l1_row_ntt(fa.data() + r * N1, N1, g_twManager.tw_N1[pi], false, mod, p_inv);
-            }
-
-            // Pass 3: AVX2 8x8 Tiled Transpose with Fused Twiddles
-            transpose_twiddle_forward_avx2(pi, fb.data(), sc.data(), N1, N2, n);
-            transpose_twiddle_forward_avx2(pi, sc.data(), fa.data(), N1, N2, n);
-
-            // Pass 4: AVX2 Row NTT of length N2 on all N1 rows
-            #pragma omp parallel for schedule(static)
-            for (int r = 0; r < (int)N1; r++) {
-                avx2_in_l1_row_ntt(fb.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
-                avx2_in_l1_row_ntt(sc.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
-            }
-
-            // Pointwise Montgomery multiplication
-            #pragma omp parallel for schedule(static)
-            for (int i = 0; i < (int)n; i += 8) {
-                __m256i va = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
-                __m256i vb = _mm256_loadu_si256((const __m256i*)(sc.data() + i));
-                __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
-                _mm256_storeu_si256((__m256i*)(fb.data() + i), vres);
-            }
-
-            // Inverse 4-step transform
-            ntt_4step_inverse_avx2(pi, r_ntt[pi].data(), fb.data(), sc.data(), N1, N2, n);
+        // Pass 4: AVX2 Row NTT of length N2 on all N1 rows
+        #pragma omp parallel for schedule(static)
+        for (int r = 0; r < (int)N1; r++) {
+            avx2_in_l1_row_ntt(fb.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
+            avx2_in_l1_row_ntt(sc.data() + r * N2, N2, g_twManager.tw_N2[pi], false, mod, p_inv);
         }
+
+        // Pointwise Montgomery multiplication
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < (int)n; i += 8) {
+            __m256i va = _mm256_loadu_si256((const __m256i*)(fb.data() + i));
+            __m256i vb = _mm256_loadu_si256((const __m256i*)(sc.data() + i));
+            __m256i vres = avx2_mont_mul(va, vb, v_mod, v_pinv);
+            _mm256_storeu_si256((__m256i*)(fb.data() + i), vres);
+        }
+
+        // Inverse 4-step transform
+        ntt_4step_inverse_avx2(pi, r_ntt[pi].data(), fb.data(), sc.data(), N1, N2, n);
     }
 
     auto t_ntt = std::chrono::steady_clock::now();

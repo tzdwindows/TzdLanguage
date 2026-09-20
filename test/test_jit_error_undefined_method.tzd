@@ -1,0 +1,9 @@
+class MyTest {
+    MyTest() {
+        print("In MyTest ctor");
+        this.nonExistentMethod(123);
+    }
+}
+print("Creating MyTest...");
+var obj = new MyTest();
+print("Done");

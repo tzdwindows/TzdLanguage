@@ -144,6 +144,7 @@ expression
 atom
     : '(' expression ')'                               # ParenExpr
     | '[' exprList? ']'                                # ArrayLiteralExpr
+    | '{' mapEntryList? '}'                            # MapLiteralExpr
     | '{' exprList? '}'                                # ArrayLiteralExpr
     | INTEGER                                          # IntExpr
     | FLOAT                                            # FloatExpr
@@ -165,6 +166,10 @@ classOverrideBlock : '{' classMember* '}' ;
 
 printFunction : KW_PRINT '(' exprList? ')' ;
 exprList : expression (',' expression)* ;
+mapEntryList : mapEntry (',' mapEntry)* ','? ;
+mapEntry : mapKey ':' expression ;
+mapKey : STRING | IDENTIFIER | INTEGER | '(' expression ')' ;
+
 
 // ???????
 typeType 

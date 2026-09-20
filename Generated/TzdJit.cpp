@@ -5,7 +5,9 @@
 #include <cstring>
 #include <csetjmp>
 #include <cstddef>
+#include <charconv>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <shared_mutex>
 
@@ -231,6 +233,87 @@ static bool isNonNumericParam(TzdLangParser::ParamContext* p) {
     }
     return false;
 }
+
+static bool isParamNonDouble(antlr4::tree::ParseTree* tree, const std::string& paramName) {
+    if (!tree) return false;
+
+    // 1. 作为容器或对象使用: param[...], param.xxx, param(...)
+    if (auto idx = dynamic_cast<TzdLangParser::IndexExprContext*>(tree)) {
+        if (idx->expression(0) && idx->expression(0)->getText() == paramName) return true;
+        // 2. 作为下标使用: container[param] (例如 map[key])
+        if (idx->expression(1) && idx->expression(1)->getText() == paramName) return true;
+    }
+    if (auto mem = dynamic_cast<TzdLangParser::MemberAccessExprContext*>(tree)) {
+        if (mem->atom() && mem->atom()->getText() == paramName) return true;
+    }
+    if (auto call = dynamic_cast<TzdLangParser::CallExprContext*>(tree)) {
+        if (call->atom() && call->atom()->getText() == paramName) return true;
+
+        // 3. 作为实参传递给非纯数值函数或方法调用
+        std::string callee = call->atom() ? call->atom()->getText() : "";
+        bool isNonMathCallee = (callee.find('.') != std::string::npos ||
+                                callee.rfind("torch_", 0) == 0 ||
+                                callee.rfind("map", 0) == 0 ||
+                                callee.rfind("json", 0) == 0 ||
+                                callee.rfind("str", 0) == 0 ||
+                                callee.rfind("print", 0) == 0 ||
+                                callee.rfind("init", 0) == 0 ||
+                                callee.rfind("register", 0) == 0 ||
+                                callee.rfind("load", 0) == 0 ||
+                                callee.rfind("save", 0) == 0 ||
+                                callee == "push" || callee == "pop" || callee == "insert" ||
+                                callee == "len" || callee == "range");
+        if (isNonMathCallee && call->exprList()) {
+            for (auto expr : call->exprList()->expression()) {
+                if (expr->getText() == paramName) return true;
+            }
+        }
+    }
+
+    // 4. 作为 super(...) 或 new Cls(...) 的实参
+    if (auto sup = dynamic_cast<TzdLangParser::SuperExprContext*>(tree)) {
+        if (sup->exprList()) {
+            for (auto expr : sup->exprList()->expression()) {
+                if (expr->getText() == paramName) return true;
+            }
+        }
+    }
+    if (auto nw = dynamic_cast<TzdLangParser::NewExprContext*>(tree)) {
+        if (nw->exprList()) {
+            for (auto expr : nw->exprList()->expression()) {
+                if (expr->getText() == paramName) return true;
+            }
+        }
+    }
+
+    // 5. 赋值给对象成员或容器元素: this.f = param, obj.f = param, c[i] = param
+    if (auto assign = dynamic_cast<TzdLangParser::AssignmentExprContext*>(tree)) {
+        if (assign->expression(1) && assign->expression(1)->getText() == paramName) {
+            auto lhs = assign->expression(0);
+            if (dynamic_cast<TzdLangParser::IndexExprContext*>(lhs)) return true;
+            if (dynamic_cast<TzdLangParser::MemberAccessExprContext*>(lhs)) return true;
+            if (auto atom = dynamic_cast<TzdLangParser::AtomExprContext*>(lhs)) {
+                if (dynamic_cast<TzdLangParser::MemberAccessExprContext*>(atom->atom())) return true;
+            }
+        }
+    }
+
+    // 6. 与 null 比较: param == null, param != null, null == param, null != param
+    if (auto eq = dynamic_cast<TzdLangParser::EqualityExprContext*>(tree)) {
+        std::string lText = eq->expression(0) ? eq->expression(0)->getText() : "";
+        std::string rText = eq->expression(1) ? eq->expression(1)->getText() : "";
+        if ((lText == paramName && rText == "null") || (rText == paramName && lText == "null")) return true;
+    }
+
+    for (size_t i = 0; i < tree->children.size(); ++i) {
+        if (isParamNonDouble(tree->children[i], paramName)) return true;
+    }
+    return false;
+}
+
+static bool isParamUsedAsContainer(antlr4::tree::ParseTree* tree, const std::string& paramName) {
+    return isParamNonDouble(tree, paramName);
+}
 // #endregion
 
 // 辅助函数：递归解包 AST，判断 Return 后面是否干净地跟着一个函数调用
@@ -239,6 +322,23 @@ static TzdLangParser::CallExprContext* getAsCallExpr(antlr4::tree::ParseTree* no
     if (auto call = dynamic_cast<TzdLangParser::CallExprContext*>(node)) return call;
     if (node->children.size() == 1) return getAsCallExpr(node->children[0]);
     return nullptr;
+}
+
+// 辅助函数：递归提取 new 表达式对应的类名 (例如 new MathBench() -> "MathBench")
+static std::string getNewExprClassName(antlr4::tree::ParseTree* tree) {
+    if (!tree) return "";
+    if (auto paren = dynamic_cast<TzdLangParser::ParenExprContext*>(tree)) {
+        return getNewExprClassName(paren->expression());
+    }
+    if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(tree)) {
+        return getNewExprClassName(atomExpr->atom());
+    }
+    if (auto newExpr = dynamic_cast<TzdLangParser::NewExprContext*>(tree)) {
+        if (newExpr->qualifiedName()) {
+            return newExpr->qualifiedName()->getText();
+        }
+    }
+    return "";
 }
 
 static std::string build_jit_frame_string(const char* name) {
@@ -327,6 +427,29 @@ struct VariableInfo {
 
 // tzdInternSelector(name) and tzdGetSelectorName(sel) are centrally defined in TzdOop.cpp.
 
+static std::unordered_map<std::string, TzdValue*> s_internedStrings;
+static std::unordered_set<const void*> s_internedSet;
+static std::mutex s_internMtx;
+
+static TzdValue* internStringLiteral(const std::string& str) {
+    std::lock_guard<std::mutex> lock(s_internMtx);
+    auto it = s_internedStrings.find(str);
+    if (it != s_internedStrings.end()) {
+        return it->second;
+    }
+    TzdValue* v = new TzdValue();
+    v->type = TzdValue::STRING;
+    v->sVal = str;
+    s_internedStrings[str] = v;
+    s_internedSet.insert(v);
+    return v;
+}
+
+static inline bool isInternedLiteral(const void* ptr) {
+    std::lock_guard<std::mutex> lock(s_internMtx);
+    return s_internedSet.count(ptr) > 0;
+}
+
 extern "C" {
     TzdValue* g_LastJitValue = nullptr;
     static thread_local jmp_buf* g_tzdFatalJmp = nullptr;
@@ -362,21 +485,80 @@ extern "C" {
             *v = g_CurrentInterpreter->getVariable(name, nullptr);
             return v;
         }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError(e.what());
+            }
+            v->type = TzdValue::NONE;
+            return v;
+        }
         catch (...) {
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("未定义的标识符: '" + std::string(name ? name : "unknown") + "'");
+            }
             v->type = TzdValue::NONE;
             return v;
         }
     }
 
-    void* rt_get_var_ptr(const char* name) {
+    void* rt_get_var_ptr(const char* name, int line, int col) {
         if (!g_CurrentInterpreter) return nullptr;
+        // 1. 查找局部/全局作用域
         for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it) {
             auto scope_it = it->find(name);
             if (scope_it != it->end()) {
                 return &(scope_it->second);
             }
         }
-        return nullptr;
+
+        // 2. 查找 this 实例成员
+        for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it) {
+            auto thisIt = it->find("this");
+            if (thisIt != it->end() && thisIt->second.type == TzdValue::INSTANCE) {
+                TzdInstance* inst = thisIt->second.instanceVal;
+                if (inst) {
+                    if (TzdValue* ptr = inst->getMemberPtr(name)) {
+                        return ptr;
+                    }
+                    try {
+                        TzdValue mem = inst->getMember(name);
+                        TzdValue* v = g_JitPool.next();
+                        *v = mem;
+                        return v;
+                    }
+                    catch (...) {}
+                }
+            }
+        }
+
+        // 3. 查找 ClassDef
+        TzdClassDef* cls = TzdOopManager::getClass(name);
+        if (cls) {
+            TzdValue* v = g_JitPool.next();
+            *v = TzdValue(cls);
+            return v;
+        }
+
+        // 4. 检查 worker pointers (多线程 JIT 函数)
+        {
+            std::shared_lock<std::shared_mutex> wlock(s_workerPointersMutex);
+            auto wit = s_workerPointers.find(name);
+            if (wit != s_workerPointers.end()) {
+                TzdValue* v = g_JitPool.next();
+                v->type = TzdValue::FUNCTION;
+                v->name = name;
+                v->jittedPtr = reinterpret_cast<void(*)(void*, void*)>(wit->second);
+                return v;
+            }
+        }
+
+        // 5. 未定义标识符，上报运行时错误
+        if (!g_CurrentInterpreter->m_hasJitError) {
+            g_CurrentInterpreter->reportJitError("未定义的标识符: '" + std::string(name ? name : "unknown") + "'", line, col);
+        }
+        TzdValue* v = g_JitPool.next();
+        v->type = TzdValue::NONE;
+        return v;
     }
 
     void rt_construct_num_at(void* dest, double val) {
@@ -440,6 +622,7 @@ extern "C" {
 
     void* rt_call_sub_fast(const char* funcName, int argCount, void* args) {
         if (!g_CurrentInterpreter) return g_JitPool.next();
+        if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
 
         TzdValue* funcObjPtr = nullptr;
         for (auto scopeIt = g_CurrentInterpreter->scopes.rbegin(); scopeIt != g_CurrentInterpreter->scopes.rend(); ++scopeIt) {
@@ -466,6 +649,9 @@ extern "C" {
                 g_CurrentInterpreter->m_argPtrStack.pop_back();
                 return res;
             }
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError("未定义的函数: '" + std::string(funcName ? funcName : "unknown") + "'");
+            }
             return g_JitPool.next();
         }
 
@@ -490,21 +676,31 @@ extern "C" {
             return res;
         }
 
-        std::vector<TzdValue> callArgs;
-        callArgs.reserve(argCount);
-        TzdValue* arr = (TzdValue*)args;
-        for (int i = 0; i < argCount; ++i) callArgs.push_back(arr[i]);
-        TzdValue fallback = g_CurrentInterpreter->callFunction(*funcObjPtr, callArgs);
-        TzdValue* res = g_JitPool.next();
-        rt_write_fast_ret(res, &fallback);
-        return res;
+        try {
+            std::vector<TzdValue> callArgs;
+            callArgs.reserve(argCount);
+            TzdValue* arr = (TzdValue*)args;
+            for (int i = 0; i < argCount; ++i) callArgs.push_back(arr[i]);
+            TzdValue fallback = g_CurrentInterpreter->callFunction(*funcObjPtr, callArgs);
+            TzdValue* res = g_JitPool.next();
+            rt_write_fast_ret(res, &fallback);
+            return res;
+        }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(e.what(), funcObjPtr->line, funcObjPtr->column);
+            }
+            return g_JitPool.next();
+        }
     }
 
     void rt_push_arg_frame(void* args) {
         if (!g_CurrentInterpreter) return;
 
         if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
-            std::cerr << "运行错误：栈溢出" << std::endl;
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
             g_CurrentInterpreter->m_hadRuntimeError = true;
             return;
         }
@@ -530,10 +726,161 @@ extern "C" {
     void* rt_create_null() { return g_JitPool.next(); }
 
     void* rt_create_str(const char* s) {
-        TzdValue* v = g_JitPool.next();
-        v->type = TzdValue::STRING;
-        v->sVal = s;
-        return v;
+        if (!s) return g_JitPool.next();
+        return internStringLiteral(s);
+    }
+
+    void* rt_op_add(void* a, void* b);
+
+    // 快速字符串拼接：v1 + v2
+    void* rt_str_concat(void* a, void* b) {
+        if (!a || !b) return g_JitPool.next();
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::STRING && v2->type == TzdValue::STRING) {
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            res->sVal.reserve(v1->sVal.size() + v2->sVal.size());
+            res->sVal.append(v1->sVal);
+            res->sVal.append(v2->sVal);
+            return res;
+        }
+        if (v1->type == TzdValue::STRING || v2->type == TzdValue::STRING) {
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            TzdInterpreter::appendValueToString(res->sVal, *v1);
+            TzdInterpreter::appendValueToString(res->sVal, *v2);
+            return res;
+        }
+        return rt_op_add(a, b);
+    }
+
+    // 快速数字与字符串拼接：num + str
+    void* rt_str_concat_num_str(double a, void* b) {
+        if (!b) return rt_create_num(a);
+        TzdValue* v2 = (TzdValue*)b;
+        if (v2->type == TzdValue::STRING) {
+            char buf[64];
+            auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), a);
+            size_t numLen = ptr - buf;
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            res->sVal.reserve(numLen + v2->sVal.size());
+            res->sVal.append(buf, numLen);
+            res->sVal.append(v2->sVal);
+            return res;
+        }
+        return rt_op_add(rt_create_num(a), b);
+    }
+
+    // 快速字符串与数字拼接：str + num
+    void* rt_str_concat_str_num(void* a, double b) {
+        if (!a) return rt_create_num(b);
+        TzdValue* v1 = (TzdValue*)a;
+        if (v1->type == TzdValue::STRING) {
+            char buf[64];
+            auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), b);
+            size_t numLen = ptr - buf;
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            res->sVal.reserve(v1->sVal.size() + numLen);
+            res->sVal.append(v1->sVal);
+            res->sVal.append(buf, numLen);
+            return res;
+        }
+        return rt_op_add(a, rt_create_num(b));
+    }
+
+    // 快速三元拼接：str + num + str（针对 "prefix_" + i + "_suffix"）
+    void* rt_str_concat_str_num_str(void* a, double b, void* c) {
+        if (!a || !c) return g_JitPool.next();
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v3 = (TzdValue*)c;
+        if (v1->type == TzdValue::STRING && v3->type == TzdValue::STRING) {
+            char buf[64];
+            auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), b);
+            size_t numLen = ptr - buf;
+            size_t totalLen = v1->sVal.size() + numLen + v3->sVal.size();
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            res->sVal.reserve(totalLen);
+            res->sVal.append(v1->sVal);
+            res->sVal.append(buf, numLen);
+            res->sVal.append(v3->sVal);
+            return res;
+        }
+        void* ab = rt_str_concat_str_num(a, b);
+        return rt_str_concat(ab, c);
+    }
+
+    // 快速三元字符串拼接：str + str + str
+    void* rt_str_concat_3(void* a, void* b, void* c) {
+        if (!a || !b || !c) return g_JitPool.next();
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        TzdValue* v3 = (TzdValue*)c;
+        if (v1->type == TzdValue::STRING && v2->type == TzdValue::STRING && v3->type == TzdValue::STRING) {
+            size_t totalLen = v1->sVal.size() + v2->sVal.size() + v3->sVal.size();
+            TzdValue* res = g_JitPool.next();
+            res->type = TzdValue::STRING;
+            res->sVal.clear();
+            res->sVal.reserve(totalLen);
+            res->sVal.append(v1->sVal);
+            res->sVal.append(v2->sVal);
+            res->sVal.append(v3->sVal);
+            return res;
+        }
+        TzdValue* res = g_JitPool.next();
+        res->type = TzdValue::STRING;
+        res->sVal.clear();
+        if (v1) TzdInterpreter::appendValueToString(res->sVal, *v1);
+        if (v2) TzdInterpreter::appendValueToString(res->sVal, *v2);
+        if (v3) TzdInterpreter::appendValueToString(res->sVal, *v3);
+        return res;
+    }
+
+    // 快速就地字符串追加：s += rhs / s = s + rhs
+    void* rt_str_append(void* a, void* b) {
+        if (!a) return b;
+        TzdValue* v1 = (TzdValue*)a;
+        TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == TzdValue::STRING) {
+            if (isInternedLiteral(v1) || g_JitPool.contains(v1)) {
+                TzdValue* fresh = new TzdValue(*v1);
+                if (g_CurrentInterpreter) g_CurrentInterpreter->trackJitValue(fresh);
+                v1 = fresh;
+            }
+            if (v2 && v2->type == TzdValue::STRING) {
+                v1->sVal.append(v2->sVal);
+            } else if (v2) {
+                TzdInterpreter::appendValueToString(v1->sVal, *v2);
+            }
+            return v1;
+        }
+        return rt_op_add(a, b);
+    }
+
+    // 快速就地数字追加：s += num / s = s + num
+    void* rt_str_append_num(void* a, double b) {
+        if (!a) return rt_create_num(b);
+        TzdValue* v1 = (TzdValue*)a;
+        if (v1->type == TzdValue::STRING) {
+            if (isInternedLiteral(v1) || g_JitPool.contains(v1)) {
+                TzdValue* fresh = new TzdValue(*v1);
+                if (g_CurrentInterpreter) g_CurrentInterpreter->trackJitValue(fresh);
+                v1 = fresh;
+            }
+            char buf[64];
+            auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), b);
+            v1->sVal.append(buf, ptr - buf);
+            return v1;
+        }
+        return rt_op_add(a, rt_create_num(b));
     }
 
     void* rt_op_add(void* a, void* b) {
@@ -544,7 +891,15 @@ extern "C" {
         if (v1->type == TzdValue::STRING || v2->type == TzdValue::STRING) {
             TzdValue* res = g_JitPool.next();
             res->type = TzdValue::STRING;
-            res->sVal = TzdInterpreter::getAsString(*v1) + TzdInterpreter::getAsString(*v2);
+            res->sVal.clear();
+            if (v1->type == TzdValue::STRING && v2->type == TzdValue::STRING) {
+                res->sVal.reserve(v1->sVal.size() + v2->sVal.size());
+                res->sVal.append(v1->sVal);
+                res->sVal.append(v2->sVal);
+            } else {
+                TzdInterpreter::appendValueToString(res->sVal, *v1);
+                TzdInterpreter::appendValueToString(res->sVal, *v2);
+            }
             return res;
         }
         // BIGINT/RATIONAL arithmetic (exact)
@@ -786,6 +1141,31 @@ extern "C" {
         return v;
     }
 
+    void* rt_create_map() {
+        TzdValue* v = g_JitPool.next();
+        v->type = TzdValue::MAP;
+        v->mapVal.clear();
+        return v;
+    }
+
+    void rt_map_set(void* mapPtr, void* keyVal, void* val) {
+        if (mapPtr && keyVal && val) {
+            TzdValue* vMap = (TzdValue*)mapPtr;
+            TzdValue* vKey = (TzdValue*)keyVal;
+            TzdValue* vVal = (TzdValue*)val;
+            std::string key = TzdInterpreter::getAsString(*vKey);
+            vMap->mapVal[key] = *vVal;
+        }
+    }
+
+    void rt_map_set_str(void* mapPtr, const char* key, void* val) {
+        if (mapPtr && key && val) {
+            TzdValue* vMap = (TzdValue*)mapPtr;
+            TzdValue* vVal = (TzdValue*)val;
+            vMap->mapVal[key] = *vVal;
+        }
+    }
+
     void rt_array_push(void* arr, void* val) {
         if (arr && val) ((TzdValue*)arr)->arrVal.push_back(*(TzdValue*)val);
     }
@@ -811,19 +1191,37 @@ extern "C" {
 
         int i = (int)TzdInterpreter::getAsDoubleInternal(*vIdx);
 
-        if (vArr->type == TzdValue::ARRAY && i >= 0 && i < (int)vArr->arrVal.size()) {
-            TzdValue* res = g_JitPool.next();
-            *res = vArr->arrVal[i];
-            return res;
+        if (vArr->type == TzdValue::ARRAY) {
+            if (i >= 0 && i < (int)vArr->arrVal.size()) {
+                TzdValue* res = g_JitPool.next();
+                *res = vArr->arrVal[i];
+                return res;
+            }
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("数组索引越界: 尝试访问索引 " + std::to_string(i) +
+                    ", 但数组长度为 " + std::to_string(vArr->arrVal.size()));
+            }
+            return g_JitPool.next();
         }
-        if (vArr->type == TzdValue::STRING && i >= 0 && i < (int)vArr->sVal.size()) {
-            return rt_create_str(std::string(1, vArr->sVal[i]).c_str());
+        if (vArr->type == TzdValue::STRING) {
+            if (i >= 0 && i < (int)vArr->sVal.size()) {
+                return rt_create_str(std::string(1, vArr->sVal[i]).c_str());
+            }
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("字符串索引越界: 尝试访问索引 " + std::to_string(i) +
+                    ", 但字符串长度为 " + std::to_string(vArr->sVal.size()));
+            }
+            return g_JitPool.next();
+        }
+        if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+            g_CurrentInterpreter->reportJitError("类型错误: 该类型不支持下标访问");
         }
         return g_JitPool.next();
     }
 
     void* rt_call_sub(const char* funcName, int argCount, ...) {
         if (!g_CurrentInterpreter) return g_JitPool.next();
+        if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
 
         std::vector<TzdValue> args;
         args.reserve(argCount);
@@ -835,7 +1233,16 @@ extern "C" {
         }
         va_end(ap);
 
-        TzdValue funcObj = g_CurrentInterpreter->getVariable(funcName, nullptr);
+        TzdValue funcObj;
+        try {
+            funcObj = g_CurrentInterpreter->getVariable(funcName, nullptr);
+        }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError("未定义的函数: '" + std::string(funcName ? funcName : "unknown") + "'");
+            }
+            return g_JitPool.next();
+        }
 
         if (funcObj.type == TzdValue::FUNCTION && funcObj.jittedPtr) {
             TzdValue* result = g_JitPool.next();
@@ -861,10 +1268,25 @@ extern "C" {
             return result;
         }
 
-        TzdValue res = g_CurrentInterpreter->callFunction(funcObj, args);
-        TzdValue* poolVal = g_JitPool.next();
-        *poolVal = res;
-        return poolVal;
+        if (funcObj.type != TzdValue::FUNCTION && funcObj.type != TzdValue::NATIVE_FUNCTION) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError("未定义的函数: '" + std::string(funcName ? funcName : "unknown") + "'");
+            }
+            return g_JitPool.next();
+        }
+
+        try {
+            TzdValue res = g_CurrentInterpreter->callFunction(funcObj, args);
+            TzdValue* poolVal = g_JitPool.next();
+            *poolVal = res;
+            return poolVal;
+        }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(e.what(), funcObj.line, funcObj.column);
+            }
+            return g_JitPool.next();
+        }
     }
 
     void* rt_call_sub_f1(const char* funcName, void* arg0) {
@@ -929,16 +1351,21 @@ extern "C" {
                 vArr->arrVal[i] = *vVal;
             }
             else {
-                std::cerr << "[JIT 运行时错误] 数组下标越界: 尝试写入索引 " << i
-                    << ", 但数组大小为 " << vArr->arrVal.size() << std::endl;
+                if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                    g_CurrentInterpreter->reportJitError("数组下标越界: 尝试写入索引 " + std::to_string(i)
+                        + ", 但数组大小为 " + std::to_string(vArr->arrVal.size()));
+                }
             }
             return;
         }
         if (vArr->type == TzdValue::MAP) {
-            vArr->mapVal[vIdx->sVal] = *vVal;
+            std::string key = TzdInterpreter::getAsString(*vIdx);
+            vArr->mapVal[key] = *vVal;
             return;
         }
-        std::cerr << "[JIT 运行时错误] 该数据类型不支持下标赋值操作" << std::endl;
+        if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+            g_CurrentInterpreter->reportJitError("类型错误: 该数据类型不支持下标赋值操作");
+        }
     }
 
     void rt_set_location(int line, int col) {
@@ -1000,7 +1427,14 @@ extern "C" {
         if (!ctor && argCount == 0 && !def->constructors.empty()) {
             ctor = def->findConstructor(0);
         }
-        if (!ctor) return instVal;
+        if (!ctor) {
+            if (!def->constructors.empty()) {
+                if (g_CurrentInterpreter) {
+                    g_CurrentInterpreter->reportJitError("类 '" + def->fullName + "' 未找到接受 " + std::to_string(argCount) + " 个参数的构造函数");
+                }
+            }
+            return instVal;
+        }
 
         if (ctor->jittedPtr) {
             int endLine = (ctor->body && ctor->body->getStop()) ? (int)ctor->body->getStop()->getLine() : -1;
@@ -1042,14 +1476,33 @@ extern "C" {
             ctorFunc.line = ctor->line;
             ctorFunc.column = ctor->column;
 
-            g_CurrentInterpreter->callFunction(ctorFunc, callArgs);
+            try {
+                g_CurrentInterpreter->callFunction(ctorFunc, callArgs);
+            }
+            catch (const std::exception& e) {
+                if (g_CurrentInterpreter) {
+                    g_CurrentInterpreter->reportJitError(e.what(), ctor->line, ctor->column);
+                }
+            }
         }
         return instVal;
     }
 
     void* rt_call_value_fast(void* funcPtr, int argCount, TzdValue* args) {
         if (!g_CurrentInterpreter || !funcPtr) return g_JitPool.next();
+        if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
+
         TzdValue* funcObj = (TzdValue*)funcPtr;
+        if (funcObj->type != TzdValue::FUNCTION && funcObj->type != TzdValue::NATIVE_FUNCTION) {
+            std::string msg = "尝试调用一个非函数对象";
+            if (!funcObj->name.empty()) {
+                msg = "未定义的函数或非函数对象: '" + funcObj->name + "'";
+            }
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(msg);
+            }
+            return g_JitPool.next();
+        }
 
         int endLine = (funcObj->funcBody && funcObj->funcBody->getStop()) ? (int)funcObj->funcBody->getStop()->getLine() : -1;
         bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(funcObj->sourceFile, funcObj->line, endLine));
@@ -1110,19 +1563,29 @@ extern "C" {
             return result;
         }
 
-        std::vector<TzdValue> callArgs;
-        callArgs.reserve(argCount);
-        for (int i = 0; i < argCount; ++i) callArgs.push_back(args[i]);
-        TzdValue res = g_CurrentInterpreter->callFunction(*funcObj, callArgs);
-        TzdValue* poolVal = g_JitPool.next();
-        *poolVal = res;
-        return poolVal;
+        try {
+            std::vector<TzdValue> callArgs;
+            callArgs.reserve(argCount);
+            for (int i = 0; i < argCount; ++i) callArgs.push_back(args[i]);
+            TzdValue res = g_CurrentInterpreter->callFunction(*funcObj, callArgs);
+            TzdValue* poolVal = g_JitPool.next();
+            *poolVal = res;
+            return poolVal;
+        }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(e.what(), funcObj->line, funcObj->column);
+            }
+            return g_JitPool.next();
+        }
     }
 
     void* rt_tzd_get_member(void* inst, int32_t selector, const char* name);
 
     void* rt_tzd_call_method(void* objPtr, int32_t selector, const char* name, int argCount, TzdValue* args) {
         if (!objPtr || !g_CurrentInterpreter) return g_JitPool.next();
+        if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
+
         TzdValue* v = (TzdValue*)objPtr;
         if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
             TzdClassDef* cls = v->instanceVal->definition;
@@ -1140,7 +1603,41 @@ extern "C" {
                 }
             }
         }
+        else if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
+            TzdClassDef* cls = v->classDefVal;
+            if (const TzdMemberSlot* slot = cls->tzdDispatch.find((TzdSelector)selector)) {
+                if (slot->method && slot->method->jittedPtr) {
+                    int endLine = (slot->method->body && slot->method->body->getStop()) ? (int)slot->method->body->getStop()->getLine() : -1;
+                    bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(slot->method->sourceFile, slot->method->line, endLine));
+                    if (!hasBp) {
+                        TzdValue* result = g_JitPool.next();
+                        g_CurrentInterpreter->m_argPtrStack.push_back(args);
+                        slot->method->jittedPtr(g_CurrentInterpreter, result);
+                        g_CurrentInterpreter->m_argPtrStack.pop_back();
+                        return result;
+                    }
+                }
+            }
+        }
         void* callee = rt_tzd_get_member(objPtr, selector, name);
+        TzdValue* calleeVal = (TzdValue*)callee;
+        if (!calleeVal || (calleeVal->type != TzdValue::FUNCTION && calleeVal->type != TzdValue::NATIVE_FUNCTION)) {
+            std::string recvDesc = "对象";
+            if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
+                recvDesc = "类 '" + v->instanceVal->definition->fullName + "' 的实例";
+            } else if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
+                recvDesc = "类 '" + v->classDefVal->fullName + "'";
+            } else if (v->type == TzdValue::MAP) {
+                recvDesc = "Map 对象";
+            } else if (v->type == TzdValue::NONE) {
+                recvDesc = "空对象 (null/none)";
+            }
+            std::string msg = recvDesc + " 没有成员或方法: '" + (name ? name : "unknown") + "'";
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(msg);
+            }
+            return g_JitPool.next();
+        }
         return rt_call_value_fast(callee, argCount, args);
     }
 
@@ -1204,6 +1701,7 @@ extern "C" {
     // name-based 解析核心（不内联 selector，供回退使用；不递归回 rt_get_member）。
     static TzdValue* tzd_get_member_by_name(void* inst, const char* name) {
         TzdValue* v = (TzdValue*)inst;
+        if (!v || !name) return g_JitPool.next();
         if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
             if (TzdValue* direct = v->classDefVal->findStaticValue(name)) return direct;
             if (ClassMethod* method = v->classDefVal->findMethod(name)) {
@@ -1220,12 +1718,28 @@ extern "C" {
                 }
             }
         }
+        if (v->type == TzdValue::MAP) {
+            auto it = v->mapVal.find(name);
+            if (it != v->mapVal.end()) return &it->second;
+            return &v->mapVal[name];
+        }
         return g_JitPool.next();
     }
 
     // selector 热路径：O(1) dispatch table，name 仅作冷路径诊断/回退。
     void* rt_tzd_get_member(void* inst, int32_t selector, const char* name) {
+        if (!inst) {
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("尝试在空对象 (null) 上访问成员: '" + std::string(name ? name : "") + "'");
+            }
+            return g_JitPool.next();
+        }
         TzdValue* v = (TzdValue*)inst;
+        if (v->type == TzdValue::MAP && name) {
+            auto it = v->mapVal.find(name);
+            if (it != v->mapVal.end()) return &it->second;
+            return &v->mapVal[name];
+        }
         if (selector != 0) {
             if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
                 if (const TzdMemberSlot* slot =
@@ -1261,7 +1775,7 @@ extern "C" {
 
     // name-based 写入核心。
     static void tzd_store_member_by_name(void* inst, const char* name, void* val) {
-        if (!inst || !val) return;
+        if (!inst || !val || !name) return;
         TzdValue* v = (TzdValue*)inst;
         TzdValue copy = *(TzdValue*)val;
         if (v->type == TzdValue::CLASS_DEF && v->classDefVal) {
@@ -1272,14 +1786,31 @@ extern "C" {
         }
         if (v->type == TzdValue::INSTANCE && v->instanceVal) {
             v->instanceVal->setMember(name, copy);
+            return;
+        }
+        if (v->type == TzdValue::MAP) {
+            v->mapVal[name] = copy;
+            return;
+        }
+        if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+            g_CurrentInterpreter->reportJitError("无法给该类型的成员赋值: '" + std::string(name ? name : "") + "'");
         }
     }
 
     // selector 热路径写入。
     void rt_tzd_store_member(void* inst, int32_t selector, const char* name, void* val) {
-        if (!inst || !val) return;
+        if (!inst || !val) {
+            if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("尝试在空对象 (null) 上赋值属性: '" + std::string(name ? name : "") + "'");
+            }
+            return;
+        }
         TzdValue* v = (TzdValue*)inst;
         TzdValue* src = (TzdValue*)val;
+        if (v->type == TzdValue::MAP && name) {
+            v->mapVal[name] = *src;
+            return;
+        }
         if (selector != 0) {
             if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
                 if (const TzdMemberSlot* slot =
@@ -1370,10 +1901,13 @@ extern "C" {
     }
 
     void rt_print(void* a) {
+        if (g_CurrentInterpreter && g_CurrentInterpreter->m_hasJitError) return;
+        if (!a) return;
         std::cout << Utf8ToAnsi(TzdInterpreter::getAsString(*(TzdValue*)a)) << " " << std::flush;
     }
 
     void rt_print_newline() {
+        if (g_CurrentInterpreter && g_CurrentInterpreter->m_hasJitError) return;
         std::cout << std::endl;
     }
 
@@ -1446,10 +1980,22 @@ extern "C" {
     }
 
     void rt_call_super(void* thisValPtr, int argCount, ...) {
+        if (g_CurrentInterpreter && g_CurrentInterpreter->m_hasJitError) return;
         TzdValue* thisVal = (TzdValue*)thisValPtr;
-        TzdInstance* inst = thisVal->instanceVal;
+        TzdInstance* inst = thisVal ? thisVal->instanceVal : nullptr;
+        if (!inst || !inst->definition) {
+            if (g_CurrentInterpreter) g_CurrentInterpreter->reportJitError("super() 调用失败: 无效的实例指针");
+            return;
+        }
+        if (inst->definition->parentName.empty()) {
+            if (g_CurrentInterpreter) g_CurrentInterpreter->reportJitError("super() 调用失败: 类 '" + inst->definition->fullName + "' 没有父类");
+            return;
+        }
         TzdClassDef* parent = TzdOopManager::getClass(inst->definition->parentName);
-        if (!parent) return;
+        if (!parent) {
+            if (g_CurrentInterpreter) g_CurrentInterpreter->reportJitError("super() 调用失败: 找不到基类/父类定义 '" + inst->definition->parentName + "'");
+            return;
+        }
 
         std::vector<TzdValue> args;
         va_list ap;
@@ -1460,7 +2006,12 @@ extern "C" {
         va_end(ap);
 
         const ClassConstructor* parentCtor = parent->findConstructor(args.size());
-        if (!parentCtor) return;
+        if (!parentCtor) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError("super() 调用失败: 父类 '" + parent->fullName + "' 未找到接受 " + std::to_string(args.size()) + " 个参数的构造函数");
+            }
+            return;
+        }
 
         TzdValue ctorFunc(parent->simpleName, parentCtor->params, parentCtor->body);
         ctorFunc.jittedPtr = parentCtor->jittedPtr;
@@ -1471,7 +2022,14 @@ extern "C" {
         ctorFunc.line = parentCtor->line;
         ctorFunc.column = parentCtor->column;
 
-        g_CurrentInterpreter->callFunction(ctorFunc, args);
+        try {
+            g_CurrentInterpreter->callFunction(ctorFunc, args);
+        }
+        catch (const std::exception& e) {
+            if (g_CurrentInterpreter) {
+                g_CurrentInterpreter->reportJitError(e.what(), parentCtor->line, parentCtor->column);
+            }
+        }
     }
 
     static thread_local jmp_buf* g_tzdCatchJmp = nullptr;
@@ -1575,6 +2133,11 @@ extern "C" {
         // fallback：boxed array
         if (vArr->type == TzdValue::ARRAY && idx >= 0 && idx < (int)vArr->arrVal.size())
             return TzdInterpreter::getAsDoubleInternal(vArr->arrVal[idx]);
+        if (g_CurrentInterpreter && !g_CurrentInterpreter->m_hasJitError) {
+            int len = vArr->isNativeDoubleArr ? (int)vArr->nativeArr.size() : (vArr->type == TzdValue::ARRAY ? (int)vArr->arrVal.size() : 0);
+            g_CurrentInterpreter->reportJitError("数组索引越界: 尝试访问索引 " + std::to_string(idx) +
+                ", 但数组长度为 " + std::to_string(len));
+        }
         return 0.0;
     }
 
@@ -1624,26 +2187,9 @@ llvm::AllocaInst* TzdCompiler::CreateEntryBlockAlloca(llvm::Type* Ty, llvm::Valu
 
 void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx,
     TzdLangParser::MethodDeclContext* methodCtx) {
-    s_tryJmpBufStack.clear();
-    s_loopLevel = 0;
     std::string className = classCtx->qualifiedName(0)->getText();
     std::string methodName = methodCtx->IDENTIFIER()->getText();
-    std::string fullInternalName = className + "_" + methodName;
-    // 实例方法的签名：void Method(void* interp, void* retVal, void* thisPtr, ...)
-    std::vector<Type*> params = { m_ptrTy, m_ptrTy };
-    Function* func = Function::Create(
-        FunctionType::get(m_voidTy, params, false),
-        Function::ExternalLinkage, fullInternalName, m_module.get()
-    );
-    BasicBlock* bb = BasicBlock::Create(m_context, "entry", func);
-    m_builder.SetInsertPoint(bb);
-    Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
-    AllocaInst* thisAlloc = m_builder.CreateAlloca(m_ptrTy, nullptr, "this");
-    m_builder.CreateStore(thisVal, thisAlloc);
-    m_namedValues["this"] = thisAlloc;
-    visit(methodCtx->block());
-    if (!m_builder.GetInsertBlock()->getTerminator())
-        m_builder.CreateRetVoid();
+    compileClassMethod(classCtx, methodCtx, className + "_" + methodName);
 }
 
 // Add this method to your TzdJitEngine
@@ -1721,7 +2267,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     if (ctx->paramList()) {
         auto pList = ctx->paramList()->param();
         for (int i = 0; i < argCount; ++i) {
-            if (isNonNumericParam(pList[i])) { hasNonNumericParam = true; break; }
+            std::string pName = getParamName(pList[i]);
+            if (isNonNumericParam(pList[i]) || isParamNonDouble(ctx->block(), pName)) { hasNonNumericParam = true; break; }
         }
     }
     if (argCount > 0 && !hasNonNumericParam) {
@@ -1736,6 +2283,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             m_module.get()
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+        nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
     // Register worker for direct call optimization (bypasses rt_call_sub_fast)
@@ -1808,7 +2356,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             m_namedValues[pName] = boxedAlloc;
 
             // Native double version — unbox at entry for fast numeric access + native worker
-            if (!isNonNumericParam(pList[i])) {
+            if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctx->block(), pName)) {
                 Value* nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -1880,6 +2428,90 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
 
 
 void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx, const std::string& internalName) {
+    std::string className = classCtx->qualifiedName(0)->getText();
+    std::string methodName = methodCtx->IDENTIFIER()->getText();
+    int argCount = methodCtx->paramList() ? (int)methodCtx->paramList()->param().size() : 0;
+
+    // Check if parameters are all numeric (for native worker specialization)
+    Function* nativeWorkerFunc = nullptr;
+    bool hasNonNumericParam = false;
+    if (methodCtx->paramList()) {
+        auto pList = methodCtx->paramList()->param();
+        for (int i = 0; i < argCount; ++i) {
+            std::string pName = getParamName(pList[i]);
+            if (isNonNumericParam(pList[i]) || isParamNonDouble(methodCtx->block(), pName)) { hasNonNumericParam = true; break; }
+        }
+    }
+
+    if (!hasNonNumericParam) {
+        // Native worker: (interp, this, double arg0, double arg1, ...) -> double
+        std::vector<Type*> nativeWorkerArgs = { m_ptrTy, m_ptrTy };
+        for (int i = 0; i < argCount; ++i) {
+            nativeWorkerArgs.push_back(m_doubleTy);
+        }
+        nativeWorkerFunc = Function::Create(
+            FunctionType::get(m_doubleTy, nativeWorkerArgs, false),
+            Function::ExternalLinkage,
+            internalName + "_worker_native",
+            m_module.get()
+        );
+        nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+        nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
+
+        std::string base = internalName;
+        size_t us = base.find_last_of('_');
+        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
+            base = base.substr(0, us);
+        s_compiledNativeWorkers[base] = nativeWorkerFunc;
+        s_compiledNativeWorkers[className + "_" + methodName] = nativeWorkerFunc;
+
+        BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
+        BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
+        m_builder.SetInsertPoint(nativeEntryBB);
+
+        m_namedValues.clear();
+        m_nativeDoubleLocals.clear();
+        m_declaredLocals.clear();
+        s_currentFuncParamNames.clear();
+        m_varClassTypes.clear();
+        m_varClassTypes["this"] = className;
+        m_currentClassDef = TzdOopManager::getClass(className);
+
+        m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+        s_tailRecurseBB = nativeBodyBB;
+        s_currentNativeWorkerFunc = nativeWorkerFunc;
+
+        // Bind this
+        AllocaInst* thisAlloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, "this");
+        m_builder.CreateStore(nativeWorkerFunc->getArg(1), thisAlloc);
+        m_namedValues["this"] = thisAlloc;
+        m_declaredLocals.insert("this");
+
+        if (methodCtx->paramList()) {
+            auto pList = methodCtx->paramList()->param();
+            for (int i = 0; i < argCount; ++i) {
+                std::string pName = getParamName(pList[i]);
+                s_currentFuncParamNames.push_back(pName);
+                m_declaredLocals.insert(pName);
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeWorkerFunc->getArg(2 + i), nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
+        }
+
+        m_builder.CreateBr(nativeBodyBB);
+        m_builder.SetInsertPoint(nativeBodyBB);
+
+        visit(methodCtx->block());
+
+        if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+        }
+        s_currentNativeWorkerFunc = nullptr;
+        s_tailRecurseBB = nullptr;
+    }
+
+    // Entry wrapper (void(interp, retPtr)) for dynamic runtime / interpreter compatibility
     Function* func = Function::Create(
         FunctionType::get(m_voidTy, { m_ptrTy, m_ptrTy }, false),
         Function::ExternalLinkage, internalName, m_module.get()
@@ -1889,29 +2521,61 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
+    s_currentFuncParamNames.clear();
+    m_varClassTypes.clear();
+    m_varClassTypes["this"] = className;
+    m_currentClassDef = TzdOopManager::getClass(className);
     m_declaredLocals.insert("this");
     m_currentRetPtr = func->getArg(1);
 
-    Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
-    AllocaInst* thisAlloc = m_builder.CreateAlloca(m_ptrTy, nullptr, "this");
-    m_builder.CreateStore(thisVal, thisAlloc);
-    m_namedValues["this"] = thisAlloc;
-
-    if (methodCtx->paramList()) {
-        auto pList = methodCtx->paramList()->param();
-        for (int i = 0; i < (int)pList.size(); ++i) {
-            std::string pName = getParamName(pList[i]);
-            m_declaredLocals.insert(pName);
+    if (nativeWorkerFunc) {
+        Value* interp = func->getArg(0);
+        Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
+        std::vector<Value*> callArgs = { interp, thisVal };
+        for (int i = 0; i < argCount; ++i) {
             Value* argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i + 1) });
-            AllocaInst* alloc = m_builder.CreateAlloca(m_ptrTy, nullptr, pName);
-            m_builder.CreateStore(argVal, alloc);
-            m_namedValues[pName] = alloc;
+            callArgs.push_back(inlineToDoubleFast(argVal));
+        }
+        CallInst* dRes = m_builder.CreateCall(nativeWorkerFunc, callArgs);
+        dRes->setCallingConv(llvm::CallingConv::Fast);
+        inlineStoreNativeToPtr(m_currentRetPtr, dRes);
+        m_builder.CreateRetVoid();
+    } else {
+        Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
+        AllocaInst* thisAlloc = m_builder.CreateAlloca(m_ptrTy, nullptr, "this");
+        m_builder.CreateStore(thisVal, thisAlloc);
+        m_namedValues["this"] = thisAlloc;
+
+        if (methodCtx->paramList()) {
+            auto pList = methodCtx->paramList()->param();
+            for (int i = 0; i < argCount; ++i) {
+                std::string pName = getParamName(pList[i]);
+                s_currentFuncParamNames.push_back(pName);
+                m_declaredLocals.insert(pName);
+                Value* argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i + 1) });
+                AllocaInst* alloc = m_builder.CreateAlloca(m_ptrTy, nullptr, pName);
+                m_builder.CreateStore(argVal, alloc);
+                m_namedValues[pName] = alloc;
+
+                if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(methodCtx->block(), pName)) {
+                    Value* nativeVal = inlineToDoubleFast(argVal);
+                    AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                    m_builder.CreateStore(nativeVal, nativeAlloc);
+                    m_nativeDoubleLocals[pName] = nativeAlloc;
+                }
+            }
+        }
+
+        m_namedValues["$retval"] = m_builder.CreateAlloca(m_ptrTy, nullptr, "$retval");
+        visit(methodCtx->block());
+        if (!m_builder.GetInsertBlock()->getTerminator()) {
+            Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
+            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
+            m_builder.CreateRetVoid();
         }
     }
-
-    m_namedValues["$retval"] = m_builder.CreateAlloca(m_ptrTy, nullptr, "$retval");
-    visit(methodCtx->block());
-    if (!m_builder.GetInsertBlock()->getTerminator()) m_builder.CreateRetVoid();
+    s_currentFuncParamNames.clear();
+    m_currentRetPtr = nullptr;
 }
 
 void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::ConstructorDeclContext* ctorCtx, const std::string& internalName) {
@@ -1924,6 +2588,11 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
+    s_currentFuncParamNames.clear();
+    m_varClassTypes.clear();
+    std::string className = classCtx->qualifiedName(0)->getText();
+    m_varClassTypes["this"] = className;
+    m_currentClassDef = TzdOopManager::getClass(className);
     m_declaredLocals.insert("this");
     m_currentRetPtr = func->getArg(1);
 
@@ -1936,11 +2605,19 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
         auto pList = ctorCtx->paramList()->param();
         for (int i = 0; i < (int)pList.size(); ++i) {
             std::string pName = getParamName(pList[i]);
+            s_currentFuncParamNames.push_back(pName);
             m_declaredLocals.insert(pName);
             Value* argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(i + 1) });
             AllocaInst* alloc = m_builder.CreateAlloca(m_ptrTy, nullptr, pName);
             m_builder.CreateStore(argVal, alloc);
             m_namedValues[pName] = alloc;
+
+            if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctorCtx->block(), pName)) {
+                Value* nativeVal = inlineToDoubleFast(argVal);
+                AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
+                m_builder.CreateStore(nativeVal, nativeAlloc);
+                m_nativeDoubleLocals[pName] = nativeAlloc;
+            }
         }
     }
 
@@ -1954,7 +2631,13 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
             throw;
         }
     }
-    if (!m_builder.GetInsertBlock()->getTerminator()) m_builder.CreateRetVoid();
+    if (!m_builder.GetInsertBlock()->getTerminator()) {
+        Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
+        m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
+        m_builder.CreateRetVoid();
+    }
+    s_currentFuncParamNames.clear();
+    m_currentRetPtr = nullptr;
 }
 
 void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName) {
@@ -1978,7 +2661,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     if (params) {
         auto pList = params->param();
         for (int i = 0; i < argCount; ++i) {
-            if (isNonNumericParam(pList[i])) { hasNonNumericParam = true; break; }
+            std::string pName = getParamName(pList[i]);
+            if (isNonNumericParam(pList[i]) || isParamNonDouble(block, pName)) { hasNonNumericParam = true; break; }
         }
     }
     if (argCount > 0 && !hasNonNumericParam) {
@@ -1993,6 +2677,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             m_module.get()
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+        nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
     // Register worker for direct call optimization (bypasses rt_call_sub_fast)
@@ -2044,6 +2729,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
     s_currentFuncParamNames.clear();
+    m_varClassTypes.clear();
+    m_currentClassDef = nullptr;
 
     this->m_currentRetPtr = workerFunc->getArg(1);
     Value* workerArgsArray = workerFunc->getArg(2); // 这里正确定义了 workerArgsArray
@@ -2069,7 +2756,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             // visitIdExpr checks m_nativeDoubleLocals first, returning the double.
             // Inline unbox: direct GEP+Load on dVal field (no function call)
             // Skip "this" — it's an instance pointer, not a numeric value!
-            if (pName != "this" && !isNonNumericParam(pList[i])) {
+            if (pName != "this" && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(block, pName)) {
                 Value* nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -2102,6 +2789,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         m_nativeDoubleLocals.clear();
         m_declaredLocals.clear();
         s_currentFuncParamNames.clear();
+        m_varClassTypes.clear();
+        m_currentClassDef = nullptr;
 
         m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
 
@@ -2174,6 +2863,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
             m_module.get()
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
+        nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
     // Register worker for direct call optimization
@@ -2222,6 +2912,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
     s_currentFuncParamNames.clear();
+    m_varClassTypes.clear();
+    m_currentClassDef = nullptr;
 
     this->m_currentRetPtr = workerFunc->getArg(1);
     Value* workerArgsArray = workerFunc->getArg(2);
@@ -2241,7 +2933,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         m_namedValues[pName] = boxedAlloc;
 
         // Skip "this" — it's an instance pointer, not a numeric value!
-        if (pName != "this") {
+        if (pName != "this" && !isParamUsedAsContainer(block, pName)) {
             Value* nativeVal = inlineToDoubleFast(argPtr);
             AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
             m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -2272,6 +2964,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         m_nativeDoubleLocals.clear();
         m_declaredLocals.clear();
         s_currentFuncParamNames.clear();
+        m_varClassTypes.clear();
+        m_currentClassDef = nullptr;
 
         m_currentRetPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
 
@@ -2376,9 +3070,14 @@ void TzdCompiler::setupExternalFunctions() {
     addFunc("rt_resolve_var", { m_ptrTy });
     addFunc("rt_store_var", { m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_get_arg", { Type::getInt32Ty(m_context) });
-    addFunc("rt_set_last_ret", { m_ptrTy }, m_voidTy); 
-
     addFunc("rt_op_add", { m_ptrTy, m_ptrTy });
+    addFunc("rt_str_concat", { m_ptrTy, m_ptrTy });
+    addFunc("rt_str_concat_num_str", { m_doubleTy, m_ptrTy });
+    addFunc("rt_str_concat_str_num", { m_ptrTy, m_doubleTy });
+    addFunc("rt_str_concat_3", { m_ptrTy, m_ptrTy, m_ptrTy });
+    addFunc("rt_str_concat_str_num_str", { m_ptrTy, m_doubleTy, m_ptrTy });
+    addFunc("rt_str_append", { m_ptrTy, m_ptrTy });
+    addFunc("rt_str_append_num", { m_ptrTy, m_doubleTy });
     addFunc("rt_op_sub", { m_ptrTy, m_ptrTy });
     addFunc("rt_op_mul", { m_ptrTy, m_ptrTy });
     addFunc("rt_op_div", { m_ptrTy, m_ptrTy });
@@ -2398,6 +3097,9 @@ void TzdCompiler::setupExternalFunctions() {
     addFunc("rt_cast", { m_ptrTy, m_ptrTy });
 
     addFunc("rt_create_array", {});
+    addFunc("rt_create_map", {});
+    addFunc("rt_map_set", { m_ptrTy, m_ptrTy, m_ptrTy }, m_voidTy);
+    addFunc("rt_map_set_str", { m_ptrTy, m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_array_push", { m_ptrTy, m_ptrTy }, m_voidTy);
     addFunc("rt_get_index", { m_ptrTy, m_ptrTy });
     addFunc("rt_print", { m_ptrTy }, m_voidTy);
@@ -2421,7 +3123,7 @@ void TzdCompiler::setupExternalFunctions() {
 
     addFunc("rt_cast", { m_ptrTy, m_ptrTy });
     addFunc("rt_type_check", { m_ptrTy, m_ptrTy }, m_boolTy);
-    addFunc("rt_get_var_ptr", { m_ptrTy });
+    addFunc("rt_get_var_ptr", { m_ptrTy, m_int32Ty, m_int32Ty });
 
     addFunc("rt_print_newline", {}, m_voidTy);
     addFunc("rt_to_double_fast", { m_ptrTy }, m_doubleTy);
@@ -2740,6 +3442,13 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_create_bool", (void*)&rt_create_bool);
     bind("rt_create_null", (void*)&rt_create_null);
     bind("rt_op_add", (void*)&rt_op_add);
+    bind("rt_str_concat", (void*)&rt_str_concat);
+    bind("rt_str_concat_num_str", (void*)&rt_str_concat_num_str);
+    bind("rt_str_concat_str_num", (void*)&rt_str_concat_str_num);
+    bind("rt_str_concat_3", (void*)&rt_str_concat_3);
+    bind("rt_str_concat_str_num_str", (void*)&rt_str_concat_str_num_str);
+    bind("rt_str_append", (void*)&rt_str_append);
+    bind("rt_str_append_num", (void*)&rt_str_append_num);
     bind("rt_to_bool", (void*)&rt_to_bool);
     bind("rt_create_inst", (void*)&rt_create_inst);
     bind("rt_create_inst_args", (void*)&rt_create_inst_args);
@@ -2765,6 +3474,9 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_array_push", (void*)&rt_array_push);
     bind("rt_get_index", (void*)&rt_get_index);
     bind("rt_create_array", (void*)&rt_create_array);
+    bind("rt_create_map", (void*)&rt_create_map);
+    bind("rt_map_set", (void*)&rt_map_set);
+    bind("rt_map_set_str", (void*)&rt_map_set_str);
     bind("rt_store_var", (void*)&rt_store_var);
     bind("rt_resolve_var", (void*)&rt_resolve_var);
     bind("rt_get_arg", (void*)&rt_get_arg);
@@ -2848,6 +3560,10 @@ TzdCompiler::TzdCompiler(TzdJitEngine& jit, const std::string& modName)
     m_context(*m_tsc.getContext()),
     m_builder(m_context)
 {
+    llvm::FastMathFlags fmf;
+    fmf.setFast();
+    m_builder.setFastMathFlags(fmf);
+
     s_currentFuncParamNames.clear();
     s_tailRecurseBB = nullptr;
     s_inTailPosition = false;
@@ -2906,8 +3622,13 @@ llvm::orc::ThreadSafeModule TzdCompiler::extractThreadSafeModule() {
     }
 
     // 1. Clean up dead code blocks
-    if (llvm::verifyModule(*m_module, &llvm::errs())) {
-        llvm::errs() << "[JIT] Module verification failed!\n";
+    std::string verifyErrors;
+    llvm::raw_string_ostream os(verifyErrors);
+    if (llvm::verifyModule(*m_module, &os)) {
+        llvm::errs() << "[JIT] Module verification failed:\n" << verifyErrors << "\n";
+        if (g_CurrentInterpreter) {
+            g_CurrentInterpreter->reportJitError("JIT 模块校验失败: " + verifyErrors);
+        }
         return llvm::orc::ThreadSafeModule(nullptr, m_tsc);
     }
 
@@ -2987,6 +3708,27 @@ std::any TzdCompiler::visitBlock(TzdLangParser::BlockContext* ctx) {
 std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
     std::string name = ctx->variableDeclaration()->IDENTIFIER()->getText();
     m_declaredLocals.insert(name);
+
+    // 追踪变量的类类型，供实例方法内联与 Direct Native Worker 派发
+    if (ctx->variableDeclaration()->typeType()) {
+        std::string tName = ctx->variableDeclaration()->typeType()->getText();
+        if (TzdOopManager::getClass(tName)) {
+            m_varClassTypes[name] = tName;
+        }
+    }
+    if (ctx->variableDeclaration()->expression()) {
+        std::string newClass = getNewExprClassName(ctx->variableDeclaration()->expression());
+        if (!newClass.empty()) {
+            m_varClassTypes[name] = newClass;
+        } else {
+            std::string rhsText = ctx->variableDeclaration()->expression()->getText();
+            auto it = m_varClassTypes.find(rhsText);
+            if (it != m_varClassTypes.end()) {
+                m_varClassTypes[name] = it->second;
+            }
+        }
+    }
+
     Value* initVal = nullptr;
     if (ctx->variableDeclaration()->expression()) {
         initVal = std::any_cast<Value*>(visit(ctx->variableDeclaration()->expression()));
@@ -2994,24 +3736,44 @@ std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
     else {
         initVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
     }
+
+    Function* curF = m_builder.GetInsertBlock()->getParent();
+    bool isTopLevel = (curF && curF->getName() == "main_module_entry");
+
     if (initVal->getType()->isDoubleTy()) {
-        AllocaInst* alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
+        Value* alloc = nullptr;
+        auto it = m_nativeDoubleLocals.find(name);
+        if (it != m_nativeDoubleLocals.end()) {
+            alloc = it->second;
+        } else {
+            alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
+            m_nativeDoubleLocals[name] = alloc;
+        }
         m_builder.CreateStore(initVal, alloc);
-        m_nativeDoubleLocals[name] = alloc;
-        // Also store to scope so nested functions can access via rt_get_var_ptr
-        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-        Value* boxedVal = boxToTzdValue(initVal);
-        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
+
+        if (isTopLevel) {
+            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+            Value* boxedVal = boxToTzdValue(initVal);
+            m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
+        }
         return std::any();
     }
+
     Value* boxedVal = boxToTzdValue(initVal);
-    AllocaInst* alloca = CreateEntryBlockAlloca(name);
-    m_builder.CreateStore(boxedVal, alloca);
-    m_namedValues[name] = alloca;
-    // Also store to scope so nested functions can access via rt_get_var_ptr
-    {
+    Value* stableVal = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { boxedVal });
+    Value* alloca = nullptr;
+    auto it = m_namedValues.find(name);
+    if (it != m_namedValues.end()) {
+        alloca = it->second;
+    } else {
+        alloca = CreateEntryBlockAlloca(name);
+        m_namedValues[name] = alloca;
+    }
+    m_builder.CreateStore(stableVal, alloca);
+
+    if (isTopLevel) {
         Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
+        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, stableVal });
     }
     return std::any();
 }
@@ -3328,7 +4090,13 @@ std::any TzdCompiler::visitIdExpr(TzdLangParser::IdExprContext* ctx) {
         return std::any((Value*)val);
     }
     Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-    Value* addr = m_builder.CreateCall(getRtFunc("rt_get_var_ptr"), { nameStr });
+    int line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
+    int col = ctx->getStart() ? (int)ctx->getStart()->getCharPositionInLine() : 0;
+    Value* addr = m_builder.CreateCall(getRtFunc("rt_get_var_ptr"), {
+        nameStr,
+        m_builder.getInt32(line),
+        m_builder.getInt32(col)
+    });
     return std::any((Value*)addr);
 }
 
@@ -3376,29 +4144,81 @@ std::any TzdCompiler::visitFloatExpr(TzdLangParser::FloatExprContext* ctx) {
 
 std::any TzdCompiler::visitStringExpr(TzdLangParser::StringExprContext* ctx) {
     std::string s = ctx->getText(); s = s.substr(1, s.size() - 2);
-    Value* str = m_builder.CreateGlobalStringPtr(unescapeString(s));
-    return (Value*)m_builder.CreateCall(getRtFunc("rt_create_str"), { str });
+    s = unescapeString(s);
+    TzdValue* litVal = internStringLiteral(s);
+    Value* addrInt = ConstantInt::get(m_builder.getInt64Ty(), (uint64_t)(uintptr_t)litVal);
+    Value* ptrVal = m_builder.CreateIntToPtr(addrInt, m_ptrTy);
+    return (Value*)ptrVal;
 }
 
 std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) {
-    Value* L = std::any_cast<Value*>(visit(ctx->expression(0)));
-    Value* R = std::any_cast<Value*>(visit(ctx->expression(1)));
+    if (ctx->PLUS()) {
+        // Check for 3-way concatenation: (A + B) + C (e.g. "prefix_" + i + "_suffix")
+        if (auto leftAdd = dynamic_cast<TzdLangParser::AdditiveExprContext*>(ctx->expression(0))) {
+            if (leftAdd->PLUS()) {
+                Value* A = castAnyToValue(visit(leftAdd->expression(0)), "visitAdditiveExpr.A");
+                Value* B = castAnyToValue(visit(leftAdd->expression(1)), "visitAdditiveExpr.B");
+                Value* C = castAnyToValue(visit(ctx->expression(1)), "visitAdditiveExpr.C");
 
-    // If either operand is a pointer (BIGINT/RATIONAL/string/etc.),
-    // use runtime functions which handle all TzdValue types.
-    if (!L->getType()->isDoubleTy() || !R->getType()->isDoubleTy()) {
-        Value* boxedL = boxToTzdValue(L);
-        Value* boxedR = boxToTzdValue(R);
-        const char* fnName = ctx->PLUS() ? "rt_op_add" : "rt_op_sub";
-        return std::any((Value*)m_builder.CreateCall(getRtFunc(fnName), { boxedL, boxedR }));
+                // Check if A is pointer, B is double, C is pointer ("prefix_" + i + "_suffix")
+                if (A->getType()->isPointerTy() && B->getType()->isDoubleTy() && C->getType()->isPointerTy()) {
+                    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num_str"), { A, B, C }));
+                }
+                // Check if all 3 are pointers
+                if (A->getType()->isPointerTy() && B->getType()->isPointerTy() && C->getType()->isPointerTy()) {
+                    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_3"), { A, B, C }));
+                }
+                // Fallback: evaluate leftAdd then right
+                Value* leftRes = nullptr;
+                if (A->getType()->isPointerTy() && B->getType()->isDoubleTy()) {
+                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), { A, B });
+                } else if (A->getType()->isDoubleTy() && B->getType()->isPointerTy()) {
+                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), { A, B });
+                } else if (A->getType()->isPointerTy() && B->getType()->isPointerTy()) {
+                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat"), { A, B });
+                } else {
+                    leftRes = m_builder.CreateFAdd(A, B, "addtmp");
+                }
+
+                if (leftRes->getType()->isPointerTy() && C->getType()->isPointerTy()) {
+                    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat"), { leftRes, C }));
+                } else if (leftRes->getType()->isPointerTy() && C->getType()->isDoubleTy()) {
+                    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), { leftRes, C }));
+                } else if (leftRes->getType()->isDoubleTy() && C->getType()->isPointerTy()) {
+                    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), { leftRes, C }));
+                } else {
+                    return std::any((Value*)m_builder.CreateFAdd(leftRes, C, "addtmp"));
+                }
+            }
+        }
     }
+
+    Value* L = castAnyToValue(visit(ctx->expression(0)), "visitAdditiveExpr.L");
+    Value* R = castAnyToValue(visit(ctx->expression(1)), "visitAdditiveExpr.R");
 
     // Both doubles: fast path
-    if (ctx->PLUS()) {
-        return std::any((Value*)m_builder.CreateFAdd(L, R, "addtmp"));
+    if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy()) {
+        if (ctx->PLUS()) {
+            return std::any((Value*)m_builder.CreateFAdd(L, R, "addtmp"));
+        }
+        return std::any((Value*)m_builder.CreateFSub(L, R, "subtmp"));
     }
-    Value* res = m_builder.CreateFSub(L, R, "subtmp");
-    return std::any((Value*)res);
+
+    if (ctx->PLUS()) {
+        if (L->getType()->isPointerTy() && R->getType()->isDoubleTy()) {
+            return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), { L, R }));
+        }
+        if (L->getType()->isDoubleTy() && R->getType()->isPointerTy()) {
+            return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), { L, R }));
+        }
+        Value* boxedL = boxToTzdValue(L);
+        Value* boxedR = boxToTzdValue(R);
+        return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat"), { boxedL, boxedR }));
+    }
+
+    Value* boxedL = boxToTzdValue(L);
+    Value* boxedR = boxToTzdValue(R);
+    return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_op_sub"), { boxedL, boxedR }));
 }
 std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* ctx) {
 
@@ -3411,11 +4231,38 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
     else if (ctx->DIV_ASSIGN())  opText = "/=";
     bool isCompound = (opText == "+=" || opText == "-=" || opText == "*=" || opText == "/=");
 
+    std::string lhsName = ctx->expression(0)->getText();
+    if (!isCompound && m_namedValues.count(lhsName)) {
+        if (auto addCtx = dynamic_cast<TzdLangParser::AdditiveExprContext*>(ctx->expression(1))) {
+            if (addCtx->PLUS() && addCtx->expression(0)->getText() == lhsName) {
+                Value* appendOperand = castAnyToValue(visit(addCtx->expression(1)), "visitAssignmentExpr.selfAppendRhs");
+                Value* oldVal = m_builder.CreateLoad(m_ptrTy, m_namedValues[lhsName]);
+                Value* appendRes = nullptr;
+                if (appendOperand->getType()->isDoubleTy()) {
+                    appendRes = m_builder.CreateCall(getRtFunc("rt_str_append_num"), { oldVal, appendOperand });
+                } else {
+                    appendRes = m_builder.CreateCall(getRtFunc("rt_str_append"), { oldVal, boxToTzdValue(appendOperand) });
+                }
+                m_builder.CreateStore(appendRes, m_namedValues[lhsName]);
+                return std::any((Value*)appendRes);
+            }
+        }
+    }
+
     Value* rhs = castAnyToValue(visit(ctx->expression(1)), "visitAssignmentExpr.rhs");
 
     // ---- 数组下标复合赋值：awa[0] += 1.0 ----
     if (auto indexCtx = dynamic_cast<TzdLangParser::IndexExprContext*>(ctx->expression(0))) {
-        Value* container = std::any_cast<Value*>(visit(indexCtx->expression(0)));
+        std::string containerName = indexCtx->expression(0)->getText();
+        Value* container = nullptr;
+        if (m_namedValues.count(containerName)) {
+            container = m_builder.CreateLoad(m_ptrTy, m_namedValues[containerName]);
+        } else {
+            container = std::any_cast<Value*>(visit(indexCtx->expression(0)));
+            if (container->getType()->isDoubleTy()) {
+                container = boxToTzdValue(container);
+            }
+        }
         Value* index_raw = std::any_cast<Value*>(visit(indexCtx->expression(1)));
 
         // 判断索引类型，选择读取函数
@@ -3496,7 +4343,16 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
         }
     }
     if (memberCtx) {
-        Value* obj = castAnyToValue(visit(memberCtx->atom()), "visitAssignmentExpr.memberObj");
+        std::string objName = memberCtx->atom()->getText();
+        Value* obj = nullptr;
+        if (m_namedValues.count(objName)) {
+            obj = m_builder.CreateLoad(m_ptrTy, m_namedValues[objName]);
+        } else {
+            obj = castAnyToValue(visit(memberCtx->atom()), "visitAssignmentExpr.memberObj");
+            if (obj->getType()->isDoubleTy()) {
+                obj = boxToTzdValue(obj);
+            }
+        }
         std::string memberName = memberCtx->IDENTIFIER()->getText();
         Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
         TzdSelector sel = internSelectorConstant(memberName);
@@ -3515,6 +4371,18 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
     }
 
     std::string name = ctx->expression(0)->getText();
+
+    // 追踪变量的类类型赋值 (如 bench = new MathBench() 或 bench2 = bench)
+    std::string newClass = getNewExprClassName(ctx->expression(1));
+    if (!newClass.empty()) {
+        m_varClassTypes[name] = newClass;
+    } else {
+        std::string rhsText = ctx->expression(1)->getText();
+        auto it = m_varClassTypes.find(rhsText);
+        if (it != m_varClassTypes.end()) {
+            m_varClassTypes[name] = it->second;
+        }
+    }
 
     // ---- 已知 native double 局部变量 ----
     if (m_nativeDoubleLocals.count(name)) {
@@ -3557,18 +4425,45 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
     // ---- boxed local 变量 ----
     Value* boxedRhs = boxToTzdValue(rhs);
     if (isCompound) {
-        const char* opFn = opText == "+=" ? "rt_op_add" :
-            opText == "-=" ? "rt_op_sub" :
-            opText == "*=" ? "rt_op_mul" : "rt_op_div";
-        Value* oldVal = nullptr;
-        if (m_namedValues.count(name)) {
-            oldVal = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
+        if (opText == "+=") {
+            Value* oldVal = nullptr;
+            if (m_namedValues.count(name)) {
+                oldVal = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
+            }
+            else {
+                Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+                int line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
+                int col = ctx->getStart() ? (int)ctx->getStart()->getCharPositionInLine() : 0;
+                oldVal = m_builder.CreateCall(getRtFunc("rt_get_var_ptr"), {
+                    nameStr,
+                    m_builder.getInt32(line),
+                    m_builder.getInt32(col)
+                });
+            }
+            if (rhs->getType()->isDoubleTy()) {
+                boxedRhs = m_builder.CreateCall(getRtFunc("rt_str_append_num"), { oldVal, rhs });
+            } else {
+                boxedRhs = m_builder.CreateCall(getRtFunc("rt_str_append"), { oldVal, boxedRhs });
+            }
+        } else {
+            const char* opFn = opText == "-=" ? "rt_op_sub" :
+                opText == "*=" ? "rt_op_mul" : "rt_op_div";
+            Value* oldVal = nullptr;
+            if (m_namedValues.count(name)) {
+                oldVal = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
+            }
+            else {
+                Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+                int line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
+                int col = ctx->getStart() ? (int)ctx->getStart()->getCharPositionInLine() : 0;
+                oldVal = m_builder.CreateCall(getRtFunc("rt_get_var_ptr"), {
+                    nameStr,
+                    m_builder.getInt32(line),
+                    m_builder.getInt32(col)
+                });
+            }
+            boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { oldVal, boxedRhs });
         }
-        else {
-            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-            oldVal = m_builder.CreateCall(getRtFunc("rt_get_var_ptr"), { nameStr });
-        }
-        boxedRhs = m_builder.CreateCall(getRtFunc(opFn), { oldVal, boxedRhs });
     }
 
     if (m_namedValues.count(name)) {
@@ -3645,7 +4540,16 @@ TzdSelector TzdCompiler::internSelectorConstant(const std::string& name) {
 }
 
 std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprContext* ctx) {
-    Value* obj = std::any_cast<Value*>(visit(ctx->atom()));
+    std::string objName = ctx->atom()->getText();
+    Value* obj = nullptr;
+    if (m_namedValues.count(objName)) {
+        obj = m_builder.CreateLoad(m_ptrTy, m_namedValues[objName]);
+    } else {
+        obj = std::any_cast<Value*>(visit(ctx->atom()));
+        if (obj->getType()->isDoubleTy()) {
+            obj = boxToTzdValue(obj);
+        }
+    }
     std::string memberName = ctx->IDENTIFIER()->getText();
     Value* name = m_builder.CreateGlobalStringPtr(memberName);
     TzdSelector sel = internSelectorConstant(memberName);
@@ -3706,10 +4610,9 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
         return std::any((Value*)nullptr);
     }
 
-    if (m_currentRetPtr) {
+    if (m_currentRetPtr && !isa<ConstantPointerNull>(m_currentRetPtr)) {
         if (retValRaw && retValRaw->getType()->isDoubleTy()) {
-            // 如果是原生数字，直接写值 (rt_store_native_to_ptr has runtime NULL check
-            // — m_currentRetPtr can be NULL when called from self-recursion bypass)
+            // 如果是原生数字，直接写值
             m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, retValRaw });
         }
         else if (retValRaw) {
@@ -3722,11 +4625,6 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();
 
-    // 绝不让高频自递归污染和更新全局 g_last_ret
-    if (retValRaw && currentName.find("_worker") == std::string::npos) {
-        Value* boxed = boxToTzdValue(retValRaw);
-        m_builder.CreateCall(getRtFunc("rt_set_last_ret"), { boxed });
-    }
 
     // [绝杀修改]：如果是 Worker 函数，直接用底层寄存器返回原生数字
     if (currentFunc->getReturnType()->isDoubleTy()) {
@@ -3841,15 +4739,58 @@ std::any TzdCompiler::visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprConte
     }
     return arr;
 }
-std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext* ctx) {
-    Value* container = std::any_cast<Value*>(visit(ctx->expression(0)));
-    Value* index_raw = std::any_cast<Value*>(visit(ctx->expression(1)));
+std::any TzdCompiler::visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) {
+    Value* mapVal = m_builder.CreateCall(getRtFunc("rt_create_map"));
+    if (ctx->mapEntryList()) {
+        for (auto entry : ctx->mapEntryList()->mapEntry()) {
+            auto keyCtx = entry->mapKey();
+            std::string staticKey;
+            bool isStaticStr = false;
+            if (keyCtx->STRING()) {
+                std::string raw = keyCtx->STRING()->getText();
+                if (raw.size() >= 2 && (raw.front() == '"' || raw.front() == '\'')) {
+                    staticKey = raw.substr(1, raw.size() - 2);
+                } else {
+                    staticKey = raw;
+                }
+                isStaticStr = true;
+            } else if (keyCtx->IDENTIFIER()) {
+                staticKey = keyCtx->IDENTIFIER()->getText();
+                isStaticStr = true;
+            } else if (keyCtx->INTEGER()) {
+                staticKey = keyCtx->INTEGER()->getText();
+                isStaticStr = true;
+            }
 
-    // Always use boxed path (rt_get_index) — returns TzdValue* pointer.
-    // This is correct for both numeric arrays and object arrays.
-    // The native double paths (rt_get_index_native_d) were incorrect for
-    // object arrays because they read dVal (0.0 for objects, not the pointer).
-    // Callers that need a double use inlineToDoubleFast/castToNativeDouble.
+            Value* valRaw = std::any_cast<Value*>(visit(entry->expression()));
+            Value* boxedVal = boxToTzdValue(valRaw);
+
+            if (isStaticStr) {
+                const char* internedKey = internStringLiteral(staticKey)->sVal.c_str();
+                Value* keyPtrVal = m_builder.getInt64((uint64_t)internedKey);
+                Value* keyPtr = m_builder.CreateIntToPtr(keyPtrVal, m_ptrTy);
+                m_builder.CreateCall(getRtFunc("rt_map_set_str"), { mapVal, keyPtr, boxedVal });
+            } else if (keyCtx->expression()) {
+                Value* keyRaw = std::any_cast<Value*>(visit(keyCtx->expression()));
+                Value* boxedKey = boxToTzdValue(keyRaw);
+                m_builder.CreateCall(getRtFunc("rt_map_set"), { mapVal, boxedKey, boxedVal });
+            }
+        }
+    }
+    return mapVal;
+}
+std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext* ctx) {
+    std::string containerName = ctx->expression(0)->getText();
+    Value* container = nullptr;
+    if (m_namedValues.count(containerName)) {
+        container = m_builder.CreateLoad(m_ptrTy, m_namedValues[containerName]);
+    } else {
+        container = std::any_cast<Value*>(visit(ctx->expression(0)));
+        if (container->getType()->isDoubleTy()) {
+            container = boxToTzdValue(container);
+        }
+    }
+    Value* index_raw = std::any_cast<Value*>(visit(ctx->expression(1)));
     Value* boxedIndex = boxToTzdValue(index_raw);
     return (Value*)m_builder.CreateCall(getRtFunc("rt_get_index"), { container, boxedIndex });
 }
@@ -4245,7 +5186,9 @@ bool TzdCompiler::tryInlineMathIntrinsic(const std::string& funcName,
 
 bool TzdCompiler::tryInlineFunction(const std::string& funcName,
                                    const std::vector<TzdLangParser::ExpressionContext*>& exprs,
-                                   llvm::Value*& result) {
+                                   llvm::Value*& result,
+                                   llvm::Value* receiverVal,
+                                   const std::string& explicitClassName) {
     if (!TzdJitEngine::isAstInliningEnabled() || TzdJitEngine::getOptLevel() <= 0) {
         return false;
     }
@@ -4254,27 +5197,80 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
         return false;
     }
 
-    if (s_inlinedFunctionsInStack.count(funcName)) {
+    std::string inlineKey = (!explicitClassName.empty()) ? (explicitClassName + "." + funcName) : funcName;
+    if (s_inlinedFunctionsInStack.count(inlineKey)) {
         return false; // 防止递归循环调用引发死循环内联
     }
 
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();
-    if (currentName.find(funcName) != std::string::npos) {
-        return false;
+    std::string calleeNativeName = (!explicitClassName.empty()) ? (explicitClassName + "_" + funcName) : funcName;
+    if (currentName == calleeNativeName ||
+        currentName == calleeNativeName + "_worker" ||
+        currentName == calleeNativeName + "_worker_native" ||
+        currentName == funcName ||
+        currentName == funcName + "_worker" ||
+        currentName == funcName + "_worker_native") {
+        return false; // 防止自递归调用死循环内联
     }
 
     if (!g_CurrentInterpreter) return false;
 
-    // 在当前解释器作用域中查找目标函数的 AST
+    // 在当前解释器作用域或类结构中查找目标函数的 AST
     TzdValue calleeVal;
     bool found = false;
-    for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it) {
-        auto vIt = it->find(funcName);
-        if (vIt != it->end() && vIt->second.type == TzdValue::FUNCTION && vIt->second.funcBody) {
-            calleeVal = vIt->second;
-            found = true;
-            break;
+    std::string targetClassName = explicitClassName;
+    std::string targetMethodName = funcName;
+
+    if (!targetClassName.empty()) {
+        if (TzdClassDef* cls = TzdOopManager::getClass(targetClassName)) {
+            if (ClassMethod* m = cls->findMethod(targetMethodName)) {
+                if (m->body) {
+                    calleeVal.funcBody = m->body;
+                    calleeVal.params = m->params;
+                    calleeVal.paramTypes = m->paramTypes;
+                    found = true;
+                }
+            }
+        }
+    }
+    else {
+        for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it) {
+            auto vIt = it->find(funcName);
+            if (vIt != it->end() && vIt->second.type == TzdValue::FUNCTION && vIt->second.funcBody) {
+                calleeVal = vIt->second;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            size_t dotPos = funcName.find('.');
+            if (dotPos != std::string::npos) {
+                std::string className = funcName.substr(0, dotPos);
+                std::string methodName = funcName.substr(dotPos + 1);
+                TzdClassDef* cls = TzdOopManager::getClass(className);
+                if (!cls) {
+                    auto it = m_varClassTypes.find(className);
+                    if (it != m_varClassTypes.end()) {
+                        cls = TzdOopManager::getClass(it->second);
+                        targetClassName = it->second;
+                    }
+                } else {
+                    targetClassName = className;
+                }
+                if (cls) {
+                    if (ClassMethod* m = cls->findMethod(methodName)) {
+                        if (m->body) {
+                            calleeVal.funcBody = m->body;
+                            calleeVal.params = m->params;
+                            calleeVal.paramTypes = m->paramTypes;
+                            found = true;
+                            targetMethodName = methodName;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4291,7 +5287,7 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
 
     // --- 执行 AST 级直接内联 ---
     TzdJitEngine::recordInlinedCall();
-    s_inlinedFunctionsInStack.insert(funcName);
+    s_inlinedFunctionsInStack.insert(inlineKey);
     s_currentInlineDepth++;
 
     // 1. 在调用方上下文中计算实参
@@ -4310,12 +5306,26 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
     auto savedNativeDoubleLocals = m_nativeDoubleLocals;
     auto savedDeclaredLocals = m_declaredLocals;
     auto savedParamNames = s_currentFuncParamNames;
+    auto savedVarClassTypes = m_varClassTypes;
+    auto savedClassDef = m_currentClassDef;
 
     // 3. 为被调用函数形参创建局部变量插槽 (Alloca) 并写入实参
     s_currentFuncParamNames.clear();
+
+    if (receiverVal) {
+        AllocaInst* thisAlloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, "__inl_this_" + std::to_string(s_inlineUid++));
+        m_builder.CreateStore(boxToTzdValue(receiverVal), thisAlloc);
+        m_namedValues["this"] = thisAlloc;
+        m_declaredLocals.insert("this");
+        if (!targetClassName.empty()) {
+            m_varClassTypes["this"] = targetClassName;
+            m_currentClassDef = TzdOopManager::getClass(targetClassName);
+        }
+    }
+
     for (size_t i = 0; i < calleeVal.params.size(); ++i) {
         std::string pName = calleeVal.params[i];
-        std::string mangled = "__inl_" + funcName + "_" + std::to_string(s_inlineUid++) + "_" + pName;
+        std::string mangled = "__inl_" + targetMethodName + "_" + std::to_string(s_inlineUid++) + "_" + pName;
         s_currentFuncParamNames.push_back(pName);
         m_declaredLocals.insert(pName);
 
@@ -4325,14 +5335,14 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
             m_builder.CreateStore(arg, alloc);
             m_nativeDoubleLocals[pName] = alloc;
         } else {
-            AllocaInst* alloc = CreateEntryBlockAlloca(m_tzdValueTy, nullptr, mangled);
+            AllocaInst* alloc = CreateEntryBlockAlloca(m_ptrTy, nullptr, mangled);
             m_builder.CreateStore(boxToTzdValue(arg), alloc);
             m_namedValues[pName] = alloc;
         }
     }
 
     // 4. 创建内联返回汇合块与返回值槽
-    BasicBlock* inlineRetBB = BasicBlock::Create(m_context, "inlined_ret_" + funcName, currentFunc);
+    BasicBlock* inlineRetBB = BasicBlock::Create(m_context, "inlined_ret_" + inlineKey, currentFunc);
     AllocaInst* retNativeDouble = CreateEntryBlockAlloca(m_doubleTy, nullptr, "inl_ret_d");
     AllocaInst* retBoxed = CreateEntryBlockAlloca(m_ptrTy, nullptr, "inl_ret_boxed");
     m_builder.CreateStore(ConstantFP::get(m_doubleTy, 0.0), retNativeDouble);
@@ -4350,13 +5360,15 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
 
     // 7. 恢复内联栈与调用方作用域
     s_inlineReturnStack.pop_back();
-    s_inlinedFunctionsInStack.erase(funcName);
+    s_inlinedFunctionsInStack.erase(inlineKey);
     s_currentInlineDepth--;
 
     m_namedValues = savedNamedValues;
     m_nativeDoubleLocals = savedNativeDoubleLocals;
     m_declaredLocals = savedDeclaredLocals;
     s_currentFuncParamNames = savedParamNames;
+    m_varClassTypes = savedVarClassTypes;
+    m_currentClassDef = savedClassDef;
 
     // 8. 汇合点加载返回值
     m_builder.SetInsertPoint(inlineRetBB);
@@ -4377,7 +5389,66 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         return std::any((Value*)intrinsicResult);
     }
 
-    // 0b. AST 级别超强小函数内联展开 (消除一切调用开销)
+    // 0b. 成员方法与实例分发极速内联 / Direct Native Worker 优化
+    if (auto memberCtx = dynamic_cast<TzdLangParser::MemberAccessExprContext*>(ctx->atom())) {
+        std::string memberName = memberCtx->IDENTIFIER()->getText();
+        std::string objText = memberCtx->atom()->getText();
+        std::string targetClass = "";
+        Value* receiverVal = nullptr;
+
+        if (TzdClassDef* cls = TzdOopManager::getClass(objText)) {
+            targetClass = objText;
+        }
+        else if (m_varClassTypes.count(objText)) {
+            targetClass = m_varClassTypes[objText];
+            receiverVal = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.memberReceiver");
+        }
+        else if (objText == "this") {
+            if (m_varClassTypes.count("this")) targetClass = m_varClassTypes["this"];
+            else if (m_currentClassDef) targetClass = m_currentClassDef->simpleName;
+            receiverVal = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.thisReceiver");
+        }
+        else {
+            std::string newClass = getNewExprClassName(memberCtx->atom());
+            if (!newClass.empty()) {
+                targetClass = newClass;
+                receiverVal = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.newReceiver");
+            }
+        }
+
+        if (!targetClass.empty()) {
+            // 1. AST Inlining
+            Value* inlinedRes = nullptr;
+            if (tryInlineFunction(memberName, exprs, inlinedRes, receiverVal, targetClass)) {
+                return std::any((Value*)inlinedRes);
+            }
+
+            // 2. Direct Native Worker call
+            std::string workerKey = targetClass + "_" + memberName;
+            if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
+                Function* nativeWorker = nativeIt->second;
+                Function* curFunc = m_builder.GetInsertBlock()->getParent();
+                Value* interp = curFunc->getArg(0);
+                std::vector<Value*> callArgs;
+                callArgs.push_back(interp);
+                if (nativeWorker->getFunctionType()->getNumParams() == (unsigned)(2 + argCount)) {
+                    callArgs.push_back(receiverVal ? boxToTzdValue(receiverVal) : ConstantPointerNull::get(cast<PointerType>(m_ptrTy)));
+                }
+                for (int i = 0; i < argCount; ++i) {
+                    bool oldTail = s_inTailPosition;
+                    s_inTailPosition = false;
+                    Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
+                    s_inTailPosition = oldTail;
+                    callArgs.push_back(castToNativeDouble(argRaw));
+                }
+                CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
+                result->setCallingConv(llvm::CallingConv::Fast);
+                return std::any((Value*)result);
+            }
+        }
+    }
+
+    // 0c. 普通函数 AST 级别超强小函数内联展开 (消除一切调用开销)
     Value* inlinedResult = nullptr;
     if (tryInlineFunction(funcName, exprs, inlinedResult)) {
         return std::any((Value*)inlinedResult);
@@ -4445,8 +5516,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             // Ensure arg is double (castToNativeDouble handles both doubles and pointers)
             callArgs.push_back(castToNativeDouble(argRaw));
         }
-        Value* nativeDoubleResult = m_builder.CreateCall(s_currentNativeWorkerFunc, callArgs);
-        return std::any((Value*)nativeDoubleResult);
+        CallInst* nativeCall = m_builder.CreateCall(s_currentNativeWorkerFunc, callArgs);
+        nativeCall->setCallingConv(llvm::CallingConv::Fast);
+        return std::any((Value*)nativeCall);
     }
     if (funcName == baseName && s_currentWorkerFunc) {
         Value* argsArray = CreateEntryBlockAlloca(m_tzdValueTy, m_builder.getInt32(argCount > 0 ? argCount : 1), "rec_args");
@@ -4480,7 +5552,10 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     // Phase D: Direct native worker call for known JIT-compiled functions.
     // Bypasses args array, rt_init_tzd_value, inlineStoreNativeToPtr, rt_create_num.
     // This makes non-recursive function calls as fast as C function calls.
-    if (auto nativeIt = s_compiledNativeWorkers.find(funcName); nativeIt != s_compiledNativeWorkers.end()) {
+    std::string workerKey = funcName;
+    size_t dotPos = workerKey.find('.');
+    if (dotPos != std::string::npos) workerKey[dotPos] = '_';
+    if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
         Function* nativeWorker = nativeIt->second;
         Value* interp = currentFunc->getArg(0);
         std::vector<Value*> callArgs;
@@ -4492,7 +5567,8 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             s_inTailPosition = oldTail;
             callArgs.push_back(castToNativeDouble(argRaw));
         }
-        Value* result = m_builder.CreateCall(nativeWorker, callArgs);
+        CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
+        result->setCallingConv(llvm::CallingConv::Fast);
         return std::any((Value*)result);
     }
 
@@ -4579,14 +5655,22 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
         CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, m_currentRetPtr, argsArray });
         fastRes->setTailCallKind(CallInst::TCK_Tail);  // Use Tail (not MustTail) for safety
-        m_builder.CreateRet(fastRes);
+        if (currentFunc->getReturnType()->isDoubleTy()) {
+            m_builder.CreateRet(fastRes);
+        } else {
+            m_builder.CreateRetVoid();
+        }
 
         // -- Slow Path: 回退到普通 C++ 函数 --
         m_builder.SetInsertPoint(slowCallBB);
         Value* slowResPtr = m_builder.CreateCall(getRtFunc("rt_call_sub_fast"), { funcNameStr, m_builder.getInt32(argCount), argsArray });
         Value* slowRes = inlineToDoubleFast(slowResPtr);
         m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, slowRes });
-        m_builder.CreateRet(slowRes);
+        if (currentFunc->getReturnType()->isDoubleTy()) {
+            m_builder.CreateRet(slowRes);
+        } else {
+            m_builder.CreateRetVoid();
+        }
 
         BasicBlock* deadBB = BasicBlock::Create(m_context, "tail_call_unreachable", currentFunc);
         m_builder.SetInsertPoint(deadBB);

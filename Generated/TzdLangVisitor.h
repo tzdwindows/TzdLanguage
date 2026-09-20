@@ -167,6 +167,8 @@ public:
 
     virtual std::any visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprContext *context) = 0;
 
+    virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext *context) = 0;
+
     virtual std::any visitNewExpr(TzdLangParser::NewExprContext *context) = 0;
 
     virtual std::any visitCallExpr(TzdLangParser::CallExprContext *context) = 0;
@@ -182,6 +184,12 @@ public:
     virtual std::any visitPrintFunction(TzdLangParser::PrintFunctionContext *context) = 0;
 
     virtual std::any visitExprList(TzdLangParser::ExprListContext *context) = 0;
+
+    virtual std::any visitMapEntryList(TzdLangParser::MapEntryListContext *context) = 0;
+
+    virtual std::any visitMapEntry(TzdLangParser::MapEntryContext *context) = 0;
+
+    virtual std::any visitMapKey(TzdLangParser::MapKeyContext *context) = 0;
 
     virtual std::any visitTypeType(TzdLangParser::TypeTypeContext *context) = 0;
 

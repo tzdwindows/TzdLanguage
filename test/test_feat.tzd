@@ -25,4 +25,4 @@ print("arr[2]=" + arr[2]);
 var m = { "key1": 100, "key2": 200 };
 print("map key1=" + m.key1);
 
-exit
+print("All Done!");

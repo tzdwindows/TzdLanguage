@@ -39,7 +39,8 @@ public:
     RuleNativeAttr = 17, RuleNativePropKey = 18, RuleVariableDeclaration = 19, 
     RuleForInit = 20, RuleImportStatement = 21, RuleParamList = 22, RuleParam = 23, 
     RuleBlock = 24, RuleExpression = 25, RuleAtom = 26, RuleClassOverrideBlock = 27, 
-    RulePrintFunction = 28, RuleExprList = 29, RuleTypeType = 30
+    RulePrintFunction = 28, RuleExprList = 29, RuleMapEntryList = 30, RuleMapEntry = 31, 
+    RuleMapKey = 32, RuleTypeType = 33
   };
 
   explicit TzdLangParser(antlr4::TokenStream *input);
@@ -89,6 +90,9 @@ public:
   class ClassOverrideBlockContext;
   class PrintFunctionContext;
   class ExprListContext;
+  class MapEntryListContext;
+  class MapEntryContext;
+  class MapKeyContext;
   class TypeTypeContext; 
 
   class  ProgramContext : public antlr4::ParserRuleContext {
@@ -1057,6 +1061,15 @@ public:
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
 
+  class  MapLiteralExprContext : public AtomContext {
+  public:
+    MapLiteralExprContext(AtomContext *ctx);
+
+    MapEntryListContext *mapEntryList();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
   class  NewExprContext : public AtomContext {
   public:
     NewExprContext(AtomContext *ctx);
@@ -1150,6 +1163,50 @@ public:
   };
 
   ExprListContext* exprList();
+
+  class  MapEntryListContext : public antlr4::ParserRuleContext {
+  public:
+    MapEntryListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<MapEntryContext *> mapEntry();
+    MapEntryContext* mapEntry(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  MapEntryListContext* mapEntryList();
+
+  class  MapEntryContext : public antlr4::ParserRuleContext {
+  public:
+    MapEntryContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    MapKeyContext *mapKey();
+    ExpressionContext *expression();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  MapEntryContext* mapEntry();
+
+  class  MapKeyContext : public antlr4::ParserRuleContext {
+  public:
+    MapKeyContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *STRING();
+    antlr4::tree::TerminalNode *IDENTIFIER();
+    antlr4::tree::TerminalNode *INTEGER();
+    ExpressionContext *expression();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  MapKeyContext* mapKey();
 
   class  TypeTypeContext : public antlr4::ParserRuleContext {
   public:

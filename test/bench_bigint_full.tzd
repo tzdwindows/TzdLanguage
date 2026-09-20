@@ -1,0 +1,19 @@
+fun main() {
+    print("=== TzdLang BigInt Benchmark (--experimental-compute) ===");
+
+    var sizes = [100000, 500000, 1000000];
+    var i = 0;
+    while (i < 3) {
+        var d = sizes[i];
+        print("-------------------------------------------------------");
+        print(">> Multiplying " + toString(d) + " decimal digits...");
+        var a = 10 ^ d;
+        var b = 10 ^ d;
+        var t1 = clock();
+        var c = a * b;
+        var t2 = clock();
+        var ms = (t2 - t1);
+        print("Result digits=" + toString(d * 2) + "  time=" + toString(ms) + " ms");
+        i = i + 1;
+    }
+}

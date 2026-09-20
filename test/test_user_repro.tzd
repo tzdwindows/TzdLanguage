@@ -1,0 +1,11 @@
+class DebugMod extends Module {
+    DebugMod() {
+        super("DebugMod");
+        var t = torch_zeros(3);
+        this.registerParameter("weight", t);
+        print("  After register: mapKeys = " + toString(len(mapKeys(this._params))));
+    }
+}
+print("1. Create DebugMod...");
+var m = new DebugMod();
+print("2. Done");

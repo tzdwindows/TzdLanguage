@@ -1,0 +1,26 @@
+import "torch/Module.tzd";
+
+print("=== Debug Module ===");
+
+class DebugMod extends Module {
+    DebugMod() {
+        super("DebugMod");
+        var t = torch_zeros(3);
+        this.registerParameter("weight", t);
+        print("  After register: mapKeys = " + toString(len(mapKeys(this._params))));
+    }
+}
+
+print("1. Create DebugMod...");
+var m = new DebugMod();
+print("   OK");
+
+print("2. Check params map...");
+var keys = mapKeys(m._params);
+print("   keys count: " + toString(len(keys)));
+
+print("3. Check parameters()...");
+var params = m.parameters();
+print("   params count: " + toString(len(params)));
+
+print("=== Done ===");

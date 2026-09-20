@@ -1,0 +1,6 @@
+fun testArrayOOB() {
+    var a = [10, 20, 30];
+    print("Element:", a[100]);
+}
+
+testArrayOOB();

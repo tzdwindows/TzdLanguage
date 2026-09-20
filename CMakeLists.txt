@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 # TzdTools & TzdLang - Modern Portable CMake Configuration
 # ===========================================================================
 project(TzdTools
-    VERSION 0.2.5
+    VERSION 0.2.6
     DESCRIPTION "TzdLang Compiler & Execution Runtime"
     LANGUAGES C CXX
 )
