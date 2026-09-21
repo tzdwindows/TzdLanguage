@@ -267,16 +267,23 @@ class TzdDebugSession {
         shell: false,
       });
 
-      const stdoutDecoder = new TextDecoder("gbk", { fatal: false });
-      const stderrDecoder = new TextDecoder("gbk", { fatal: false });
+      const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+      const gbkDecoder = new TextDecoder("gbk", { fatal: false });
+      const decodeBuffer = (buf) => {
+        try {
+          return utf8Decoder.decode(buf);
+        } catch {
+          return gbkDecoder.decode(buf);
+        }
+      };
 
       this.childProcess.stdout.on("data", (data) => {
-        const text = stdoutDecoder.decode(data, { stream: true });
+        const text = decodeBuffer(data);
         this.sendOutput(text, "stdout");
       });
 
       this.childProcess.stderr.on("data", (data) => {
-        const text = stderrDecoder.decode(data, { stream: true });
+        const text = decodeBuffer(data);
         this.sendOutput(text, "stderr");
       });
 

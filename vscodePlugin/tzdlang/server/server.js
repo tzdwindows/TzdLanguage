@@ -289,12 +289,19 @@ function extractClassDefs(tree, text, uri) {
         if (!className) return;
 
         let parentName = null;
-        const children = node.children || [];
-        for (let i = 0; i < children.length; i++) {
-          const txt = safeText(children[i]);
-          if (txt === "extends" || txt === ":") {
-            if (i + 1 < children.length)
-              parentName = safeText(children[i + 1]) || null;
+        if (
+          typeof node.qualifiedName === "function" &&
+          node.qualifiedName().length > 1
+        ) {
+          parentName = safeText(node.qualifiedName(1)) || null;
+        } else {
+          const children = node.children || [];
+          for (let i = 0; i < children.length; i++) {
+            const txt = safeText(children[i]);
+            if (txt === "extends" || txt === ":") {
+              if (i + 1 < children.length)
+                parentName = safeText(children[i + 1]) || null;
+            }
           }
         }
 
@@ -304,73 +311,159 @@ function extractClassDefs(tree, text, uri) {
           : lines.length - 1;
         const members = [];
 
-        let depth = 0;
-        for (let i = startLine; i <= stopLine; i++) {
-          const lineStr = lines[i];
-          const cleanLine = lineStr
-            .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-            .replace(/\/\/.*/, "");
-          const lineStartDepth = depth;
-          for (let char of cleanLine) {
-            if (char === "{") depth++;
-            else if (char === "}") depth--;
+        // ⭐ 优先从 AST 语法树提取成员（精准捕获静态方法、普通方法、构造函数、属性）
+        const body =
+          typeof node.classBody === "function" ? node.classBody() : null;
+        if (body && typeof body.classMember === "function") {
+          const cms = body.classMember();
+          for (const cm of cms) {
+            const md =
+              typeof cm.memberDecl === "function" ? cm.memberDecl() : null;
+            if (!md) continue;
+            const idNode =
+              typeof md.IDENTIFIER === "function" ? md.IDENTIFIER() : null;
+            if (!idNode) continue;
+            const singleId = Array.isArray(idNode) ? idNode[0] : idNode;
+            if (!singleId) continue;
+            const name = singleId.getText();
+            const sym =
+              singleId.symbol ||
+              (typeof singleId.getSymbol === "function"
+                ? singleId.getSymbol()
+                : null);
+            const mLine = sym ? sym.line - 1 : 0;
+            const mCol = sym ? sym.column : 0;
+
+            let kind = "field";
+            let signature = "";
+            let argsCount = 0;
+            let isStatic = false;
+
+            if (md instanceof TzdLangParser.MethodStaticDeclContext) {
+              kind = "method";
+              isStatic = true;
+              const pl =
+                typeof md.paramList === "function" ? md.paramList() : null;
+              signature = pl ? pl.getText() : "";
+              argsCount =
+                pl && typeof pl.param === "function" ? pl.param().length : 0;
+            } else if (md instanceof TzdLangParser.MethodDeclContext) {
+              kind = "method";
+              isStatic = false;
+              const pl =
+                typeof md.paramList === "function" ? md.paramList() : null;
+              signature = pl ? pl.getText() : "";
+              argsCount =
+                pl && typeof pl.param === "function" ? pl.param().length : 0;
+            } else if (md instanceof TzdLangParser.ConstructorDeclContext) {
+              kind = "constructor";
+              const pl =
+                typeof md.paramList === "function" ? md.paramList() : null;
+              signature = pl ? pl.getText() : "";
+              argsCount =
+                pl && typeof pl.param === "function" ? pl.param().length : 0;
+            } else if (md instanceof TzdLangParser.MethodAbstractDeclContext) {
+              kind = "method";
+              const pl =
+                typeof md.paramList === "function" ? md.paramList() : null;
+              signature = pl ? pl.getText() : "";
+              argsCount =
+                pl && typeof pl.param === "function" ? pl.param().length : 0;
+            }
+
+            members.push({
+              name,
+              kind,
+              isStatic,
+              signature,
+              argsCount,
+              location: {
+                uri,
+                range: Range.create(mLine, mCol, mLine, mCol + name.length),
+              },
+            });
           }
-          if (lineStartDepth === 1) {
-            let m = lineStr.match(
-              /^\s*(?:var|let|const)\s+(?:[a-zA-Z_]\w*\s+)?([a-zA-Z_]\w*)/,
-            );
-            if (m) {
-              const col = lineStr.indexOf(m[1]);
-              members.push({
-                name: m[1],
-                kind: "field",
-                location: {
-                  uri,
-                  range: Range.create(i, col, i, col + m[1].length),
-                },
-              });
-              continue;
+        }
+
+        // 回退机制：若 AST 无法提取到成员，使用支持所有修饰符的行正则提取
+        if (members.length === 0) {
+          let depth = 0;
+          for (let i = startLine; i <= stopLine; i++) {
+            const lineStr = lines[i];
+            const cleanLine = lineStr
+              .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+              .replace(/\/\/.*/, "");
+            const lineStartDepth = depth;
+            for (let char of cleanLine) {
+              if (char === "{") depth++;
+              else if (char === "}") depth--;
             }
-            m = lineStr.match(/^\s*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/);
-            if (m) {
-              const col = lineStr.indexOf(m[1]);
-              // ⭐ 保存 method 的参数个数，用于重载精确跳转
-              const args = m[2]
-                .split(",")
-                .map((x) => x.trim())
-                .filter((x) => x.length > 0);
-              members.push({
-                name: m[1],
-                kind: "method",
-                signature: m[2],
-                argsCount: args.length,
-                location: {
-                  uri,
-                  range: Range.create(i, col, i, col + m[1].length),
-                },
-              });
-              continue;
-            }
-            m = lineStr.match(new RegExp(`^\\s*${className}\\s*\\((.*?)\\)`));
-            if (m) {
-              const col = lineStr.indexOf(className);
-              const args = m[1]
-                .split(",")
-                .map((x) => x.trim())
-                .filter((x) => x.length > 0);
-              members.push({
-                name: className,
-                kind: "constructor",
-                signature: m[1],
-                argsCount: args.length,
-                location: {
-                  uri,
-                  range: Range.create(i, col, i, col + className.length),
-                },
-              });
+            if (lineStartDepth === 1) {
+              let m = lineStr.match(
+                /^\s*(?:(?:public|private|protected|static)\s+)*(?:var|let|const)\s+(?:[a-zA-Z_]\w*\s+)?([a-zA-Z_]\w*)/,
+              );
+              if (m) {
+                const col = lineStr.indexOf(m[1]);
+                members.push({
+                  name: m[1],
+                  kind: "field",
+                  location: {
+                    uri,
+                    range: Range.create(i, col, i, col + m[1].length),
+                  },
+                });
+                continue;
+              }
+              m = lineStr.match(
+                /^\s*(?:(?:public|private|protected|static|abstract)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/,
+              );
+              if (m) {
+                const col = lineStr.indexOf(m[1]);
+                const args = m[2]
+                  .split(",")
+                  .map((x) => x.trim())
+                  .filter((x) => x.length > 0);
+                members.push({
+                  name: m[1],
+                  kind: "method",
+                  isStatic:
+                    /^\s*static\b/.test(lineStr) ||
+                    /\bstatic\s+fun\b/.test(lineStr),
+                  signature: m[2],
+                  argsCount: args.length,
+                  location: {
+                    uri,
+                    range: Range.create(i, col, i, col + m[1].length),
+                  },
+                });
+                continue;
+              }
+              m = lineStr.match(
+                new RegExp(
+                  `^\\s*(?:(?:public|private|protected)\\s+)*${className}\\s*\\((.*?)\\)`,
+                ),
+              );
+              if (m) {
+                const col = lineStr.indexOf(className);
+                const args = m[1]
+                  .split(",")
+                  .map((x) => x.trim())
+                  .filter((x) => x.length > 0);
+                members.push({
+                  name: className,
+                  kind: "constructor",
+                  signature: m[1],
+                  argsCount: args.length,
+                  location: {
+                    uri,
+                    range: Range.create(i, col, i, col + className.length),
+                  },
+                });
+              }
             }
           }
         }
+
         defs.push({
           className,
           parentName,
@@ -541,7 +634,12 @@ function resolveVarType(varName, text, docUri, lineNum) {
   if (varName === "super")
     return findClassAtLine(docUri, lineNum)?.parentName || null;
 
+  // ⭐ 核心修复：如果 varName 本身就是已知类名（例如静态方法/属性访问 MathToolkit.square），直接解析为其自身类型
+  if (classCache.has(varName)) return varName;
+  if (new RegExp(`\\bclass\\s+${varName}\\b`).test(text)) return varName;
+
   const lines = text.split("\n");
+
 
   // 1. 显式类型声明 (例如: int a = ... / TestError erro = ...)
   const exactPattern = new RegExp(
@@ -814,50 +912,6 @@ connection.onSignatureHelp((params) => {
   return null;
 });
 
-connection.onDefinition(async (params) => {
-  const doc = documents.get(params.textDocument.uri);
-  if (!doc) return null;
-  const lines = doc.getText().split("\n");
-  const currentLine = lines[params.position.line];
-  let start = params.position.character;
-  let end = params.position.character;
-  while (start > 0 && /[a-zA-Z_0-9]/.test(currentLine[start - 1])) start--;
-  while (end < currentLine.length && /[a-zA-Z_0-9]/.test(currentLine[end]))
-    end++;
-  if (start === end) return null;
-  const word = currentLine.substring(start, end);
-
-  const dotMatch = currentLine
-    .slice(0, start)
-    .match(/([a-zA-Z_][a-zA-Z0-9_]*)\.\s*$/);
-  if (dotMatch) {
-    const varType = resolveVarType(
-      dotMatch[1],
-      doc.getText(),
-      doc.uri,
-      params.position.line,
-    );
-    if (varType) {
-      const m = getMembersIncludingInherited(varType).find(
-        (x) => x.name === word,
-      );
-      if (m && m.location) return m.location;
-    }
-  }
-  const def = classCache.get(word);
-  if (def && def.file)
-    return {
-      uri: def.file,
-      range: Range.create(
-        def.range.start.line,
-        0,
-        def.range.start.line,
-        word.length,
-      ),
-    };
-  return null;
-});
-
 connection.onHover((params) => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
@@ -872,7 +926,7 @@ connection.onHover((params) => {
   if (start === end) return null;
   const word = currentLine.substring(start, end);
 
-  // ⭐ 优先级 1：点号访问的类成员 (例如 A.a 或 err.toString())
+  // ⭐ 优先级 1：点号访问的类成员 (例如 A.a 或 err.toString() 或 MathToolkit.square())
   const dotMatch = currentLine
     .slice(0, start)
     .match(/([a-zA-Z_][a-zA-Z0-9_]*)\.\s*$/);
@@ -891,7 +945,7 @@ connection.onHover((params) => {
           return {
             contents: {
               kind: MarkupKind.Markdown,
-              value: `\`\`\`tzdlang\nfun ${member.name}(${member.signature || ""})\n\`\`\``,
+              value: `\`\`\`tzdlang\n${member.isStatic ? "static " : ""}fun ${member.name}(${member.signature || ""})\n\`\`\``,
             },
           };
         else
@@ -985,10 +1039,19 @@ function checkUndeclared(text, docUri) {
   const visibleLocals = extractVisibleLocals(text);
   for (const v of visibleLocals) allowed.add(v.name);
 
-  // 把当前文件的所有类成员也加进去（防止类似 var target; this.target = target 误报）
+  // 把当前文件的所有类定义以及类成员、参数也加进去（防止类似 MathToolkit 或 op 误报）
   const localClasses = extractClassDefs(parseTzd(text).tree, text, docUri);
   for (const cls of localClasses) {
-    for (const member of cls.members) allowed.add(member.name);
+    allowed.add(cls.className);
+    for (const member of cls.members) {
+      allowed.add(member.name);
+      if (member.signature) {
+        member.signature.split(",").forEach((arg) => {
+          const info = extractParamInfo(arg);
+          if (info) allowed.add(info.name);
+        });
+      }
+    }
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -1018,6 +1081,15 @@ function checkUndeclared(text, docUri) {
     while ((match = varRegex.exec(cleanLine)) !== null) {
       let name = match[1];
       if (!allowed.has(name)) {
+        // 如果当前是 class X 声明中的类名，或者 fun X 中的函数名，不误报
+        if (new RegExp(`^\\s*class\\s+${name}\\b`).test(cleanLine)) continue;
+        if (
+          new RegExp(
+            `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${name}\\b`,
+          ).test(cleanLine)
+        )
+          continue;
+
         let col = origLine.indexOf(name, match.index);
         diags.push(
           Diagnostic.create(
@@ -1148,13 +1220,15 @@ function findDefinition(docUri, text, line, col) {
     return null;
   }
 
-  // 2. 点号成员跳转 (例如 e.message 或 A.aaa(10))
+  // 2. 点号成员跳转 (例如 e.message 或 MathToolkit.square(6) 或 A.aaa(10))
   const beforeCursor = currentLine.slice(0, start);
   const dotMatch = beforeCursor.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.\s*$/);
   if (dotMatch) {
-    const varType = resolveVarType(dotMatch[1], text, docUri, line);
-    if (varType) {
-      const allMembers = getMembersIncludingInherited(varType);
+    const targetClass =
+      resolveVarType(dotMatch[1], text, docUri, line) ||
+      (classCache.has(dotMatch[1]) ? dotMatch[1] : null);
+    if (targetClass) {
+      const allMembers = getMembersIncludingInherited(targetClass);
       const matches = allMembers.filter((x) => x.name === word);
       if (matches.length > 0) {
         // ⭐ 精确匹配重载方法参数个数
@@ -1179,36 +1253,71 @@ function findDefinition(docUri, text, line, col) {
     };
   }
 
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  // ⭐ 4. 本地/全局函数精准正则匹配
-  if (calledArgsCount !== -1) {
-    const fnPattern = new RegExp(`^\\s*fun\\s+${escaped}\\s*\\(([^)]*)\\)`);
-    let fallbackLoc = null;
-    for (let i = 0; i < lines.length; i++) {
-      const fm = fnPattern.exec(lines[i]);
-      if (fm) {
-        const defArgsStr = fm[1].trim();
-        const defArgsCount =
-          defArgsStr.length > 0 ? defArgsStr.split(",").length : 0;
-        const matchCol = lines[i].indexOf(word);
-        const loc = {
-          uri: docUri,
-          range: Range.create(i, matchCol, i, matchCol + word.length),
-        };
-
-        // 如果参数严格匹配，直接返回
-        if (defArgsCount === calledArgsCount) return loc;
-        if (!fallbackLoc) fallbackLoc = loc;
+  // 4. 当前函数/方法内的参数跳转 (例如 static fun apply(op: function, val) 内的 op 或 val)
+  for (let i = line; i >= 0; i--) {
+    const l = lines[i];
+    const fnMatch =
+      l.match(
+        /\b(?:(?:public|private|protected|static|abstract)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/,
+      ) || l.match(/^\s*[A-Z]\w*\s*\((.*?)\)/);
+    if (fnMatch) {
+      const paramStr = fnMatch[2] || fnMatch[1];
+      const paramIdx = l.indexOf(paramStr);
+      const pParts = paramStr.split(",");
+      let pOffset = paramIdx;
+      for (const p of pParts) {
+        const pRegex = new RegExp(`\\b${escaped}\\b`);
+        const m = p.match(pRegex);
+        if (m) {
+          const colPos = pOffset + m.index;
+          return {
+            uri: docUri,
+            range: Range.create(i, colPos, i, colPos + word.length),
+          };
+        }
+        pOffset += p.length + 1;
       }
+      break;
     }
-    if (fallbackLoc) return fallbackLoc; // 如果没有严格匹配的重载，就返回找到的第一个
   }
 
-  // 5. 本地普通变量兜底匹配
+  // ⭐ 5. 本地/全局函数精准正则匹配 (支持 static fun, public fun 等修饰符)
+  const fnPattern = new RegExp(
+    `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${escaped}\\s*\\(([^)]*)\\)`,
+  );
+  let fallbackLoc = null;
+  for (let i = 0; i < lines.length; i++) {
+    const fm = fnPattern.exec(lines[i]);
+    if (fm) {
+      const defArgsStr = fm[1].trim();
+      const defArgsCount =
+        defArgsStr.length > 0 ? defArgsStr.split(",").length : 0;
+      const matchCol = lines[i].indexOf(word);
+      const loc = {
+        uri: docUri,
+        range: Range.create(i, matchCol, i, matchCol + word.length),
+      };
+
+      // 如果参数严格匹配，直接返回
+      if (calledArgsCount !== -1 && defArgsCount === calledArgsCount)
+        return loc;
+      if (!fallbackLoc) fallbackLoc = loc;
+    }
+  }
+  if (fallbackLoc) return fallbackLoc; // 如果没有严格匹配的重载，就返回找到的第一个
+
+  // 6. 在所有已知类成员中查找同名方法/属性
+  for (const cDef of classCache.values()) {
+    if (cDef && Array.isArray(cDef.members)) {
+      const m = cDef.members.find((x) => x.name === word);
+      if (m && m.location) return m.location;
+    }
+  }
+
+  // 7. 本地普通变量兜底匹配
   const varPatterns = [
     new RegExp(
-      `\\b(?:var|let|const|string|int|float|bool|ptr)\\s+(${escaped})\\b`,
+      `\\b(?:var|let|const|string|int|float|bool|ptr|function)\\s+(${escaped})\\b`,
     ),
     new RegExp(`^\\s*[A-Z][a-zA-Z0-9_]*\\s+(${escaped})\\s*=`),
   ];

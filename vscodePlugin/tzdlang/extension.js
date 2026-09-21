@@ -148,11 +148,11 @@ function helloWorld() {
 /**
  * tzdlang.runCurrentFile: 运行当前打开的 Tzd 脚本。
  */
-function runCurrentFile(context) {
+async function runCurrentFile(context) {
   const vscode = require("vscode");
   const cp = require("child_process");
   const path = require("path");
-  const { TextDecoder } = require("util"); // ⭐ 引入原生文本解码器
+  const { TextDecoder } = require("util");
 
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -161,6 +161,10 @@ function runCurrentFile(context) {
   }
 
   const document = editor.document;
+  // ⭐ 核心修复1：运行前强制保存文件，防止未保存时读取到空文件或旧内容导致无输出
+  if (document.isDirty) {
+    await document.save();
+  }
   const filePath = document.uri.fsPath;
 
   const toolsPath = findTzdTools(context);
@@ -179,11 +183,9 @@ function runCurrentFile(context) {
     return;
   }
 
-  // 准备输出通道
+  // 准备并展示输出通道
   ensureOutputChannel();
 
-  // ⭐ 强制清空面板：确保你的全局变量叫 outputChannel
-  // 如果你的全局输出频道对象不叫这个名字，请把它改成对应的变量名
   try {
     if (typeof outputChannel !== "undefined" && outputChannel) {
       outputChannel.clear();
@@ -219,50 +221,60 @@ function runCurrentFile(context) {
 
   runningProcess = spawned;
 
-  // ⭐ 终极 GBK 流式解码器（stream: true 保证了汉字不会被截断断层）
-  const stdoutDecoder = new TextDecoder("gbk", { fatal: false });
-  const stderrDecoder = new TextDecoder("gbk", { fatal: false });
+  // ⭐ 核心修复2：智能双模式解码器（优先 UTF-8，失败自动回退 GBK，解决字符截断和乱码丢包）
+  const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+  const gbkDecoder = new TextDecoder("gbk", { fatal: false });
+
+  function decodeBuffer(buf) {
+    try {
+      return utf8Decoder.decode(buf);
+    } catch {
+      return gbkDecoder.decode(buf);
+    }
+  }
+
+  // ⭐ 核心修复3：流式行缓冲区，保留跨 chunk 的未结束行和空行，杜绝截断与丢行
+  function createStreamHandler(isError = false) {
+    let residual = "";
+    return {
+      onData(data) {
+        const text = decodeBuffer(data);
+        residual += text;
+        const lines = residual.split(/\r?\n/);
+        residual = lines.pop(); // 尚未遇到换行符的半行保留到下一次
+        for (const line of lines) {
+          appendToOutput(line, isError);
+        }
+      },
+      onEnd() {
+        if (residual.length > 0) {
+          appendToOutput(residual, isError);
+          residual = "";
+        }
+      },
+    };
+  }
+
+  const stdoutHandler = createStreamHandler(false);
+  const stderrHandler = createStreamHandler(true);
 
   // 收集 stdout
   spawned.stdout.on("data", (data) => {
-    const text = stdoutDecoder
-      .decode(data, { stream: true })
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
-    const lines = text.split("\n");
-    for (const line of lines) {
-      if (line.trim()) appendToOutput(line);
-    }
+    stdoutHandler.onData(data);
   });
 
   // 收集 stderr
   spawned.stderr.on("data", (data) => {
-    const text = stderrDecoder
-      .decode(data, { stream: true })
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
-    const lines = text.split("\n");
-    for (const line of lines) {
-      if (line.trim()) appendToOutput(line, true);
-    }
+    stderrHandler.onData(data);
   });
 
   // 进程退出
   spawned.on("close", (code) => {
     runningProcess = null;
 
-    // 输出流缓冲区最后残留的一点点数据
-    const outEnd = stdoutDecoder
-      .decode()
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
-    if (outEnd.trim()) appendToOutput(outEnd);
-
-    const errEnd = stderrDecoder
-      .decode()
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
-    if (errEnd.trim()) appendToOutput(errEnd, true);
+    // 刷新末尾缓冲区
+    stdoutHandler.onEnd();
+    stderrHandler.onEnd();
 
     const exitMsg =
       code === 0
@@ -539,13 +551,14 @@ function activate(context) {
   const disposables = [
     vscode.commands.registerCommand("tzdlang.helloWorld", helloWorld),
 
-    vscode.commands.registerCommand("tzdlang.runCurrentFile", () => {
+    vscode.commands.registerCommand("tzdlang.runCurrentFile", async () => {
       if (runningProcess) {
         vscode.window.showWarningMessage("已有脚本正在运行，请等待完成。");
         return;
       }
-      runCurrentFile(context);
+      await runCurrentFile(context);
     }),
+
 
     vscode.commands.registerCommand("tzdlang.debugCurrentFile", async () => {
       const editor = vscode.window.activeTextEditor;

@@ -14,5 +14,5 @@ fun cube(n) {
     return n * n * n;
 }
 
-print("Square: " + MathToolkit.square(6)); // Square: 36
-print("Callback Cube: " + MathToolkit.apply(cube, 3)); // Callback Cube: 27
+print("Square: " + MathToolkit.square(6));
+print("Callback Cube: " + MathToolkit.apply(cube, 3));
