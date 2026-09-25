@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <shared_mutex>
+#include <functional>
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Error.h"
@@ -305,6 +306,15 @@ static bool isParamNonDouble(antlr4::tree::ParseTree* tree, const std::string& p
         if ((lText == paramName && rText == "null") || (rText == paramName && lText == "null")) return true;
     }
 
+    // 7. 参与字符串拼接: "str" + param, param + "str"
+    if (auto add = dynamic_cast<TzdLangParser::AdditiveExprContext*>(tree)) {
+        std::string lText = add->expression(0) ? add->expression(0)->getText() : "";
+        std::string rText = add->expression(1) ? add->expression(1)->getText() : "";
+        bool hasStr = (lText.size() >= 2 && (lText.front() == '"' || lText.front() == '\'')) ||
+                      (rText.size() >= 2 && (rText.front() == '"' || rText.front() == '\''));
+        if (hasStr && (lText == paramName || rText == paramName)) return true;
+    }
+
     for (size_t i = 0; i < tree->children.size(); ++i) {
         if (isParamNonDouble(tree->children[i], paramName)) return true;
     }
@@ -315,6 +325,84 @@ static bool isParamUsedAsContainer(antlr4::tree::ParseTree* tree, const std::str
     return isParamNonDouble(tree, paramName);
 }
 // #endregion
+
+// 辅助函数：判断表达式是否明确为非纯数值类型（例如对象、this、字符串、容器、布尔等）
+static bool isExprNonDouble(antlr4::tree::ParseTree* tree) {
+    if (!tree) return false;
+
+    if (auto paren = dynamic_cast<TzdLangParser::ParenExprContext*>(tree)) {
+        return isExprNonDouble(paren->expression());
+    }
+    if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(tree)) {
+        return isExprNonDouble(atomExpr->atom());
+    }
+
+    if (dynamic_cast<TzdLangParser::StringExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::BoolTrueExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::BoolFalseExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::NullExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::NewExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::ArrayLiteralExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::MapLiteralExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::SuperExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::LambdaExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::PrintFunExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::MemberAccessExprContext*>(tree)) return true;
+    if (dynamic_cast<TzdLangParser::IndexExprContext*>(tree)) return true;
+
+    std::string text = tree->getText();
+    if (text == "this" || text == "null" || text == "true" || text == "false") return true;
+    if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'')) return true;
+    if (text.rfind("new", 0) == 0 && text.find('(') != std::string::npos) return true;
+
+    if (auto call = dynamic_cast<TzdLangParser::CallExprContext*>(tree)) {
+        std::string callee = call->atom() ? call->atom()->getText() : "";
+        static const std::unordered_set<std::string> mathFuncs = {
+            "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+            "sinh", "cosh", "tanh", "exp", "log", "log10", "log2",
+            "sqrt", "cbrt", "ceil", "floor", "round", "trunc", "abs",
+            "pow", "fmod", "hypot"
+        };
+        if (mathFuncs.find(callee) == mathFuncs.end()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// 辅助函数：判断代码块是否明确且仅返回数值（double/float/int）
+// 如果无 return 语句（返回 void/null），或存在返回非数值（如 this、对象、字符串等），返回 false
+static bool isBlockReturningDouble(antlr4::tree::ParseTree* block) {
+    if (!block) return false;
+
+    std::vector<TzdLangParser::ReturnStmtContext*> returns;
+    std::function<void(antlr4::tree::ParseTree*)> findReturns = [&](antlr4::tree::ParseTree* node) {
+        if (!node) return;
+        if (auto ret = dynamic_cast<TzdLangParser::ReturnStmtContext*>(node)) {
+            returns.push_back(ret);
+            return;
+        }
+        if (dynamic_cast<TzdLangParser::FunctionDeclarationContext*>(node)) return;
+        if (dynamic_cast<TzdLangParser::ClassDeclarationContext*>(node)) return;
+        if (dynamic_cast<TzdLangParser::LambdaExprContext*>(node)) return;
+
+        for (size_t i = 0; i < node->children.size(); ++i) {
+            findReturns(node->children[i]);
+        }
+    };
+    findReturns(block);
+
+    if (returns.empty()) return false;
+
+    for (auto* ret : returns) {
+        if (!ret->expression()) return false;
+        if (isExprNonDouble(ret->expression())) return false;
+    }
+
+    return true;
+}
+
 
 // 辅助函数：递归解包 AST，判断 Return 后面是否干净地跟着一个函数调用
 static TzdLangParser::CallExprContext* getAsCallExpr(antlr4::tree::ParseTree* node) {
@@ -620,9 +708,19 @@ extern "C" {
         ((TzdValue*)dest)->type = TzdValue::NONE;
     }
 
+    void* rt_tzd_call_method(void* objPtr, int32_t selector, const char* name, int argCount, TzdValue* args);
+
     void* rt_call_sub_fast(const char* funcName, int argCount, void* args) {
         if (!g_CurrentInterpreter) return g_JitPool.next();
         if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
+
+        if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
 
         TzdValue* funcObjPtr = nullptr;
         for (auto scopeIt = g_CurrentInterpreter->scopes.rbegin(); scopeIt != g_CurrentInterpreter->scopes.rend(); ++scopeIt) {
@@ -633,6 +731,34 @@ extern "C" {
             }
         }
         if (!funcObjPtr) {
+            // Check active scopes for `this` instance or class methods
+            for (auto scopeIt = g_CurrentInterpreter->scopes.rbegin(); scopeIt != g_CurrentInterpreter->scopes.rend(); ++scopeIt) {
+                auto thisIt = scopeIt->find("this");
+                if (thisIt != scopeIt->end()) {
+                    if (thisIt->second.type == TzdValue::INSTANCE && thisIt->second.instanceVal) {
+                        TzdInstance* inst = thisIt->second.instanceVal;
+                        if (inst->definition && (inst->definition->findMethod(funcName) || inst->definition->findField(funcName))) {
+                            TzdSelector sel = tzdInternSelector(funcName ? funcName : "");
+                            return rt_tzd_call_method(&thisIt->second, (int32_t)sel, funcName, argCount, (TzdValue*)args);
+                        }
+                    } else if (thisIt->second.type == TzdValue::CLASS_DEF && thisIt->second.classDefVal) {
+                        TzdClassDef* cls = thisIt->second.classDefVal;
+                        if (cls->findMethod(funcName) || cls->findField(funcName)) {
+                            TzdSelector sel = tzdInternSelector(funcName ? funcName : "");
+                            return rt_tzd_call_method(&thisIt->second, (int32_t)sel, funcName, argCount, (TzdValue*)args);
+                        }
+                    }
+                }
+            }
+            if (!g_CurrentInterpreter->m_callFrameStack.empty() && g_CurrentInterpreter->m_callFrameStack.back().thisPtr) {
+                TzdValue* thisVal = g_CurrentInterpreter->m_callFrameStack.back().thisPtr;
+                if (thisVal->type == TzdValue::INSTANCE && thisVal->instanceVal && thisVal->instanceVal->definition) {
+                    if (thisVal->instanceVal->definition->findMethod(funcName) || thisVal->instanceVal->definition->findField(funcName)) {
+                        TzdSelector sel = tzdInternSelector(funcName ? funcName : "");
+                        return rt_tzd_call_method(thisVal, (int32_t)sel, funcName, argCount, (TzdValue*)args);
+                    }
+                }
+            }
             // Debug: check worker pointers
             std::shared_lock<std::shared_mutex> wlock(s_workerPointersMutex);
             auto wit = s_workerPointers.find(funcName);
@@ -644,7 +770,9 @@ extern "C" {
                 g_CurrentInterpreter->m_argPtrStack.push_back((TzdValue*)args);
                 std::unordered_map<std::string, TzdValue> jitScope;
                 g_CurrentInterpreter->scopes.push_back(jitScope);
+                ++g_CurrentInterpreter->m_callDepth;
                 jitPtr(g_CurrentInterpreter, res);
+                if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                 g_CurrentInterpreter->scopes.pop_back();
                 g_CurrentInterpreter->m_argPtrStack.pop_back();
                 return res;
@@ -668,9 +796,11 @@ extern "C" {
             frameName += ") (JIT Compiled)";
 
             g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            ++g_CurrentInterpreter->m_callDepth;
 
             funcObjPtr->jittedPtr(g_CurrentInterpreter, res);
 
+            if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
             g_CurrentInterpreter->m_callStackFrames.pop_back();
             g_CurrentInterpreter->m_argPtrStack.pop_back();
             return res;
@@ -719,6 +849,39 @@ extern "C" {
         if (g_CurrentInterpreter->m_callDepth > 0) {
             --g_CurrentInterpreter->m_callDepth;
         }
+    }
+
+    bool rt_check_recursion(void* interpPtr) {
+        TzdInterpreter* interp = interpPtr ? (TzdInterpreter*)interpPtr : g_CurrentInterpreter;
+        if (!interp) return false;
+        ++interp->m_callDepth;
+        if (interp->m_callDepth > interp->m_maxCallDepth) {
+            if (!interp->m_hasJitError) {
+                interp->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(interp->m_maxCallDepth) + ")");
+            }
+            interp->m_hadRuntimeError = true;
+            return true;
+        }
+        return false;
+    }
+
+    void rt_pop_call_depth(void* interpPtr) {
+        TzdInterpreter* interp = interpPtr ? (TzdInterpreter*)interpPtr : g_CurrentInterpreter;
+        if (interp && interp->m_callDepth > 0) {
+            --interp->m_callDepth;
+        }
+    }
+
+    void* rt_get_class_def(const char* name) {
+        if (!name) return g_JitPool.next();
+        TzdClassDef* cls = TzdOopManager::getClass(name);
+        TzdValue* val = g_JitPool.next();
+        if (cls) {
+            *val = TzdValue(cls);
+        } else {
+            *val = TzdValue();
+        }
+        return val;
     }
 
     void* rt_create_num(double v) { return make_double(v); }
@@ -1223,6 +1386,14 @@ extern "C" {
         if (!g_CurrentInterpreter) return g_JitPool.next();
         if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
 
+        if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
+
         std::vector<TzdValue> args;
         args.reserve(argCount);
         va_list ap;
@@ -1258,9 +1429,11 @@ extern "C" {
             frameName += ") (JIT Compiled)";
 
             g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            ++g_CurrentInterpreter->m_callDepth;
 
             funcObj.jittedPtr(g_CurrentInterpreter, result);
 
+            if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
             g_CurrentInterpreter->m_callStackFrames.pop_back();
             g_CurrentInterpreter->m_argPtrStack.pop_back();
             g_CurrentInterpreter->m_argFrameStack.pop_back();
@@ -1291,6 +1464,15 @@ extern "C" {
 
     void* rt_call_sub_f1(const char* funcName, void* arg0) {
         if (!g_CurrentInterpreter || !arg0) return g_JitPool.next();
+        if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
+
+        if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
 
         TzdValue* funcObj = nullptr;
         auto& scopes = g_CurrentInterpreter->scopes;
@@ -1311,9 +1493,11 @@ extern "C" {
             frameName += ") (JIT Compiled)";
 
             g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            ++g_CurrentInterpreter->m_callDepth;
 
             funcObj->jittedPtr(g_CurrentInterpreter, result);
 
+            if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
             g_CurrentInterpreter->m_callStackFrames.pop_back();
             g_CurrentInterpreter->m_currentArgs = std::move(savedArgs);
             return result;
@@ -1406,6 +1590,14 @@ extern "C" {
     static thread_local TzdClassDef* s_lastClassDef = nullptr;
 
     void* rt_create_inst_args(const char* name, int argCount, TzdValue* args) {
+        if (g_CurrentInterpreter && g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
+
         TzdClassDef* def = (name && name == s_lastClassName) ? s_lastClassDef : nullptr;
         if (!def) {
             def = TzdOopManager::getClass(name);
@@ -1444,21 +1636,25 @@ extern "C" {
                 g_CurrentInterpreter->m_callFrameStack.push_back({ instVal, args, argCount });
 
                 if (!TzdDebugger::g_DebugActive) {
+                    ++g_CurrentInterpreter->m_callDepth;
                     ctor->jittedPtr(g_CurrentInterpreter, ignored);
+                    if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                     g_CurrentInterpreter->m_callFrameStack.pop_back();
                     return instVal;
                 }
 
-            // 【修改】：基于构造函数（ctor）的 sourceFile 和 line 字段，拼接 Java 风格构造函数栈帧
-            std::string fileLoc = formatSourcePath(ctor->sourceFile);
-            int line = ctor->line;
-            std::string frameName = std::string(def->fullName) + "." + def->simpleName;
-            frameName += " (" + fileLoc;
-            if (line > 0) frameName += ":" + std::to_string(line);
-            frameName += ") (JIT Compiled)";
+                // 【修改】：基于构造函数（ctor）的 sourceFile 和 line 字段，拼接 Java 风格构造函数栈帧
+                std::string fileLoc = formatSourcePath(ctor->sourceFile);
+                int line = ctor->line;
+                std::string frameName = std::string(def->fullName) + "." + def->simpleName;
+                frameName += " (" + fileLoc;
+                if (line > 0) frameName += ":" + std::to_string(line);
+                frameName += ") (JIT Compiled)";
 
                 g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+                ++g_CurrentInterpreter->m_callDepth;
                 ctor->jittedPtr(g_CurrentInterpreter, ignored);
+                if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                 g_CurrentInterpreter->m_callStackFrames.pop_back();
                 g_CurrentInterpreter->m_callFrameStack.pop_back();
                 return instVal;
@@ -1492,6 +1688,14 @@ extern "C" {
         if (!g_CurrentInterpreter || !funcPtr) return g_JitPool.next();
         if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
 
+        if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
+
         TzdValue* funcObj = (TzdValue*)funcPtr;
         if (funcObj->type != TzdValue::FUNCTION && funcObj->type != TzdValue::NATIVE_FUNCTION) {
             std::string msg = "尝试调用一个非函数对象";
@@ -1513,7 +1717,9 @@ extern "C" {
                 if (!funcObj->instanceVal) {
                     // Fast path: no bound `this`, reuse caller-provided arg array directly.
                     g_CurrentInterpreter->m_argPtrStack.push_back(args);
+                    ++g_CurrentInterpreter->m_callDepth;
                     funcObj->jittedPtr(g_CurrentInterpreter, result);
+                    if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                     g_CurrentInterpreter->m_argPtrStack.pop_back();
                     return result;
                 }
@@ -1525,7 +1731,9 @@ extern "C" {
                     frameInline[0] = TzdValue(funcObj->instanceVal);
                     for (int i = 0; i < argCount; ++i) frameInline[i + 1] = args[i];
                     g_CurrentInterpreter->m_argPtrStack.push_back(frameInline);
+                    ++g_CurrentInterpreter->m_callDepth;
                     funcObj->jittedPtr(g_CurrentInterpreter, result);
+                    if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                     g_CurrentInterpreter->m_argPtrStack.pop_back();
                     return result;
                 }
@@ -1535,7 +1743,9 @@ extern "C" {
                 frame.push_back(TzdValue(funcObj->instanceVal));
                 for (int i = 0; i < argCount; ++i) frame.push_back(args[i]);
                 g_CurrentInterpreter->m_argPtrStack.push_back(frame.data());
+                ++g_CurrentInterpreter->m_callDepth;
                 funcObj->jittedPtr(g_CurrentInterpreter, result);
+                if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                 g_CurrentInterpreter->m_argPtrStack.pop_back();
                 return result;
             }
@@ -1557,7 +1767,9 @@ extern "C" {
             frameName += ") (JIT Compiled)";
 
             g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+            ++g_CurrentInterpreter->m_callDepth;
             funcObj->jittedPtr(g_CurrentInterpreter, result);
+            if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
             g_CurrentInterpreter->m_callStackFrames.pop_back();
             g_CurrentInterpreter->m_argPtrStack.pop_back();
             return result;
@@ -1586,6 +1798,14 @@ extern "C" {
         if (!objPtr || !g_CurrentInterpreter) return g_JitPool.next();
         if (g_CurrentInterpreter->m_hasJitError) return g_JitPool.next();
 
+        if (g_CurrentInterpreter->m_callDepth >= g_CurrentInterpreter->m_maxCallDepth) {
+            if (!g_CurrentInterpreter->m_hasJitError) {
+                g_CurrentInterpreter->reportJitError("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(g_CurrentInterpreter->m_maxCallDepth) + ")");
+            }
+            g_CurrentInterpreter->m_hadRuntimeError = true;
+            return g_JitPool.next();
+        }
+
         TzdValue* v = (TzdValue*)objPtr;
         if (v->type == TzdValue::INSTANCE && v->instanceVal && v->instanceVal->definition) {
             TzdClassDef* cls = v->instanceVal->definition;
@@ -1595,9 +1815,21 @@ extern "C" {
                     bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(slot->method->sourceFile, slot->method->line, endLine));
                     if (!hasBp) {
                         TzdValue* result = g_JitPool.next();
+                        std::string fileLoc = formatSourcePath(slot->method->sourceFile);
+                        int line = slot->method->line;
+                        std::string frameName = cls->fullName + "." + (name ? name : "unknown") + " (" + fileLoc;
+                        if (line > 0) frameName += ":" + std::to_string(line);
+                        frameName += ") (JIT Compiled)";
+
+                        g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
                         g_CurrentInterpreter->m_callFrameStack.push_back({ v, args, argCount });
+                        ++g_CurrentInterpreter->m_callDepth;
+
                         slot->method->jittedPtr(g_CurrentInterpreter, result);
+
+                        if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                         g_CurrentInterpreter->m_callFrameStack.pop_back();
+                        g_CurrentInterpreter->m_callStackFrames.pop_back();
                         return result;
                     }
                 }
@@ -1611,9 +1843,21 @@ extern "C" {
                     bool hasBp = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(slot->method->sourceFile, slot->method->line, endLine));
                     if (!hasBp) {
                         TzdValue* result = g_JitPool.next();
+                        std::string fileLoc = formatSourcePath(slot->method->sourceFile);
+                        int line = slot->method->line;
+                        std::string frameName = cls->fullName + "." + (name ? name : "unknown") + " (" + fileLoc;
+                        if (line > 0) frameName += ":" + std::to_string(line);
+                        frameName += ") (JIT Compiled)";
+
+                        g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
                         g_CurrentInterpreter->m_argPtrStack.push_back(args);
+                        ++g_CurrentInterpreter->m_callDepth;
+
                         slot->method->jittedPtr(g_CurrentInterpreter, result);
+
+                        if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                         g_CurrentInterpreter->m_argPtrStack.pop_back();
+                        g_CurrentInterpreter->m_callStackFrames.pop_back();
                         return result;
                     }
                 }
@@ -2271,7 +2515,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             if (isNonNumericParam(pList[i]) || isParamNonDouble(ctx->block(), pName)) { hasNonNumericParam = true; break; }
         }
     }
-    if (argCount > 0 && !hasNonNumericParam) {
+    if (argCount > 0 && !hasNonNumericParam && isBlockReturningDouble(ctx->block())) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -2332,6 +2576,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
     m_builder.SetInsertPoint(workerEntryBB);
 
+    Value* isOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { workerFunc->getArg(0) });
+    BasicBlock* ofBB = BasicBlock::Create(m_context, "rec_overflow", workerFunc);
+    BasicBlock* okBB = BasicBlock::Create(m_context, "rec_ok", workerFunc);
+    m_builder.CreateCondBr(isOverflow, ofBB, okBB);
+
+    m_builder.SetInsertPoint(ofBB);
+    m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+    m_builder.SetInsertPoint(okBB);
+
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
@@ -2372,6 +2626,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
 
     // 默认返回硬件级的 0.0
     if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { workerFunc->getArg(0) });
         Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
@@ -2384,6 +2639,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     if (argCount > 0 && nativeWorkerFunc) {
         BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
         m_builder.SetInsertPoint(nativeEntryBB);
+
+        Value* nativeIsOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { nativeWorkerFunc->getArg(0) });
+        BasicBlock* nativeOfBB = BasicBlock::Create(m_context, "native_rec_overflow", nativeWorkerFunc);
+        BasicBlock* nativeOkBB = BasicBlock::Create(m_context, "native_rec_ok", nativeWorkerFunc);
+        m_builder.CreateCondBr(nativeIsOverflow, nativeOfBB, nativeOkBB);
+
+        m_builder.SetInsertPoint(nativeOfBB);
+        m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+        m_builder.SetInsertPoint(nativeOkBB);
 
         m_namedValues.clear();
         m_nativeDoubleLocals.clear();
@@ -2417,6 +2682,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         visit(ctx->block());
 
         if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { nativeWorkerFunc->getArg(0) });
             m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
         }
     }
@@ -2443,7 +2709,9 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         }
     }
 
-    if (!hasNonNumericParam) {
+    bool returnsDouble = isBlockReturningDouble(methodCtx->block());
+
+    if (argCount > 0 && !hasNonNumericParam && returnsDouble) {
         // Native worker: (interp, this, double arg0, double arg1, ...) -> double
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy, m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
@@ -2468,6 +2736,16 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
         BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
         m_builder.SetInsertPoint(nativeEntryBB);
+
+        Value* nativeIsOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { nativeWorkerFunc->getArg(0) });
+        BasicBlock* nativeOfBB = BasicBlock::Create(m_context, "native_rec_overflow", nativeWorkerFunc);
+        BasicBlock* nativeOkBB = BasicBlock::Create(m_context, "native_rec_ok", nativeWorkerFunc);
+        m_builder.CreateCondBr(nativeIsOverflow, nativeOfBB, nativeOkBB);
+
+        m_builder.SetInsertPoint(nativeOfBB);
+        m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+        m_builder.SetInsertPoint(nativeOkBB);
 
         m_namedValues.clear();
         m_nativeDoubleLocals.clear();
@@ -2505,6 +2783,7 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         visit(methodCtx->block());
 
         if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { nativeWorkerFunc->getArg(0) });
             m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
         }
         s_currentNativeWorkerFunc = nullptr;
@@ -2541,6 +2820,16 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         inlineStoreNativeToPtr(m_currentRetPtr, dRes);
         m_builder.CreateRetVoid();
     } else {
+        Value* isOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { func->getArg(0) });
+        BasicBlock* funcOfBB = BasicBlock::Create(m_context, "func_rec_overflow", func);
+        BasicBlock* funcOkBB = BasicBlock::Create(m_context, "func_rec_ok", func);
+        m_builder.CreateCondBr(isOverflow, funcOfBB, funcOkBB);
+
+        m_builder.SetInsertPoint(funcOfBB);
+        m_builder.CreateRetVoid();
+
+        m_builder.SetInsertPoint(funcOkBB);
+
         Value* thisVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), { m_builder.getInt32(0) });
         AllocaInst* thisAlloc = m_builder.CreateAlloca(m_ptrTy, nullptr, "this");
         m_builder.CreateStore(thisVal, thisAlloc);
@@ -2569,6 +2858,7 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         m_namedValues["$retval"] = m_builder.CreateAlloca(m_ptrTy, nullptr, "$retval");
         visit(methodCtx->block());
         if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { func->getArg(0) });
             Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
             m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
             m_builder.CreateRetVoid();
@@ -2585,6 +2875,17 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
     );
     BasicBlock* bb = BasicBlock::Create(m_context, "entry", func);
     m_builder.SetInsertPoint(bb);
+
+    Value* isOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { func->getArg(0) });
+    BasicBlock* ctorOfBB = BasicBlock::Create(m_context, "ctor_rec_overflow", func);
+    BasicBlock* ctorOkBB = BasicBlock::Create(m_context, "ctor_rec_ok", func);
+    m_builder.CreateCondBr(isOverflow, ctorOfBB, ctorOkBB);
+
+    m_builder.SetInsertPoint(ctorOfBB);
+    m_builder.CreateRetVoid();
+
+    m_builder.SetInsertPoint(ctorOkBB);
+
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
@@ -2632,6 +2933,7 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
         }
     }
     if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { func->getArg(0) });
         Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRetVoid();
@@ -2665,7 +2967,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             if (isNonNumericParam(pList[i]) || isParamNonDouble(block, pName)) { hasNonNumericParam = true; break; }
         }
     }
-    if (argCount > 0 && !hasNonNumericParam) {
+    if (argCount > 0 && !hasNonNumericParam && isBlockReturningDouble(block)) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -2725,6 +3027,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
     m_builder.SetInsertPoint(workerEntryBB);
 
+    Value* isOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { workerFunc->getArg(0) });
+    BasicBlock* ofBB = BasicBlock::Create(m_context, "rec_overflow", workerFunc);
+    BasicBlock* okBB = BasicBlock::Create(m_context, "rec_ok", workerFunc);
+    m_builder.CreateCondBr(isOverflow, ofBB, okBB);
+
+    m_builder.SetInsertPoint(ofBB);
+    m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+    m_builder.SetInsertPoint(okBB);
+
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
@@ -2772,6 +3084,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
 
     // 默认返回硬件级的 0.0
     if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { workerFunc->getArg(0) });
         Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
@@ -2784,6 +3097,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     if (argCount > 0 && nativeWorkerFunc) {
         BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
         m_builder.SetInsertPoint(nativeEntryBB);
+
+        Value* nativeIsOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { nativeWorkerFunc->getArg(0) });
+        BasicBlock* nativeOfBB = BasicBlock::Create(m_context, "native_rec_overflow", nativeWorkerFunc);
+        BasicBlock* nativeOkBB = BasicBlock::Create(m_context, "native_rec_ok", nativeWorkerFunc);
+        m_builder.CreateCondBr(nativeIsOverflow, nativeOfBB, nativeOkBB);
+
+        m_builder.SetInsertPoint(nativeOfBB);
+        m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+        m_builder.SetInsertPoint(nativeOkBB);
 
         m_namedValues.clear();
         m_nativeDoubleLocals.clear();
@@ -2818,6 +3141,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         visit(block);
 
         if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { nativeWorkerFunc->getArg(0) });
             m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
         }
     }
@@ -2851,7 +3175,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     Function* nativeWorkerFunc = nullptr;
     bool hasThisParam = false;
     for (auto& p : paramNames) { if (p == "this") { hasThisParam = true; break; } }
-    if (argCount > 0 && !hasThisParam) {
+    if (argCount > 0 && !hasThisParam && isBlockReturningDouble(block)) {
         std::vector<Type*> nativeWorkerArgs = { m_ptrTy };
         for (int i = 0; i < argCount; ++i) {
             nativeWorkerArgs.push_back(m_doubleTy);
@@ -2908,6 +3232,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     BasicBlock* workerEntryBB = BasicBlock::Create(m_context, "entry", workerFunc);
     m_builder.SetInsertPoint(workerEntryBB);
 
+    Value* isOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { workerFunc->getArg(0) });
+    BasicBlock* ofBB = BasicBlock::Create(m_context, "rec_overflow", workerFunc);
+    BasicBlock* okBB = BasicBlock::Create(m_context, "rec_ok", workerFunc);
+    m_builder.CreateCondBr(isOverflow, ofBB, okBB);
+
+    m_builder.SetInsertPoint(ofBB);
+    m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+    m_builder.SetInsertPoint(okBB);
+
     m_namedValues.clear();
     m_nativeDoubleLocals.clear();
     m_declaredLocals.clear();
@@ -2947,6 +3281,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     visit(block);
 
     if (!m_builder.GetInsertBlock()->getTerminator()) {
+        m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { workerFunc->getArg(0) });
         Value* nullVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
         m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, nullVal });
         m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
@@ -2959,6 +3294,16 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     if (argCount > 0 && nativeWorkerFunc) {
         BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
         m_builder.SetInsertPoint(nativeEntryBB);
+
+        Value* nativeIsOverflow = m_builder.CreateCall(getRtFunc("rt_check_recursion"), { nativeWorkerFunc->getArg(0) });
+        BasicBlock* nativeOfBB = BasicBlock::Create(m_context, "native_rec_overflow", nativeWorkerFunc);
+        BasicBlock* nativeOkBB = BasicBlock::Create(m_context, "native_rec_ok", nativeWorkerFunc);
+        m_builder.CreateCondBr(nativeIsOverflow, nativeOfBB, nativeOkBB);
+
+        m_builder.SetInsertPoint(nativeOfBB);
+        m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
+
+        m_builder.SetInsertPoint(nativeOkBB);
 
         m_namedValues.clear();
         m_nativeDoubleLocals.clear();
@@ -2991,6 +3336,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         visit(block);
 
         if (!m_builder.GetInsertBlock()->getTerminator()) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { nativeWorkerFunc->getArg(0) });
             m_builder.CreateRet(ConstantFP::get(m_doubleTy, 0.0));
         }
     }
@@ -3154,6 +3500,9 @@ void TzdCompiler::setupExternalFunctions() {
     addFunc("rt_write_fast_ret", { m_ptrTy, m_ptrTy }, m_voidTy);
 
     addFunc("rt_get_worker_ptr", { m_ptrTy }, m_ptrTy);
+    addFunc("rt_check_recursion", { m_ptrTy }, m_boolTy);
+    addFunc("rt_pop_call_depth", { m_ptrTy }, m_voidTy);
+    addFunc("rt_get_class_def", { m_ptrTy }, m_ptrTy);
 
     addFunc("rt_alloc_jmp_buf", {}, m_ptrTy);
     addFunc("rt_free_jmp_buf", { m_ptrTy }, m_voidTy);
@@ -3513,6 +3862,9 @@ void TzdJitEngine::registerRuntimeSymbols() {
     bind("rt_init_tzd_value", (void*)&rt_init_tzd_value);
     bind("rt_write_fast_ret", (void*)&rt_write_fast_ret);
     bind("rt_get_worker_ptr", (void*)&rt_get_worker_ptr);
+    bind("rt_check_recursion", (void*)&rt_check_recursion);
+    bind("rt_pop_call_depth", (void*)&rt_pop_call_depth);
+    bind("rt_get_class_def", (void*)&rt_get_class_def);
 
     // ======= 修复 try/catch 机制的新绑定 =======
     bind("rt_alloc_jmp_buf", (void*)&rt_alloc_jmp_buf);
@@ -4625,6 +4977,10 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();
 
+    if (currentFunc->arg_size() > 0) {
+        Value* interp = currentFunc->getArg(0);
+        m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { interp });
+    }
 
     // [绝杀修改]：如果是 Worker 函数，直接用底层寄存器返回原生数字
     if (currentFunc->getReturnType()->isDoubleTy()) {
@@ -5285,6 +5641,12 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
         return false;
     }
 
+    // AST 内联展开目前仅支持纯数值返回的函数（返回类型为 double）
+    // 返回对象/this/字符串/void 的函数走标准调用分发，避免返回值退化为 0.0
+    if (!isBlockReturningDouble(calleeVal.funcBody)) {
+        return false;
+    }
+
     // --- 执行 AST 级直接内联 ---
     TzdJitEngine::recordInlinedCall();
     s_inlinedFunctionsInStack.insert(inlineKey);
@@ -5448,6 +5810,66 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         }
     }
 
+    // 0b2. 隐式 this 成员方法调用 (在类方法内部直接调用同类的方法，例如 b())
+    if (m_currentClassDef && m_namedValues.count("this") && dynamic_cast<TzdLangParser::IdExprContext*>(ctx->atom())) {
+        if (m_currentClassDef->findMethod(funcName) || m_currentClassDef->findField(funcName)) {
+            Value* thisVal = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"], "this_val");
+            std::string className = m_currentClassDef->simpleName;
+
+            // 1. AST Inlining
+            Value* inlinedRes = nullptr;
+            if (tryInlineFunction(funcName, exprs, inlinedRes, thisVal, className)) {
+                return std::any((Value*)inlinedRes);
+            }
+
+            // 2. Direct Native Worker call
+            std::string workerKey = className + "_" + funcName;
+            if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
+                Function* nativeWorker = nativeIt->second;
+                Function* curFunc = m_builder.GetInsertBlock()->getParent();
+                Value* interp = curFunc->getArg(0);
+                std::vector<Value*> callArgs;
+                callArgs.push_back(interp);
+                if (nativeWorker->getFunctionType()->getNumParams() == (unsigned)(2 + argCount)) {
+                    callArgs.push_back(thisVal);
+                }
+                for (int i = 0; i < argCount; ++i) {
+                    bool oldTail = s_inTailPosition;
+                    s_inTailPosition = false;
+                    Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
+                    s_inTailPosition = oldTail;
+                    callArgs.push_back(castToNativeDouble(argRaw));
+                }
+                CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
+                result->setCallingConv(llvm::CallingConv::Fast);
+                return std::any((Value*)result);
+            }
+
+            // 3. Dispatch through rt_tzd_call_method
+            Value* argsArray = CreateEntryBlockAlloca(m_tzdValueTy, m_builder.getInt32(argCount > 0 ? argCount : 1), "this_call_args");
+            if (argCount > 0) {
+                m_builder.CreateCall(getRtFunc("rt_init_tzd_value"), { argsArray, m_builder.getInt32(argCount) });
+            }
+            for (int i = 0; i < argCount; ++i) {
+                bool oldTail = s_inTailPosition;
+                s_inTailPosition = false;
+                Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
+                s_inTailPosition = oldTail;
+                Value* argPtr = m_builder.CreateGEP(m_tzdValueTy, argsArray, m_builder.getInt32(i));
+                if (argRaw->getType()->isDoubleTy()) {
+                    inlineStoreNativeToPtr(argPtr, argRaw);
+                } else {
+                    m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { argPtr, boxToTzdValue(argRaw) });
+                }
+            }
+            Value* nameStr = m_builder.CreateGlobalStringPtr(funcName);
+            TzdSelector sel = internSelectorConstant(funcName);
+            Value* resPtr = m_builder.CreateCall(getRtFunc("rt_tzd_call_method"),
+                { thisVal, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
+            return std::any((Value*)resPtr);
+        }
+    }
+
     // 0c. 普通函数 AST 级别超强小函数内联展开 (消除一切调用开销)
     Value* inlinedResult = nullptr;
     if (tryInlineFunction(funcName, exprs, inlinedResult)) {
@@ -5468,36 +5890,6 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     size_t lastUnderscore = baseName.find_last_of('_');
     if (lastUnderscore != std::string::npos && lastUnderscore + 1 < baseName.size() && baseName[lastUnderscore + 1] == 'v') {
         baseName = baseName.substr(0, lastUnderscore);
-    }
-
-    // ==============================================================
-    // 1. [直接自递归消除] (本函数内的纯循环转换)
-    // ==============================================================
-    if (funcName == baseName && s_inTailPosition && s_tailRecurseBB != nullptr) {
-        std::vector<Value*> evalArgs;
-        for (int i = 0; i < argCount; ++i) {
-            bool oldTail = s_inTailPosition;
-            s_inTailPosition = false;
-            Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
-            evalArgs.push_back(castToNativeDouble(argRaw));
-            s_inTailPosition = oldTail;
-        }
-
-        for (int i = 0; i < argCount && i < (int)s_currentFuncParamNames.size(); ++i) {
-            std::string pName = s_currentFuncParamNames[i];
-            if (m_nativeDoubleLocals.count(pName)) {
-                m_builder.CreateStore(evalArgs[i], m_nativeDoubleLocals[pName]);
-            }
-            else if (m_namedValues.count(pName)) {
-                m_builder.CreateStore(boxToTzdValue(evalArgs[i]), m_namedValues[pName]);
-            }
-        }
-
-        m_builder.CreateBr(s_tailRecurseBB);
-        BasicBlock* deadBB = BasicBlock::Create(m_context, "unreachable_after_tre", currentFunc);
-        m_builder.SetInsertPoint(deadBB);
-        m_builder.CreateUnreachable();
-        return std::any((Value*)ConstantFP::get(m_doubleTy, 0.0));
     }
 
     // ==============================================================
@@ -5655,6 +6047,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
         CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, m_currentRetPtr, argsArray });
         fastRes->setTailCallKind(CallInst::TCK_Tail);  // Use Tail (not MustTail) for safety
+        if (currentFunc->arg_size() > 0) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { currentFunc->getArg(0) });
+        }
         if (currentFunc->getReturnType()->isDoubleTy()) {
             m_builder.CreateRet(fastRes);
         } else {
@@ -5666,6 +6061,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         Value* slowResPtr = m_builder.CreateCall(getRtFunc("rt_call_sub_fast"), { funcNameStr, m_builder.getInt32(argCount), argsArray });
         Value* slowRes = inlineToDoubleFast(slowResPtr);
         m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, slowRes });
+        if (currentFunc->arg_size() > 0) {
+            m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { currentFunc->getArg(0) });
+        }
         if (currentFunc->getReturnType()->isDoubleTy()) {
             m_builder.CreateRet(slowRes);
         } else {

@@ -1,0 +1,11 @@
+class MathToolkit {
+    static fun apply(op: function, val) {
+        return op(val);
+    }
+}
+
+fun cube(n) {
+    return n * n * n;
+}
+
+print("Callback Cube: " + MathToolkit.apply(cube, 3));

@@ -1,18 +1,14 @@
-class MathToolkit {
-    const PI = 3.1415926535;
-
-    static fun square(x) {
-        return x * x;
+class Test {
+    var string c;
+    fun a() {
+        return this;
     }
 
-    static fun apply(op: function, val) {
-        return op(val);
+    /*
+     * This is a comment
+     */
+    fun b() {
+        print("aaaa");
     }
 }
-
-fun cube(n) {
-    return n * n * n;
-}
-
-print("Square: " + MathToolkit.square(6)); // Square: 36
-print("Callback Cube: " + MathToolkit.apply(cube, 3)); // Callback Cube: 27
+new Test().a();

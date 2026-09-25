@@ -440,6 +440,20 @@ void TzdOopManager::registerClass(TzdClassDef* cls) {
     }
 }
 
+void TzdOopManager::unregisterClass(const std::string& name) {
+    auto it = classMap.find(name);
+    if (it != classMap.end()) {
+        std::string simple = it->second->simpleName;
+        classMap.erase(it);
+        auto sit = simpleNameCache.find(simple);
+        if (sit != simpleNameCache.end()) {
+            auto& vec = sit->second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(), [&](TzdClassDef* d){ return d->fullName == name; }), vec.end());
+            if (vec.empty()) simpleNameCache.erase(sit);
+        }
+    }
+}
+
 // 【性能优化】：将递归的 isSubclassOf 修改为 Iteration，避免函数调用栈开销
 bool TzdClassDef::isSubclassOf(const std::string& targetParentName) {
     if (this->fullName == targetParentName || this->simpleName == targetParentName) return true;

@@ -15,6 +15,9 @@ let outputChannel = null;
 let statusBarItem = null;
 let runningProcess = null;
 let lspClient = null;
+let recursionDecorationType = null;
+const recursionCache = new Map();
+let recursionDebounceTimer = null;
 
 // ─── 配置键名 ────────────────────────────────────────────────────────────────
 const CFG_SECTION = "tzdlang";
@@ -509,12 +512,285 @@ class TzdDebugAdapterDescriptorFactory {
   }
 }
 
+// ─── 递归调用检测与 Gutter 标记 (类似 IntelliJ IDEA 循环箭头) ─────────────────────
+
+/**
+ * 快速纯文本行级扫描器：当 LSP 服务启动中或未就绪时，作为零延迟即时回退
+ */
+function scanRecursionsFast(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const functions = [];
+  let currentClass = null;
+  let currentFunc = null;
+  let braceDepth = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.replace(/\/\/.*$/, "");
+
+    const classMatch = line.match(/\bclass\s+([A-Za-z0-9_]+)/);
+    if (classMatch && !currentFunc) {
+      currentClass = classMatch[1];
+    }
+
+    const funcMatch = line.match(/(?:(?:public|private|protected|static)\s+)*fun\s+([A-Za-z0-9_]+)\s*\(/);
+    if (funcMatch && !currentFunc) {
+      const fnName = funcMatch[1];
+      const col = raw.indexOf(fnName, raw.indexOf("fun"));
+      currentFunc = {
+        name: fnName,
+        qualifiedName: currentClass ? `${currentClass}.${fnName}` : fnName,
+        className: currentClass,
+        headerLine: i,
+        headerCol: col >= 0 ? col : 0,
+        headerLen: fnName.length,
+        startLine: i,
+        endLine: i,
+        calls: [],
+      };
+      braceDepth = 0;
+    }
+
+    for (let c = 0; c < line.length; c++) {
+      if (line[c] === "{") braceDepth++;
+      else if (line[c] === "}") {
+        braceDepth--;
+        if (currentFunc && braceDepth <= 0) {
+          currentFunc.endLine = i;
+          functions.push(currentFunc);
+          currentFunc = null;
+        }
+      }
+    }
+
+    if (currentFunc) {
+      const callRegex = /(?:(\bthis|\bnew\s+[A-Za-z0-9_]+\s*\([^)]*\)|[A-Za-z0-9_]+)\.)?\b([A-Za-z0-9_]+)\s*\(/g;
+      let m;
+      while ((m = callRegex.exec(line)) !== null) {
+        const recv = m[1] || "";
+        const calledName = m[2];
+        if (["if", "while", "for", "switch", "catch", "fun", "return"].includes(calledName)) continue;
+        currentFunc.calls.push({
+          receiver: recv,
+          name: calledName,
+          line: i,
+          column: m.index + (recv ? recv.length + 1 : 0),
+          length: calledName.length,
+          fullText: m[0],
+        });
+      }
+    }
+  }
+
+  if (currentFunc) {
+    currentFunc.endLine = lines.length - 1;
+    functions.push(currentFunc);
+  }
+
+  const funcMap = new Map();
+  for (const f of functions) funcMap.set(f.qualifiedName, f);
+
+  for (const f of functions) {
+    for (const c of f.calls) {
+      let resolved = null;
+      if (f.className) {
+        const recvClean = c.receiver.replace(/\s+/g, "");
+        if (recvClean === "this" || recvClean === f.className || recvClean === `new${f.className}()`) {
+          if (funcMap.has(`${f.className}.${c.name}`)) resolved = `${f.className}.${c.name}`;
+        } else if (!c.receiver) {
+          if (funcMap.has(`${f.className}.${c.name}`)) resolved = `${f.className}.${c.name}`;
+          else if (funcMap.has(c.name)) resolved = c.name;
+        }
+      } else {
+        if (!c.receiver && funcMap.has(c.name)) resolved = c.name;
+      }
+      c.resolvedTarget = resolved;
+    }
+  }
+
+  const adj = new Map();
+  for (const f of functions) {
+    adj.set(f.qualifiedName, f.calls.filter(c => c.resolvedTarget).map(c => ({ target: c.resolvedTarget, call: c })));
+  }
+
+  function findCycles(startNode) {
+    const visited = new Set();
+    const path = [];
+    const cycles = [];
+    function dfs(curr) {
+      path.push(curr);
+      visited.add(curr);
+      const edges = adj.get(curr) || [];
+      for (const e of edges) {
+        if (e.target === startNode) cycles.push([...path, startNode]);
+        else if (!visited.has(e.target)) dfs(e.target);
+      }
+      path.pop();
+      visited.delete(curr);
+    }
+    dfs(startNode);
+    return cycles;
+  }
+
+  const results = [];
+  const decoratedCalls = new Set();
+
+  for (const f of functions) {
+    const cycles = findCycles(f.qualifiedName);
+    if (cycles.length === 0) continue;
+    const isSelf = cycles.some(c => c.length === 2 && c[0] === c[1]);
+    const isMutual = cycles.some(c => c.length > 2);
+
+    let headerMsg = isMutual && !isSelf
+      ? `🔄 **递归函数（间接互递归）**：\`${f.name}\``
+      : `🔄 **递归函数**：\`${f.name}\`（自递归）`;
+
+    results.push({
+      line: f.headerLine,
+      colStart: f.headerCol,
+      colEnd: f.headerCol + f.headerLen,
+      targetName: f.name,
+      kind: "function",
+      isMutual,
+      message: headerMsg,
+    });
+
+    for (const c of f.calls) {
+      if (!c.resolvedTarget) continue;
+      const onCycle = cycles.some(cyc => {
+        for (let j = 0; j < cyc.length - 1; j++) {
+          if (cyc[j] === f.qualifiedName && cyc[j + 1] === c.resolvedTarget) return true;
+        }
+        return false;
+      });
+      if (onCycle) {
+        const key = `${c.line}:${c.column}:${c.length}`;
+        if (decoratedCalls.has(key)) continue;
+        decoratedCalls.add(key);
+        results.push({
+          line: c.line,
+          colStart: c.column,
+          colEnd: c.column + c.length,
+          targetName: c.name,
+          kind: "call",
+          isMutual: c.resolvedTarget !== f.qualifiedName,
+          message: c.resolvedTarget === f.qualifiedName ? `🔄 **递归调用**：\`${c.fullText}\`` : `🔄 **互递归调用**：\`${c.fullText}\``,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 将递归标记应用到指定编辑器，渲染左侧 Gutter 循环箭头
+ */
+function applyRecursionDecorations(editor, items) {
+  if (!editor || !editor.document || !items || !recursionDecorationType) return;
+  const decorations = items.map((item) => {
+    const line = Math.max(0, Math.min(item.line, editor.document.lineCount - 1));
+    const lineText = editor.document.lineAt(line).text;
+    const colStart = Math.max(0, Math.min(item.colStart, lineText.length));
+    const colEnd = Math.max(colStart, Math.min(item.colEnd, lineText.length));
+    const range = new vscode.Range(line, colStart, line, colEnd);
+    const hoverMessage = new vscode.MarkdownString(item.message);
+    hoverMessage.isTrusted = true;
+    return {
+      range,
+      hoverMessage,
+    };
+  });
+  editor.setDecorations(recursionDecorationType, decorations);
+}
+
+/**
+ * 更新 URI 缓存并在所有当前可见的匹配编辑器中刷新装饰
+ */
+function updateRecursionsForUri(uri, items) {
+  recursionCache.set(uri, items);
+  for (const editor of vscode.window.visibleTextEditors) {
+    if (editor.document.uri.toString() === uri) {
+      applyRecursionDecorations(editor, items);
+    }
+  }
+}
+
+/**
+ * 为单个编辑器触发递归检测请求与渲染
+ */
+function requestRecursionsForEditor(editor) {
+  if (!editor || !editor.document) return;
+  const langId = editor.document.languageId;
+  const fileName = editor.document.fileName;
+  if (langId !== "tzdlang" && !fileName.endsWith(".tzd") && !fileName.endsWith(".tzdlang")) return;
+
+  const uri = editor.document.uri.toString();
+  if (lspClient && lspClient.isRunning && lspClient.isRunning()) {
+    lspClient
+      .sendRequest("tzdlang/getRecursions", { uri })
+      .then((items) => {
+        if (Array.isArray(items)) {
+          updateRecursionsForUri(uri, items);
+        }
+      })
+      .catch(() => {});
+  } else if (!recursionCache.has(uri)) {
+    const items = scanRecursionsFast(editor.document.getText());
+    updateRecursionsForUri(uri, items);
+  } else {
+    applyRecursionDecorations(editor, recursionCache.get(uri));
+  }
+}
+
 // ─── 激活与停用 ──────────────────────────────────────────────────────────────
 
 /**
  * 扩展激活入口。
  */
 function activate(context) {
+  // 创建递归调用 Gutter 装饰类型（类似 IntelliJ IDEA 循环箭头）
+  recursionDecorationType = vscode.window.createTextEditorDecorationType({
+    dark: {
+      gutterIconPath: context.asAbsolutePath(path.join("images", "recursion-dark.svg")),
+    },
+    light: {
+      gutterIconPath: context.asAbsolutePath(path.join("images", "recursion-light.svg")),
+    },
+    gutterIconSize: "contain",
+  });
+  context.subscriptions.push(recursionDecorationType);
+
+  // 监听活动编辑器与可见编辑器，应用递归标记
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) requestRecursionsForEditor(editor);
+    }),
+    vscode.window.onDidChangeVisibleTextEditors((editors) => {
+      for (const editor of editors) {
+        requestRecursionsForEditor(editor);
+      }
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document === event.document) {
+        if (recursionDebounceTimer) clearTimeout(recursionDebounceTimer);
+        recursionDebounceTimer = setTimeout(() => {
+          requestRecursionsForEditor(activeEditor);
+        }, 250);
+      }
+    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      recursionCache.delete(doc.uri.toString());
+    }),
+  );
+
+  // 立即为当前已打开的编辑器初始化递归分析
+  if (vscode.window.activeTextEditor) {
+    requestRecursionsForEditor(vscode.window.activeTextEditor);
+  }
+
   // 创建状态栏
   statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
@@ -733,6 +1009,15 @@ function activate(context) {
       .start()
       .then(() => {
         console.log("TzdLang LSP server ready");
+        // ⭐ 监听 LSP 服务端发送的递归检测通知
+        lspClient.onNotification("tzdlang/recursions", ({ uri, items }) => {
+          updateRecursionsForUri(uri, items);
+        });
+
+        // LSP 启动后，全量刷新当前所有可见编辑器的递归分析结果
+        for (const editor of vscode.window.visibleTextEditors) {
+          requestRecursionsForEditor(editor);
+        }
       })
       .catch((err) => {
         console.warn("TzdLang LSP server failed to start:", err.message);
@@ -747,6 +1032,11 @@ function activate(context) {
  * 扩展停用入口。
  */
 function deactivate() {
+  if (recursionDecorationType) {
+    recursionDecorationType.dispose();
+    recursionDecorationType = null;
+  }
+  recursionCache.clear();
   if (outputChannel) {
     outputChannel.dispose();
     outputChannel = null;

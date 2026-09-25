@@ -5,6 +5,7 @@
 import antlr4 from "antlr4";
 import TzdLangLexer from "../TzdLangLexer.mjs";
 import TzdLangParser from "../TzdLangParser.mjs";
+import { detectRecursions } from "./recursionDetector.mjs";
 
 import path from "path";
 import fs from "fs";
@@ -320,68 +321,137 @@ function extractClassDefs(tree, text, uri) {
             const md =
               typeof cm.memberDecl === "function" ? cm.memberDecl() : null;
             if (!md) continue;
-            const idNode =
-              typeof md.IDENTIFIER === "function" ? md.IDENTIFIER() : null;
-            if (!idNode) continue;
-            const singleId = Array.isArray(idNode) ? idNode[0] : idNode;
-            if (!singleId) continue;
-            const name = singleId.getText();
-            const sym =
-              singleId.symbol ||
-              (typeof singleId.getSymbol === "function"
-                ? singleId.getSymbol()
-                : null);
-            const mLine = sym ? sym.line - 1 : 0;
-            const mCol = sym ? sym.column : 0;
 
-            let kind = "field";
-            let signature = "";
-            let argsCount = 0;
-            let isStatic = false;
+            if (
+              md instanceof TzdLangParser.MethodStaticDeclContext ||
+              md instanceof TzdLangParser.MethodDeclContext ||
+              md instanceof TzdLangParser.MethodAbstractDeclContext
+            ) {
+              const idNode =
+                typeof md.IDENTIFIER === "function" ? md.IDENTIFIER() : null;
+              if (!idNode) continue;
+              const singleId = Array.isArray(idNode) ? idNode[0] : idNode;
+              if (!singleId) continue;
+              const name = singleId.getText();
+              const sym =
+                singleId.symbol ||
+                (typeof singleId.getSymbol === "function"
+                  ? singleId.getSymbol()
+                  : null);
+              const mLine = sym ? sym.line - 1 : 0;
+              const mCol = sym ? sym.column : 0;
 
-            if (md instanceof TzdLangParser.MethodStaticDeclContext) {
-              kind = "method";
-              isStatic = true;
               const pl =
                 typeof md.paramList === "function" ? md.paramList() : null;
-              signature = pl ? pl.getText() : "";
-              argsCount =
+              const signature = pl ? pl.getText() : "";
+              const argsCount =
                 pl && typeof pl.param === "function" ? pl.param().length : 0;
-            } else if (md instanceof TzdLangParser.MethodDeclContext) {
-              kind = "method";
-              isStatic = false;
-              const pl =
-                typeof md.paramList === "function" ? md.paramList() : null;
-              signature = pl ? pl.getText() : "";
-              argsCount =
-                pl && typeof pl.param === "function" ? pl.param().length : 0;
+              const isStatic =
+                md instanceof TzdLangParser.MethodStaticDeclContext;
+
+              let bodyText = "";
+              const b = typeof md.block === "function" ? md.block() : null;
+              if (b && b.start && b.stop) {
+                bodyText = text.slice(b.start.start, b.stop.stop + 1);
+              }
+
+              members.push({
+                name,
+                kind: "method",
+                isStatic,
+                signature,
+                argsCount,
+                bodyText,
+                location: {
+                  uri,
+                  range: Range.create(mLine, mCol, mLine, mCol + name.length),
+                },
+              });
             } else if (md instanceof TzdLangParser.ConstructorDeclContext) {
-              kind = "constructor";
-              const pl =
-                typeof md.paramList === "function" ? md.paramList() : null;
-              signature = pl ? pl.getText() : "";
-              argsCount =
-                pl && typeof pl.param === "function" ? pl.param().length : 0;
-            } else if (md instanceof TzdLangParser.MethodAbstractDeclContext) {
-              kind = "method";
-              const pl =
-                typeof md.paramList === "function" ? md.paramList() : null;
-              signature = pl ? pl.getText() : "";
-              argsCount =
-                pl && typeof pl.param === "function" ? pl.param().length : 0;
-            }
+              const idNode =
+                typeof md.IDENTIFIER === "function" ? md.IDENTIFIER() : null;
+              if (!idNode) continue;
+              const singleId = Array.isArray(idNode) ? idNode[0] : idNode;
+              if (!singleId) continue;
+              const name = singleId.getText();
+              const sym =
+                singleId.symbol ||
+                (typeof singleId.getSymbol === "function"
+                  ? singleId.getSymbol()
+                  : null);
+              const mLine = sym ? sym.line - 1 : 0;
+              const mCol = sym ? sym.column : 0;
 
-            members.push({
-              name,
-              kind,
-              isStatic,
-              signature,
-              argsCount,
-              location: {
-                uri,
-                range: Range.create(mLine, mCol, mLine, mCol + name.length),
-              },
-            });
+              const pl =
+                typeof md.paramList === "function" ? md.paramList() : null;
+              const signature = pl ? pl.getText() : "";
+              const argsCount =
+                pl && typeof pl.param === "function" ? pl.param().length : 0;
+
+              members.push({
+                name,
+                kind: "constructor",
+                signature,
+                argsCount,
+                location: {
+                  uri,
+                  range: Range.create(mLine, mCol, mLine, mCol + name.length),
+                },
+              });
+            } else if (
+              md instanceof TzdLangParser.FieldVarDeclContext ||
+              md instanceof TzdLangParser.FieldLetDeclContext ||
+              md instanceof TzdLangParser.FieldConstDeclContext
+            ) {
+              const idNode =
+                typeof md.IDENTIFIER === "function" ? md.IDENTIFIER() : null;
+              if (idNode) {
+                const singleId = Array.isArray(idNode) ? idNode[0] : idNode;
+                if (singleId) {
+                  const name = singleId.getText();
+                  const sym =
+                    singleId.symbol ||
+                    (typeof singleId.getSymbol === "function"
+                      ? singleId.getSymbol()
+                      : null);
+                  const mLine = sym ? sym.line - 1 : 0;
+                  const mCol = sym ? sym.column : 0;
+                  const tt =
+                    typeof md.typeType === "function" ? md.typeType() : null;
+                  let type = tt ? tt.getText() : null;
+                  const expr =
+                    typeof md.expression === "function"
+                      ? md.expression()
+                      : null;
+                  if (!type && expr && expr.start && expr.stop) {
+                    const initStr = text
+                      .slice(expr.start.start, expr.stop.stop + 1)
+                      .trim();
+                    const newM = initStr.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
+                    if (newM) type = newM[1];
+                    else if (/^-?\d+\.\d+$/.test(initStr)) type = "float";
+                    else if (/^-?\d+$/.test(initStr)) type = "int";
+                    else if (/^"(?:[^"\\]|\\.)*"$/.test(initStr)) type = "string";
+                    else if (initStr === "true" || initStr === "false")
+                      type = "bool";
+                  }
+                  members.push({
+                    name,
+                    kind: "field",
+                    type,
+                    location: {
+                      uri,
+                      range: Range.create(
+                        mLine,
+                        mCol,
+                        mLine,
+                        mCol + name.length,
+                      ),
+                    },
+                  });
+                }
+              }
+            }
           }
         }
 
@@ -400,16 +470,30 @@ function extractClassDefs(tree, text, uri) {
             }
             if (lineStartDepth === 1) {
               let m = lineStr.match(
-                /^\s*(?:(?:public|private|protected|static)\s+)*(?:var|let|const)\s+(?:[a-zA-Z_]\w*\s+)?([a-zA-Z_]\w*)/,
+                /^\s*(?:(?:public|private|protected|static)\s+)*(?:var|let|const)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)(?:\s*=\s*(.*?))?(?:;|$)/,
               );
               if (m) {
-                const col = lineStr.indexOf(m[1]);
+                const name = m[2];
+                let type = m[1] || null;
+                const initExpr = m[3] ? m[3].trim() : "";
+                if (!type && initExpr) {
+                  const newM = initExpr.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
+                  if (newM) type = newM[1];
+                  else if (/^-?\d+\.\d+$/.test(initExpr)) type = "float";
+                  else if (/^-?\d+$/.test(initExpr)) type = "int";
+                  else if (/^"(?:[^"\\]|\\.)*"$/.test(initExpr))
+                    type = "string";
+                  else if (initExpr === "true" || initExpr === "false")
+                    type = "bool";
+                }
+                const col = lineStr.indexOf(name);
                 members.push({
-                  name: m[1],
+                  name,
                   kind: "field",
+                  type,
                   location: {
                     uri,
-                    range: Range.create(i, col, i, col + m[1].length),
+                    range: Range.create(i, col, i, col + name.length),
                   },
                 });
                 continue;
@@ -423,6 +507,26 @@ function extractClassDefs(tree, text, uri) {
                   .split(",")
                   .map((x) => x.trim())
                   .filter((x) => x.length > 0);
+
+                let bodyLines = [];
+                let bDepth = 0;
+                let started = false;
+                for (let j = i; j <= stopLine; j++) {
+                  const l = lines[j];
+                  bodyLines.push(l);
+                  for (const c of l
+                    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+                    .replace(/\/\/.*/, "")) {
+                    if (c === "{") {
+                      bDepth++;
+                      started = true;
+                    } else if (c === "}") {
+                      bDepth--;
+                    }
+                  }
+                  if (started && bDepth === 0) break;
+                }
+
                 members.push({
                   name: m[1],
                   kind: "method",
@@ -431,6 +535,7 @@ function extractClassDefs(tree, text, uri) {
                     /\bstatic\s+fun\b/.test(lineStr),
                   signature: m[2],
                   argsCount: args.length,
+                  bodyText: bodyLines.join("\n"),
                   location: {
                     uri,
                     range: Range.create(i, col, i, col + m[1].length),
@@ -535,6 +640,48 @@ function getMembersIncludingInherited(className, seen = new Set()) {
     }
   }
   return result;
+}
+
+/**
+ * 提取某行前面紧邻的多行注释块（/** ... * / 或 /* ... * /）作为文档字符串。
+ * lineNum 是声明所在行（0-indexed），会向上扫描查找注释。
+ */
+function extractDocComment(text, lineNum) {
+  if (lineNum == null || lineNum < 0) return null;
+  const lines = text.split("\n");
+
+  // 向上跳过空行
+  let i = lineNum - 1;
+  while (i >= 0 && /^\s*$/.test(lines[i])) i--;
+  if (i < 0) return null;
+
+  // 找到以 */ 结尾的行
+  if (!/\*\/\s*$/.test(lines[i])) return null;
+  const closeIdx = i;
+
+  // 向上找 /*
+  let openIdx = -1;
+  for (let j = closeIdx; j >= 0; j--) {
+    if (/\/\*/.test(lines[j])) {
+      openIdx = j;
+      break;
+    }
+  }
+  if (openIdx < 0) return null;
+
+  // 取出注释内容，清理前缀符号（* 等）
+  const commentLines = lines.slice(openIdx, closeIdx + 1);
+  const cleaned = commentLines
+    .map((l) =>
+      l
+        .replace(/^\s*\/\*+\s?/, "")
+        .replace(/\s*\*+\/\s*$/, "")
+        .replace(/^\s*\*\s?/, "")
+    )
+    .filter((l) => l.trim() !== "" || commentLines.length > 2);
+
+  const content = cleaned.join("\n").trim();
+  return content || null;
 }
 
 function extractParamInfo(arg) {
@@ -659,22 +806,387 @@ function resolveVarType(varName, text, docUri, lineNum) {
     if (m) return m[1];
   }
 
-  // 3. 字面量赋值推断 (例如: x = "100" / x = 12.3)
+  // 3. 字面量或表达式赋值推断 (例如: x = "100" / x = 12.3 / x = new Test().a())
   const assignRegex = new RegExp(
     `\\b(?:var|let|const|)\\s*${varName}\\s*=\\s*(.*);?`,
   );
-  for (const line of lines) {
-    let m = line.match(assignRegex);
+  for (let i = 0; i < lines.length; i++) {
+    let m = lines[i].match(assignRegex);
     if (m) {
-      let val = m[1].trim();
+      let val = m[1].trim().replace(/;$/, "").trim();
       if (val.startsWith('"') || val.startsWith("'")) return "string";
       if (val === "true" || val === "false") return "bool";
       if (/^-?\d+\.\d+$/.test(val)) return "float";
       if (/^-?\d+$/.test(val)) return "int";
+      if (val.startsWith("new ")) {
+        const nm = val.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
+        if (nm && !val.includes(".")) return nm[1];
+      }
+      if (val.includes(".") || val.endsWith(")")) {
+        const t = evaluateChainType(val, docUri, i, text);
+        if (t) return t;
+      }
     }
   }
 
   return null;
+}
+
+function extractExpressionBeforeDot(text) {
+  let i = text.length - 1;
+  while (i >= 0 && /\s/.test(text[i])) i--;
+  if (i < 0 || text[i] !== ".") return "";
+  i--; // skip dot
+  while (i >= 0 && /\s/.test(text[i])) i--;
+  if (i < 0) return "";
+
+  let end = i + 1;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let inString = false;
+  let stringChar = "";
+
+  while (i >= 0) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === stringChar && (i === 0 || text[i - 1] !== "\\")) {
+        inString = false;
+      }
+      i--;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringChar = ch;
+      i--;
+      continue;
+    }
+    if (ch === ")" || ch === "]") {
+      if (ch === ")") parenDepth++;
+      else bracketDepth++;
+      i--;
+      continue;
+    }
+    if (ch === "(" || ch === "[") {
+      if (ch === "(") {
+        if (parenDepth > 0) parenDepth--;
+        else break;
+      } else {
+        if (bracketDepth > 0) bracketDepth--;
+        else break;
+      }
+      i--;
+      continue;
+    }
+
+    if (parenDepth > 0 || bracketDepth > 0) {
+      i--;
+      continue;
+    }
+
+    if (/[a-zA-Z0-9_]/.test(ch) || ch === "." || /\s/.test(ch)) {
+      i--;
+    } else {
+      break;
+    }
+  }
+
+  let expr = text.slice(i + 1, end).trim();
+  expr = expr.replace(/^(?:return|ret|var|let|const|case|throw)\s+/, "").trim();
+  return expr;
+}
+
+function splitChainSegments(expr) {
+  const segments = [];
+  let current = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let inString = false;
+  let stringChar = "";
+
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (inString) {
+      current += ch;
+      if (ch === stringChar && (i === 0 || expr[i - 1] !== "\\")) inString = false;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringChar = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "(") parenDepth++;
+    else if (ch === ")") parenDepth--;
+    else if (ch === "[") bracketDepth++;
+    else if (ch === "]") bracketDepth--;
+
+    if (ch === "." && parenDepth === 0 && bracketDepth === 0) {
+      if (current.trim()) segments.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+
+function inferMethodReturnType(member, className, docUri, text, seen = new Set()) {
+  if (!member) return null;
+  if (member.returnType) return member.returnType;
+  if (!member.bodyText) return null;
+
+  const key = `${className || ""}.${member.name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+
+  const body = member.bodyText;
+  const retRegex = /\b(?:return|ret)\s+([^;}\n\r]+)/g;
+  let match;
+  const returnExprs = [];
+  while ((match = retRegex.exec(body)) !== null) {
+    const expr = match[1].trim();
+    if (expr) returnExprs.push(expr);
+  }
+
+  if (returnExprs.length === 0) {
+    member.returnType = "void";
+    return "void";
+  }
+
+  for (const expr of returnExprs) {
+    const newMatch = expr.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
+    if (newMatch && !expr.includes(").")) {
+      member.returnType = newMatch[1];
+      return newMatch[1];
+    }
+    if (expr === "this") {
+      member.returnType = className;
+      return className;
+    }
+    if (expr === "super") {
+      const def = className ? classCache.get(className) : null;
+      if (def && def.parentName) {
+        member.returnType = def.parentName;
+        return def.parentName;
+      }
+    }
+    if (/^"(?:[^"\\]|\\.)*"$/.test(expr) || /^'(?:[^'\\]|\\.)*'$/.test(expr)) {
+      member.returnType = "string";
+      return "string";
+    }
+    if (/^-?\d+\.\d+$/.test(expr)) {
+      member.returnType = "float";
+      return "float";
+    }
+    if (/^-?\d+$/.test(expr)) {
+      member.returnType = "int";
+      return "int";
+    }
+    if (expr === "true" || expr === "false") {
+      member.returnType = "bool";
+      return "bool";
+    }
+    if (/^\[.*\]$/.test(expr)) {
+      member.returnType = "array";
+      return "array";
+    }
+    if (/^\{.*\}$/.test(expr)) {
+      member.returnType = "map";
+      return "map";
+    }
+    if (expr === "null") continue;
+
+    // Check local variable inside method body
+    const varNameMatch = expr.match(/^([a-zA-Z_]\w*)$/);
+    if (varNameMatch) {
+      const vName = varNameMatch[1];
+      const nvMatch = body.match(
+        new RegExp(
+          `\\b(?:var|let|const|)\\s*${vName}\\s*=\\s*new\\s+([A-Z][a-zA-Z0-9_]*)`
+        )
+      );
+      if (nvMatch) {
+        member.returnType = nvMatch[1];
+        return nvMatch[1];
+      }
+      const tvMatch = body.match(
+        new RegExp(
+          `\\b([A-Z][a-zA-Z0-9_]*|int|float|string|bool)\\s+${vName}\\b`
+        )
+      );
+      if (tvMatch) {
+        member.returnType = tvMatch[1];
+        return tvMatch[1];
+      }
+      const assignM = body.match(
+        new RegExp(`\\b(?:var|let|const|)\\s*${vName}\\s*=\\s*(.*);?`)
+      );
+      if (assignM) {
+        const aVal = assignM[1].trim().replace(/;$/, "").trim();
+        if (aVal.startsWith('"') || aVal.startsWith("'")) {
+          member.returnType = "string";
+          return "string";
+        }
+        if (/^-?\d+$/.test(aVal)) {
+          member.returnType = "int";
+          return "int";
+        }
+        if (/^-?\d+\.\d+$/.test(aVal)) {
+          member.returnType = "float";
+          return "float";
+        }
+        if (aVal === "true" || aVal === "false") {
+          member.returnType = "bool";
+          return "bool";
+        }
+        if (aVal.includes(".") || aVal.endsWith(")")) {
+          const subT = evaluateChainType(
+            aVal,
+            docUri,
+            member.location?.range?.start?.line || 0,
+            text,
+            seen
+          );
+          if (subT) {
+            member.returnType = subT;
+            return subT;
+          }
+        }
+      }
+    }
+
+    // Chained call in return
+    if (expr.includes(".") || expr.endsWith(")")) {
+      const subT = evaluateChainType(
+        expr,
+        docUri,
+        member.location?.range?.start?.line || 0,
+        text,
+        seen
+      );
+      if (subT) {
+        member.returnType = subT;
+        return subT;
+      }
+    }
+  }
+
+  return null;
+}
+
+function evaluateChainType(exprStr, docUri, line, text, seen = new Set()) {
+  if (!exprStr) return null;
+  const segments = splitChainSegments(exprStr);
+  if (segments.length === 0) return null;
+
+  let currentType = null;
+  const root = segments[0];
+
+  // 1. new ClassName(...)
+  const newMatch = root.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
+  if (newMatch) {
+    currentType = newMatch[1];
+  } else if (root === "this") {
+    currentType = findClassAtLine(docUri, line)?.className || null;
+  } else if (root === "super") {
+    currentType = findClassAtLine(docUri, line)?.parentName || null;
+  } else if (classCache.has(root)) {
+    currentType = root;
+  } else {
+    // Check if root is a function call like foo()
+    const callMatch = root.match(/^([a-zA-Z_]\w*)\s*\(/);
+    if (callMatch) {
+      const fnName = callMatch[1];
+      const curClass = findClassAtLine(docUri, line);
+      if (curClass) {
+        const curMembers = getMembersIncludingInherited(curClass.className);
+        const m = curMembers.find((x) => x.name === fnName);
+        if (m && m.kind === "method") {
+          currentType = inferMethodReturnType(
+            m,
+            curClass.className,
+            docUri,
+            text,
+            seen
+          );
+        }
+      }
+      if (!currentType && text) {
+        const fnRegex = new RegExp(
+          `(?:^|\\n)\\s*(?:(?:public|private|protected|static)\\s+)*fun\\s+${fnName}\\s*\\([^)]*\\)\\s*(\\{[\\s\\S]*?\\})`
+        );
+        const fm = text.match(fnRegex);
+        if (fm) {
+          const fakeMember = { name: fnName, bodyText: fm[1] };
+          currentType = inferMethodReturnType(
+            fakeMember,
+            null,
+            docUri,
+            text,
+            seen
+          );
+        }
+      }
+    } else {
+      currentType = resolveVarType(root, text, docUri, line);
+    }
+  }
+
+  if (!currentType) return null;
+
+  for (let i = 1; i < segments.length; i++) {
+    if (!currentType) return null;
+    if (
+      [
+        "int",
+        "float",
+        "string",
+        "bool",
+        "void",
+        "null",
+        "array",
+        "map",
+      ].includes(currentType)
+    ) {
+      return null;
+    }
+
+    const allMembers = getMembersIncludingInherited(currentType);
+    if (!allMembers.length) return null;
+
+    const seg = segments[i];
+    const callMatch = seg.match(/^([a-zA-Z_]\w*)\s*(?:\(|$)/);
+    if (!callMatch) return null;
+    const memberName = callMatch[1];
+    const member = allMembers.find((m) => m.name === memberName);
+    if (!member) return null;
+
+    if (member.kind === "method") {
+      currentType = inferMethodReturnType(
+        member,
+        currentType,
+        docUri,
+        text,
+        seen
+      );
+    } else {
+      currentType = member.type || null;
+    }
+  }
+
+  return currentType;
+}
+
+function refreshLocalClassCache(text, docUri) {
+  if (!text || !docUri) return;
+  try {
+    const { tree } = parseTzd(text);
+    const localDefs = extractClassDefs(tree, text, docUri);
+    for (const def of localDefs) classCache.set(def.className, def);
+  } catch (_) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -692,223 +1204,357 @@ const KEYWORD_ITEMS = [
 ];
 
 function buildCompletions(text, line, col, docUri) {
-  const items = [];
+  refreshLocalClassCache(text, docUri);
   const lines = text.split("\n");
-  const before = (lines[line] || "").slice(0, col);
+  const lineText = lines[line] || "";
+  const before = lineText.slice(0, col);
 
-  if (before.endsWith("/**")) {
-    return [
-      {
-        label: "/** */ (Doc block)",
-        kind: CompletionItemKind.Snippet,
-        insertTextFormat: InsertTextFormat.Snippet,
-        insertText: " * $0\n */",
-        sortText: "0",
-      },
-    ];
+  // ─── 1. 提取当前前缀（光标左侧的标识符）───────────────────────────────────
+  const prefixMatch = before.match(/([a-zA-Z_][\w]*)$/);
+  const prefix = prefixMatch ? prefixMatch[1] : "";
+  // before 去掉 prefix 之后的部分（即前缀开始前的文字）
+  const beforePrefix = before.slice(0, before.length - prefix.length);
+
+  // 帮助函数：按 prefix 过滤并评分排序
+  // 精确匹配=0, 前缀匹配=1, 包含=2
+  function filterItems(items) {
+    if (!prefix) return items;
+    const p = prefix.toLowerCase();
+    return items
+      .filter(it => it.label.toLowerCase().includes(p))
+      .map(it => {
+        const lbl = it.label.toLowerCase();
+        const score = lbl === p ? "0" : lbl.startsWith(p) ? "1" : "2";
+        return { ...it, sortText: score + (it.sortText || "9") };
+      });
   }
 
-  const classVarMatch = before.match(/([A-Z][a-zA-Z0-9_]*)\s+$/);
-  if (classVarMatch && classCache.has(classVarMatch[1])) {
-    const clsName = classVarMatch[1];
-    const lowerName = clsName.charAt(0).toLowerCase() + clsName.slice(1);
-    items.push({
-      label: lowerName,
-      kind: CompletionItemKind.Variable,
-      detail: `推荐变量名`,
-      sortText: "0",
-    });
-    items.push({
-      label: lowerName + "1",
-      kind: CompletionItemKind.Variable,
-      sortText: "1",
-    });
+  // ─── 2. 注释 / 字符串内 → 不补全 ──────────────────────────────────────────
+  // 检查全文直到当前位置是否在块注释内
+  const textUpToCursor = lines.slice(0, line).join("\n") + "\n" + before;
+  {
+    // 剥离字符串后检测 /* ... */
+    const stripped = textUpToCursor.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    const lastOpen = stripped.lastIndexOf("/*");
+    const lastClose = stripped.lastIndexOf("*/");
+    if (lastOpen > lastClose) return []; // 在块注释内
+  }
+  // 行内行注释 //
+  if (/\/\//.test(before.replace(/"(?:[^"\\]|\\.)*"/g, '""'))) return [];
+  // 行内字符串末尾未闭合（光标在字符串里）
+  {
+    let inStr = false, q = "";
+    for (let i = 0; i < before.length; i++) {
+      const ch = before[i];
+      if (inStr) { if (ch === "\\" ) { i++; } else if (ch === q) inStr = false; }
+      else if (ch === '"' || ch === "'") { inStr = true; q = ch; }
+    }
+    if (inStr) return [];
   }
 
-  const newMatch =
-    before.match(/([A-Z][a-zA-Z0-9_]*)\s+[a-zA-Z_]\w*\s*=\s*new\s*$/) ||
-    before.match(/\bnew\s*$/);
-  if (newMatch) {
-    const expectedType = newMatch[1] || null;
-    const expectedParent =
-      expectedType && classCache.has(expectedType)
-        ? classCache.get(expectedType).parentName
-        : null;
+  const items = [];
 
+  // ─── 3. /** 块注释补全 ─────────────────────────────────────────────────────
+  if (before.trimEnd().endsWith("/**")) {
+    return [{ label: "/** */ (Doc block)", kind: 15 /*Snippet*/,
+      insertTextFormat: 2, insertText: " * $0\n */", sortText: "0" }];
+  }
+
+  // ─── 4. 成员访问（点号）上下文 ───────────────────────────────────────────────
+  // 判断：去掉 prefix 后以 . 结尾（如 "obj." 或 "new A().b." 或 "obj.m")
+  {
+    const dotCtx = /\.\s*$/.test(beforePrefix);
+    // 或者前缀本身前面紧跟着点
+    const dotBeforePrefix = /\.\s*$/.test(beforePrefix);
+    if (dotCtx || /\.\s*$/.test(beforePrefix)) {
+      const exprPart = extractExpressionBeforeDot(beforePrefix);
+      if (exprPart) {
+        const isSuper = exprPart === "super";
+        const targetType = evaluateChainType(exprPart, docUri, line, text);
+        if (targetType) {
+          const allMembers = getMembersIncludingInherited(targetType);
+          const seen = new Set();
+          for (const member of allMembers) {
+            if (member.kind === "constructor" || seen.has(member.name)) continue;
+            if (isSuper && member.kind !== "method") continue;
+            seen.add(member.name);
+            if (member.kind === "method") {
+              const retType = member.returnType ||
+                inferMethodReturnType(member, targetType, docUri, text) || "";
+              const retLabel = retType && !["void","null"].includes(retType) ? ` → ${retType}` : "";
+              const docComment = extractDocComment(text, member.location?.range?.start?.line);
+              items.push({
+                label: member.name,
+                kind: 2 /*Method*/,
+                insertTextFormat: 2,
+                insertText: `${member.name}($0)`,
+                detail: `fun ${member.name}(${member.signature || ""})${retLabel}`,
+                documentation: docComment ? { kind: "markdown", value: docComment } : undefined,
+                sortText: "1",
+              });
+            } else {
+              items.push({
+                label: member.name,
+                kind: 5 /*Field*/,
+                detail: member.type ? `${member.type} field` : "field",
+                sortText: "2",
+              });
+            }
+          }
+          return filterItems(items);
+        }
+      }
+      // 点号上下文但目标类型未能推断 → 返回空，避免乱提示
+      return [];
+    }
+  }
+
+  // ─── 5. new 之后 → 只提示类名 ────────────────────────────────────────────
+  if (/\bnew\s+$/.test(beforePrefix) || /\bnew\s+$/.test(before)) {
+    const expectedTypeMatch = beforePrefix.match(/([A-Z][a-zA-Z0-9_]*)\s+[a-zA-Z_]\w*\s*=\s*new\s*$/);
+    const expectedType = expectedTypeMatch ? expectedTypeMatch[1] : null;
     for (const [className, def] of classCache.entries()) {
-      if (
-        def._file ||
-        !className ||
-        className.startsWith("_") ||
-        className.startsWith("file:///")
-      )
-        continue;
-      let sort =
-        className === expectedType
-          ? "0"
-          : className === expectedParent
-            ? "1"
-            : "3";
+      if (def._file || !className || className.startsWith("_") || className.startsWith("file:///")) continue;
+      const sort = className === expectedType ? "0" : "1";
       items.push({
-        label: className,
-        kind: CompletionItemKind.Constructor,
-        insertTextFormat: InsertTextFormat.Snippet,
-        insertText: `${className}($0)`,
+        label: className, kind: 4 /*Constructor*/,
+        insertTextFormat: 2, insertText: `${className}($0)`,
         detail: def.parentName ? `extends ${def.parentName}` : "class",
         sortText: sort,
       });
     }
     for (const c of cachedRuntimeSymbols.classes) {
-      items.push({
-        label: c,
-        kind: CompletionItemKind.Class,
-        insertTextFormat: InsertTextFormat.Snippet,
-        insertText: `${c}($0)`,
-        detail: "Native C++ Class",
-        sortText: "4",
-      });
+      items.push({ label: c, kind: 7 /*Class*/, insertTextFormat: 2, insertText: `${c}($0)`, detail: "Native C++ Class", sortText: "2" });
     }
-    return items;
+    return filterItems(items);
   }
 
-  const dotMatch = before.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.$/);
-  if (dotMatch) {
-    const isSuper = dotMatch[1] === "super"; // ⭐ 标记当前是否是在写 super.
-    const varType = resolveVarType(dotMatch[1], text, docUri, line);
-    if (varType) {
-      const allMembers = getMembersIncludingInherited(varType);
-      const seen = new Set();
-      for (const member of allMembers) {
-        if (member.kind === "constructor" || seen.has(member.name)) continue;
+  // ─── 6. var/let/const 类型位置 → 只提示类型名 ──────────────────────────
+  if (/\b(?:var|let|const)\s+$/.test(before) || /\b(?:var|let|const)\s+[a-zA-Z_]\w*$/.test(before)) {
+    // 在 var/let 关键词后面紧跟一个词 → 提示类型（但本语言的写法是 var T name，类型可以是类名）
+    // 先用 prefix 来判断是否在输入类型
+    // 这里只在 "var " 后面有前缀才提示
+    if (/\b(?:var|let|const)\s+$/.test(before)) {
+      const typeItems = [];
+      const PRIMITIVE_TYPES = ["int","string","bool","float","void"];
+      for (const t of PRIMITIVE_TYPES) typeItems.push({ label: t, kind: 25 /*TypeParameter*/, detail: "primitive type", sortText: "0" });
+      for (const [cn] of classCache.entries()) {
+        if (!cn.startsWith("file:///") && !cn.startsWith("_")) {
+          typeItems.push({ label: cn, kind: 7 /*Class*/, detail: "class type", sortText: "1" });
+        }
+      }
+      return filterItems(typeItems);
+    }
+  }
 
-        // ⭐ 新增功能：如果是 super.，直接跳过非函数的属性
-        if (isSuper && member.kind !== "method") continue;
+  // ─── 7. 没有前缀（空格/纯触发）→ 不返回任何补全（避免乱显示）────────────
+  // 只要用户没有在输入标识符词，直接返回空
+  if (!prefix) return [];
 
-        seen.add(member.name);
-        if (member.kind === "method") {
+  // ─── 8. 有前缀（用户在输入词）→ 智能组装候选集 ──────────────────────────
+  //   a. 当前类成员（如果在类里面）
+  const currentClass = findClassAtLine(docUri, line);
+  if (currentClass) {
+    // 类体内成员补全
+    const allMembers = getMembersIncludingInherited(currentClass.className);
+    const seenM = new Set();
+    for (const m of allMembers) {
+      if (m.kind === "constructor" || seenM.has(m.name)) continue;
+      seenM.add(m.name);
+      if (m.kind === "method") {
+        items.push({ label: m.name, kind: 2 /*Method*/,
+          insertTextFormat: 2, insertText: `${m.name}($0)`,
+          detail: `fun ${m.name}(${m.signature || ""})`,
+          sortText: "0" });
+      } else {
+        items.push({ label: m.name, kind: 5 /*Field*/,
+          detail: m.type ? `${m.type} field` : "field", sortText: "1" });
+      }
+    }
+    // 父类方法覆写建议（只在类体顶层，不在方法体内）
+    if (currentClass.parentName) {
+      const parentMembers = getMembersIncludingInherited(currentClass.parentName);
+      const seenOverride = new Set(allMembers.map(m => m.name));
+      for (const pm of parentMembers) {
+        if (pm.kind === "method" && !seenOverride.has(pm.name)) {
           items.push({
-            label: member.name,
-            kind: CompletionItemKind.Method,
-            insertTextFormat: InsertTextFormat.Snippet,
-            insertText: `${member.name}($0)`,
-            detail: `fun ${member.name}(${member.signature || ""})`,
-            sortText: "1",
-          });
-        } else {
-          items.push({
-            label: member.name,
-            kind: CompletionItemKind.Field,
-            detail: "property",
-            sortText: "2",
+            label: `↩ ${pm.name}`, kind: 15 /*Snippet*/,
+            insertTextFormat: 2,
+            insertText: `${pm.name}(${pm.signature || ""}) {\n\t$0\n}`,
+            detail: `Override: fun ${pm.name}(${pm.signature || ""})`,
+            sortText: "0",
           });
         }
       }
     }
-    return items;
   }
 
-  // ⭐ 新增功能：重写父类方法自动完成 (Override)
-  const currentClass = findClassAtLine(docUri, line);
-  if (currentClass && currentClass.parentName) {
-    const parentMembers = getMembersIncludingInherited(currentClass.parentName);
-    const seenOverride = new Set();
-    for (const pm of parentMembers) {
-      if (pm.kind === "method" && !seenOverride.has(pm.name)) {
-        seenOverride.add(pm.name);
-        items.push({
-          label: pm.name,
-          kind: CompletionItemKind.Snippet,
-          insertTextFormat: InsertTextFormat.Snippet,
-          insertText: `${pm.name}(${pm.signature || ""}) {\n\t$0\n}`, // 自动搭好函数壳子
-          detail: `重写父类方法 (Override)`,
-          sortText: "0", // 优先级排最高
-        });
-      }
-    }
-  }
-
-  for (const [className, def] of classCache.entries()) {
-    if (
-      !def._file &&
-      className &&
-      !className.startsWith("file:///") &&
-      !className.startsWith("_")
-    ) {
-      items.push({
-        label: className,
-        kind: CompletionItemKind.Class,
-        detail: "class",
-        sortText: "3",
-      });
-    }
-  }
-
-  for (const f of cachedRuntimeSymbols.functions) {
-    items.push({
-      label: f,
-      kind: CompletionItemKind.Function,
-      insertTextFormat: InsertTextFormat.Snippet,
-      insertText: `${f}($0)`,
-      detail: "Native C++ Function",
-      sortText: "3",
-    });
-  }
-
+  //   b. 可见局部变量（作用域相关，优先级高）
   for (const v of extractVisibleLocals(text)) {
     if (!KEYWORDS.has(v.name)) {
-      items.push({
-        label: v.name,
-        kind: CompletionItemKind.Variable,
-        detail: v.type || v.kind,
-        sortText: "4",
-      });
+      items.push({ label: v.name, kind: 6 /*Variable*/,
+        detail: v.type ? `${v.type}` : v.kind, sortText: "1" });
     }
   }
 
-  for (const [label, insert, doc] of KEYWORD_ITEMS) {
-    items.push({
-      label,
-      kind: CompletionItemKind.Keyword,
-      insertText: insert,
-      insertTextFormat: InsertTextFormat.Snippet,
-      detail: doc,
-      sortText: "5",
-    });
+  //   c. 全局函数
+  for (const fn of globalFunctionsCache) {
+    items.push({ label: fn, kind: 3 /*Function*/,
+      insertTextFormat: 2, insertText: `${fn}($0)`,
+      detail: "function", sortText: "2" });
   }
 
-  return items;
+  //   d. 类名
+  for (const [cn, def] of classCache.entries()) {
+    if (!def._file && cn && !cn.startsWith("file:///") && !cn.startsWith("_")) {
+      items.push({ label: cn, kind: 7 /*Class*/, detail: "class", sortText: "3" });
+    }
+  }
+
+  //   e. 运行时内置函数
+  for (const f of cachedRuntimeSymbols.functions) {
+    items.push({ label: f, kind: 3 /*Function*/,
+      insertTextFormat: 2, insertText: `${f}($0)`,
+      detail: "Native C++ Function", sortText: "4" });
+  }
+
+  //   f. 运行时内置类
+  for (const c of cachedRuntimeSymbols.classes) {
+    items.push({ label: c, kind: 7 /*Class*/, detail: "Native C++ Class", sortText: "4" });
+  }
+
+  //   g. 关键字（最低优先）
+  for (const [label, insert, doc] of KEYWORD_ITEMS) {
+    items.push({ label, kind: 14 /*Keyword*/,
+      insertText: insert, insertTextFormat: 2,
+      detail: doc, sortText: "5" });
+  }
+
+  return filterItems(items);
 }
 
 connection.onSignatureHelp((params) => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
-  const lines = doc.getText().split("\n");
-  const beforeCursor = lines[params.position.line].substring(
+  const text = doc.getText();
+  const textLines = text.split("\n");
+  const beforeCursor = textLines[params.position.line].substring(
     0,
     params.position.character,
   );
 
+  function buildSigResult(members, className) {
+    if (!members || members.length === 0) return null;
+    return {
+      signatures: members.map((m) => {
+        const doc = extractDocComment(text, m.location?.range?.start?.line);
+        return {
+          label: `fun ${m.name}(${m.signature || ""})`,
+          documentation: doc
+            ? { kind: "markdown", value: doc }
+            : `${className ? className + "." : ""}${m.name}`,
+          parameters: (m.signature || "")
+            .split(",")
+            .filter((p) => p.trim())
+            .map((p) => ({ label: p.trim() })),
+        };
+      }),
+      activeSignature: 0,
+      activeParameter: countActiveParam(beforeCursor),
+    };
+  }
+
+  // 计算当前光标是第几个参数
+  function countActiveParam(before) {
+    let depth = 0;
+    let commas = 0;
+    for (let i = before.length - 1; i >= 0; i--) {
+      const ch = before[i];
+      if (ch === ")" || ch === "]") depth++;
+      else if (ch === "(" || ch === "[") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) commas++;
+    }
+    return commas;
+  }
+
+  // 1. new ClassName(  → 构造函数签名
   const newMatch = beforeCursor.match(/\bnew\s+([A-Z]\w*)\s*\($/);
   if (newMatch) {
     const def = classCache.get(newMatch[1]);
     if (def) {
       const ctors = def.members.filter((m) => m.kind === "constructor");
-      if (ctors.length > 0) {
+      if (ctors.length > 0) return buildSigResult(ctors, newMatch[1]);
+    }
+  }
+
+  // 2. obj.method(  → 成员方法签名（支持链式推断）
+  const memberCallMatch = beforeCursor.match(/^(.*)\.\s*([a-zA-Z_]\w*)\s*\($/);
+  if (memberCallMatch) {
+    const exprPart = memberCallMatch[1];
+    const methodName = memberCallMatch[2];
+    refreshLocalClassCache(text, params.textDocument.uri);
+    const targetType = evaluateChainType(
+      exprPart,
+      params.textDocument.uri,
+      params.position.line,
+      text,
+    );
+    if (targetType) {
+      const allMembers = getMembersIncludingInherited(targetType);
+      const methods = allMembers.filter(
+        (m) => m.name === methodName && m.kind === "method",
+      );
+      if (methods.length > 0) return buildSigResult(methods, targetType);
+    }
+  }
+
+  // 3. 全局函数 fname(
+  const globalFnMatch = beforeCursor.match(/\b([a-zA-Z_]\w*)\s*\($/);
+  if (globalFnMatch) {
+    const fnName = globalFnMatch[1];
+    // 在 classCache 里找
+    for (const def of classCache.values()) {
+      if (!def._file && Array.isArray(def.members)) {
+        const curClass = findClassAtLine(params.textDocument.uri, params.position.line);
+        if (!curClass || def.className !== curClass.className) continue;
+        const methods = def.members.filter(
+          (m) => m.name === fnName && m.kind === "method",
+        );
+        if (methods.length > 0) return buildSigResult(methods, def.className);
+      }
+    }
+    // 直接正则扫描全局 fun fnName(...)
+    const lines2 = text.split("\n");
+    const funRegex = new RegExp(
+      `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${fnName}\\s*\\(([^)]*)\\)`,
+    );
+    for (let i = 0; i < lines2.length; i++) {
+      const fm = funRegex.exec(lines2[i]);
+      if (fm) {
+        const docStr = extractDocComment(text, i);
+        const sig = fm[1].trim();
         return {
-          signatures: ctors.map((c) => ({
-            label: `${newMatch[1]}(${c.signature || ""})`,
-            documentation: `构造函数`,
-            parameters: (c.signature || "")
-              .split(",")
-              .filter((p) => p.trim())
-              .map((p) => ({ label: p.trim() })),
-          })),
+          signatures: [
+            {
+              label: `fun ${fnName}(${sig})`,
+              documentation: docStr
+                ? { kind: "markdown", value: docStr }
+                : `fun ${fnName}`,
+              parameters: sig
+                .split(",")
+                .filter((p) => p.trim())
+                .map((p) => ({ label: p.trim() })),
+            },
+          ],
           activeSignature: 0,
-          activeParameter: 0,
+          activeParameter: countActiveParam(beforeCursor),
         };
       }
     }
   }
+
   return null;
 });
 
@@ -916,6 +1562,7 @@ connection.onHover((params) => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
   const text = doc.getText();
+  refreshLocalClassCache(text, params.textDocument.uri);
   const currentLine = text.split("\n")[params.position.line];
   let start = params.position.character;
   let end = params.position.character;
@@ -926,38 +1573,44 @@ connection.onHover((params) => {
   if (start === end) return null;
   const word = currentLine.substring(start, end);
 
-  // ⭐ 优先级 1：点号访问的类成员 (例如 A.a 或 err.toString() 或 MathToolkit.square())
-  const dotMatch = currentLine
-    .slice(0, start)
-    .match(/([a-zA-Z_][a-zA-Z0-9_]*)\.\s*$/);
-  if (dotMatch) {
-    const varType = resolveVarType(
-      dotMatch[1],
-      text,
-      params.textDocument.uri,
-      params.position.line,
-    );
-    if (varType) {
-      const allMembers = getMembersIncludingInherited(varType);
+  // ⭐ 优先级 1：点号访问的类成员 (例如 A.a 或 err.toString() 或 MathToolkit.square() 或 new Test().a() 或 new Test().a().b())
+  const beforeHover = currentLine.slice(0, start);
+  const isMemberHover = /\.\s*$/.test(beforeHover);
+  if (isMemberHover) {
+    const exprBeforeDot = extractExpressionBeforeDot(beforeHover);
+    let hoverTargetClass = null;
+    if (exprBeforeDot) {
+      hoverTargetClass = evaluateChainType(
+        exprBeforeDot,
+        params.textDocument.uri,
+        params.position.line,
+        text,
+      );
+    }
+    if (hoverTargetClass) {
+      const allMembers = getMembersIncludingInherited(hoverTargetClass);
       const member = allMembers.find((m) => m.name === word);
       if (member) {
-        if (member.kind === "method")
-          return {
-            contents: {
-              kind: MarkupKind.Markdown,
-              value: `\`\`\`tzdlang\n${member.isStatic ? "static " : ""}fun ${member.name}(${member.signature || ""})\n\`\`\``,
-            },
-          };
-        else
-          return {
-            contents: {
-              kind: MarkupKind.Markdown,
-              value: `\`\`\`tzdlang\nvar ${member.name}\n\`\`\``,
-            },
-          };
+        const docComment = extractDocComment(text, member.location?.range?.start?.line);
+        if (member.kind === "method") {
+          const retType =
+            member.returnType ||
+            inferMethodReturnType(member, hoverTargetClass, params.textDocument.uri, text) ||
+            "";
+          const retPart = retType && !["void", "null"].includes(retType) ? `: ${retType}` : "";
+          let mdValue = `\`\`\`tzdlang\n${member.isStatic ? "static " : ""}fun ${member.name}(${member.signature || ""})${retPart}\n\`\`\``;
+          if (docComment) mdValue += `\n\n---\n${docComment}`;
+          return { contents: { kind: MarkupKind.Markdown, value: mdValue } };
+        } else {
+          const typePart = member.type ? ` ${member.type}` : "";
+          let mdValue = `\`\`\`tzdlang\nvar${typePart} ${member.name}\n\`\`\``;
+          if (docComment) mdValue += `\n\n---\n${docComment}`;
+          return { contents: { kind: MarkupKind.Markdown, value: mdValue } };
+        }
       }
     }
-    return null; // 如果有点号，但没找到，直接返回空，绝不能当成全局系统函数
+    // ⭐ 核心修复：如果是点号访问，目标类型不是类或未匹配到成员，返回 null，绝不误报全局同名变量或类
+    return null;
   }
 
   // ⭐ 优先级 2：当前文件或导入的类定义
@@ -1054,9 +1707,15 @@ function checkUndeclared(text, docUri) {
     }
   }
 
+  // ⭐ 先整体剥离多行块注释 /* ... */ 再按行扫描，防止注释内单词触发误报
+  let strippedText = text.replace(/\/\*[\s\S]*?\*\//g, (m) =>
+    m.split("\n").map((ln, i) => (i === 0 ? "" : " ".repeat(ln.length))).join("\n")
+  );
+  const strippedLines = strippedText.split("\n");
+
   for (let i = 0; i < lines.length; i++) {
     let origLine = lines[i];
-    let cleanLine = origLine
+    let cleanLine = strippedLines[i]
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
       .replace(/\/\/.*/, "");
 
@@ -1143,7 +1802,31 @@ async function validateDocument(document) {
 
   const allDiags = [...diagnostics, ...semanticCheck(text, document.uri)];
   connection.sendDiagnostics({ uri: document.uri, diagnostics: allDiags });
+
+  // ⭐ 递归检测：分析函数与类方法递归调用，向客户端发送可视化箭头标记
+  try {
+    const recursions = detectRecursions(text, tree);
+    connection.sendNotification("tzdlang/recursions", {
+      uri: document.uri,
+      items: recursions,
+    });
+  } catch (err) {
+    console.error("Recursion detection error:", err);
+  }
 }
+
+connection.onRequest("tzdlang/getRecursions", (params) => {
+  if (!params || !params.uri) return [];
+  const doc = documents.get(params.uri);
+  if (!doc) return [];
+  try {
+    const text = doc.getText();
+    const { tree } = parseTzd(text);
+    return detectRecursions(text, tree);
+  } catch (_) {
+    return [];
+  }
+});
 
 connection.onInitialize((params) => {
   const toolsPath = params.initializationOptions?.toolsPath || "";
@@ -1153,7 +1836,7 @@ connection.onInitialize((params) => {
   return {
     capabilities: {
       textDocumentSync: { openClose: true, change: TextDocumentSyncKind.Full },
-      completionProvider: { triggerCharacters: [".", '"', "'", ":", " ", "*"] },
+      completionProvider: { triggerCharacters: [".", ":"] },
       signatureHelpProvider: { triggerCharacters: ["("] },
       hoverProvider: true,
       definitionProvider: true,
@@ -1176,6 +1859,7 @@ connection.onCompletion(async (params) => {
 });
 
 function findDefinition(docUri, text, line, col) {
+  refreshLocalClassCache(text, docUri);
   const lines = text.split("\n");
   if (line >= lines.length) return null;
 
@@ -1188,6 +1872,7 @@ function findDefinition(docUri, text, line, col) {
 
   if (start === end) return null;
   const word = currentLine.substring(start, end);
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   // ⭐ 新增功能：计算鼠标所在位置的方法调用参数个数
   const afterWord = currentLine.substring(start);
@@ -1220,13 +1905,16 @@ function findDefinition(docUri, text, line, col) {
     return null;
   }
 
-  // 2. 点号成员跳转 (例如 e.message 或 MathToolkit.square(6) 或 A.aaa(10))
+  // 2. 点号成员跳转 (例如 e.message 或 MathToolkit.square(6) 或 new Test().a() 或 new Test().a().b())
   const beforeCursor = currentLine.slice(0, start);
-  const dotMatch = beforeCursor.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.\s*$/);
-  if (dotMatch) {
-    const targetClass =
-      resolveVarType(dotMatch[1], text, docUri, line) ||
-      (classCache.has(dotMatch[1]) ? dotMatch[1] : null);
+  const isMemberAccess = /\.\s*$/.test(beforeCursor);
+
+  if (isMemberAccess) {
+    const exprBeforeDot = extractExpressionBeforeDot(beforeCursor);
+    let targetClass = null;
+    if (exprBeforeDot) {
+      targetClass = evaluateChainType(exprBeforeDot, docUri, line, text);
+    }
     if (targetClass) {
       const allMembers = getMembersIncludingInherited(targetClass);
       const matches = allMembers.filter((x) => x.name === word);
@@ -1236,6 +1924,20 @@ function findDefinition(docUri, text, line, col) {
         if (!target) target = matches[0]; // 如果没完全匹配的，返回第一个兜底
         if (target.location) return target.location;
       }
+    }
+    // ⭐ 核心修复：如果是点号成员访问，但在目标类或非对象类型（如 int）中未匹配到该成员，绝不能向下兜底匹配其它无关类的同名成员！
+    return null;
+  }
+
+  // 2.5 如果当前光标在某个类内，且调用的方法/属性属于该类或其父类（支持类似 fun a() { b(); } 的直接成员调用）
+  const curClassDef = findClassAtLine(docUri, line);
+  if (curClassDef) {
+    const classMembers = getMembersIncludingInherited(curClassDef.className);
+    const matches = classMembers.filter((x) => x.name === word);
+    if (matches.length > 0) {
+      let target = matches.find((m) => m.argsCount === calledArgsCount);
+      if (!target) target = matches[0];
+      if (target.location) return target.location;
     }
   }
 
@@ -1306,12 +2008,12 @@ function findDefinition(docUri, text, line, col) {
   }
   if (fallbackLoc) return fallbackLoc; // 如果没有严格匹配的重载，就返回找到的第一个
 
-  // 6. 在所有已知类成员中查找同名方法/属性
-  for (const cDef of classCache.values()) {
-    if (cDef && Array.isArray(cDef.members)) {
-      const m = cDef.members.find((x) => x.name === word);
-      if (m && m.location) return m.location;
-    }
+  // 6. 如果在某个类内，且上述未匹配到，则在当前类或其继承链中尝试兜底查找
+  // 避免在顶层调用未定义函数时错误跳转到不相关的类方法
+  if (curClassDef) {
+    const classMembers = getMembersIncludingInherited(curClassDef.className);
+    const m = classMembers.find((x) => x.name === word);
+    if (m && m.location) return m.location;
   }
 
   // 7. 本地普通变量兜底匹配

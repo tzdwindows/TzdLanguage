@@ -27,5 +27,3 @@ fun fact(n) {
     ret n * fact(n-1);
 }
 print("fact(10)=" + fact(10));
-
-exit

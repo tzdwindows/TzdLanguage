@@ -304,7 +304,7 @@ public:
         line(token ? token->getLine() : 0),
         column(token ? token->getCharPositionInLine() : 0),
         stackTrace(std::move(trace)) {}
-    TzdRuntimeException(const std::string& msg, size_t line, size_t column = 0, std::vector<std::string> trace = {})
+    TzdRuntimeException(const std::string& msg, size_t line = 0, size_t column = 0, std::vector<std::string> trace = {})
         : std::runtime_error(msg),
         line(line),
         column(column),
@@ -544,6 +544,7 @@ public:
     void clearJitError() {
         m_hasJitError = false;
         m_lastJitError.clear();
+        m_callDepth = 0;
     }
 
     void reportJitError(const std::string& msg, size_t line = 0, size_t col = 0) {

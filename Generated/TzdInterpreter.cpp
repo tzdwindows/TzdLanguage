@@ -2580,10 +2580,14 @@ void TzdInterpreter::loadScript(std::string code) {
         }
     }
     catch (const TzdRuntimeException& e) {
+        this->m_callDepth = 0;
+        this->m_callStackFrames.clear();
         // 传入 e.stackTrace
         TzdErrorHandler::report("Tzd 运行时错误", e.line, e.column, e.what(), utf8Code, e.stackTrace);
     }
     catch (const TzdThrowException& e) {
+        this->m_callDepth = 0;
+        this->m_callStackFrames.clear();
         std::string msg = "Unknown error";
         if (e.value.type == TzdValue::INSTANCE && e.value.instanceVal) {
             try {
@@ -2847,12 +2851,21 @@ void TzdInterpreter::mapJitSymbolsToValue() {
 struct TzdCallStackGuard {
     TzdInterpreter* self;
     explicit TzdCallStackGuard(TzdInterpreter* interp, const std::string& frame, const std::string& sourceFile) : self(interp) {
-        self->m_callStackFrames.push_back(frame);
-        self->m_debugFileStack.push_back(sourceFile);
+        if (self) {
+            self->m_callStackFrames.push_back(frame);
+            self->m_debugFileStack.push_back(sourceFile);
+            ++self->m_callDepth;
+            if (self->m_callDepth > self->m_maxCallDepth) {
+                throw TzdRuntimeException("运行错误：调用栈溢出 (超出最大调用深度 " + std::to_string(self->m_maxCallDepth) + ")", 0, 0, self->m_callStackFrames);
+            }
+        }
     }
     ~TzdCallStackGuard() {
-        if (!self->m_callStackFrames.empty()) self->m_callStackFrames.pop_back();
-        if (!self->m_debugFileStack.empty()) self->m_debugFileStack.pop_back();
+        if (self) {
+            if (self->m_callDepth > 0) --self->m_callDepth;
+            if (!self->m_callStackFrames.empty()) self->m_callStackFrames.pop_back();
+            if (!self->m_debugFileStack.empty()) self->m_debugFileStack.pop_back();
+        }
     }
 };
 
@@ -3446,6 +3459,10 @@ void TzdInterpreter::jitPendingModule() {
     // 7. 清理状态
     m_pendingJitFunctions.clear();
     m_jitNameToUserMap.clear();
+
+    // 为后续动态编译或 REPL 后续输入准备全新的 LLVM 模块
+    m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "Module_" + std::to_string(rand()));
+    m_compiler->setupExternalFunctions();
 }
 
 
@@ -4604,20 +4621,6 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.line = (int)methodCtx->getStart()->getLine();
             m.column = (int)methodCtx->getStart()->getCharPositionInLine();
 
-            // --- JIT 编译部分 ---
-            if (!m_noJit && m_jitEngine && m_compiler) {
-                std::string jitName = fullName + "_" + mName;
-                try {
-                    m_compiler->compileClassMethod(ctx, methodCtx, jitName);
-                    m_pendingJitFunctions.insert(jitName);
-                }
-                catch (const std::exception& e) {
-                    agentLogCompile("C", "compileClassMethod", (jitName + ": " + e.what()).c_str());
-                    delete newClass;
-                    throw TzdRuntimeException("类 '" + fullName + "' 的方法 '" + mName + "' JIT 编译失败: " + e.what(), methodCtx->getStart());
-                }
-            }
-
             newClass->methods[mName] = m;
         }
 
@@ -4629,20 +4632,9 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.isStatic = true;
             m.body = smCtx->block();
             parseParamList(smCtx->paramList(), m.params, m.paramTypes);
-
-            // --- JIT 编译部分 ---
-            if (!m_noJit && m_jitEngine && m_compiler) {
-                std::string jitName = fullName + "_" + mName;
-                try {
-                    // 静态方法不需要 this
-                    m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName);
-                    m_pendingJitFunctions.insert(jitName);
-                }
-                catch (const std::exception& e) {
-                    delete newClass;
-                    throw TzdRuntimeException("类 '" + fullName + "' 的静态方法 '" + mName + "' JIT 编译失败: " + e.what(), smCtx->getStart());
-                }
-            }
+            m.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
+            m.line = (int)smCtx->getStart()->getLine();
+            m.column = (int)smCtx->getStart()->getCharPositionInLine();
 
             newClass->methods[mName] = m;
         }
@@ -4672,19 +4664,8 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                 }
             }
 
-            if (!m_noJit && m_jitEngine && m_compiler) {
-                std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(ctorInfo.paramCount);
-                ctorInfo.jitSymbolName = jitName;
-                try {
-                    m_compiler->compileConstructor(ctx, ctorCtx, jitName);
-                    m_pendingJitFunctions.insert(jitName);
-                }
-                catch (const std::exception& e) {
-                    agentLogCompile("C", "compileConstructor", (jitName + ": " + e.what()).c_str());
-                    delete newClass;
-                    throw TzdRuntimeException("类 '" + fullName + "' 的构造函数 JIT 编译失败: " + e.what(), ctorCtx->getStart());
-                }
-            }
+            std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(ctorInfo.paramCount);
+            ctorInfo.jitSymbolName = jitName;
 
             ClassMethod m;
             m.name = ctorName;
@@ -4695,7 +4676,6 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.column = ctorInfo.column;
 
             newClass->methods[ctorName] = m;
-
             newClass->constructors.push_back(std::move(ctorInfo));
         }
     }
@@ -4712,12 +4692,47 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
         }
     }
 
-    // --- 7. 注册并存入作用域 ---
+    // --- 6. 注册并存入作用域 (第一阶段完成：类及其所有方法元信息已全部就绪) ---
     TzdOopManager::registerClass(newClass);
     setVariable(fullName, classVal);
 
     if (newClass->simpleName != fullName) {
         setVariable(newClass->simpleName, classVal);
+    }
+
+    // --- 7. 第二阶段：JIT 编译类方法与构造函数 (类已完全注册，可互相引用) ---
+    if (!m_noJit && m_jitEngine && m_compiler) {
+        try {
+            for (auto member : ctx->classBody()->classMember()) {
+                auto decl = member->memberDecl();
+                if (!decl) continue;
+
+                if (auto methodCtx = dynamic_cast<TzdLangParser::MethodDeclContext*>(decl)) {
+                    std::string mName = methodCtx->IDENTIFIER()->getText();
+                    std::string jitName = fullName + "_" + mName;
+                    m_compiler->compileClassMethod(ctx, methodCtx, jitName);
+                    m_pendingJitFunctions.insert(jitName);
+                }
+                else if (auto smCtx = dynamic_cast<TzdLangParser::MethodStaticDeclContext*>(decl)) {
+                    std::string mName = smCtx->IDENTIFIER()->getText();
+                    std::string jitName = fullName + "_" + mName;
+                    m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName);
+                    m_pendingJitFunctions.insert(jitName);
+                }
+                else if (auto ctorCtx = dynamic_cast<TzdLangParser::ConstructorDeclContext*>(decl)) {
+                    std::string ctorName = ctorCtx->IDENTIFIER()->getText();
+                    int pCount = ctorCtx->paramList() ? (int)ctorCtx->paramList()->param().size() : 0;
+                    std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(pCount);
+                    m_compiler->compileConstructor(ctx, ctorCtx, jitName);
+                    m_pendingJitFunctions.insert(jitName);
+                }
+            }
+        }
+        catch (const std::exception& e) {
+            TzdOopManager::unregisterClass(fullName);
+            delete newClass;
+            throw;
+        }
     }
 
     return classVal;

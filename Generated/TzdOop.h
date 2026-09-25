@@ -177,6 +177,7 @@ private:
 
 public:
     static void registerClass(TzdClassDef* cls);
+    static void unregisterClass(const std::string& name);
     static TzdClassDef* getClass(const std::string& name);
     static std::vector<TzdClassDef*> getSubclassesOf(const std::string& parentName);
     static bool isInstanceOf(TzdInstance* obj, const std::string& typeName);
