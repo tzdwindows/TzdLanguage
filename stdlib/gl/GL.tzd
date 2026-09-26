@@ -1,0 +1,159 @@
+/**
+ * TzdLang OpenGL 标准库 - GL 常量与核心 API 封装
+ */
+
+class GL {
+    // Buffer Bits
+    const COLOR_BUFFER_BIT = 16384;      // 0x4000
+    const DEPTH_BUFFER_BIT = 256;        // 0x0100
+    const STENCIL_BUFFER_BIT = 1024;     // 0x0400
+
+    // Primitives
+    const POINTS = 0;
+    const LINES = 1;
+    const LINE_LOOP = 2;
+    const LINE_STRIP = 3;
+    const TRIANGLES = 4;
+    const TRIANGLE_STRIP = 5;
+    const TRIANGLE_FAN = 6;
+    const QUADS = 7;
+    const QUAD_STRIP = 8;
+    const POLYGON = 9;
+
+    // Matrix Modes
+    const MODELVIEW = 5888;              // 0x1700
+    const PROJECTION = 5889;             // 0x1701
+    const TEXTURE = 5890;                // 0x1702
+
+    // Capabilities
+    const DEPTH_TEST = 2929;             // 0x0B71
+    const BLEND = 3042;                  // 0x0BE2
+    const CULL_FACE = 2884;              // 0x0B44
+    const LIGHTING = 2896;               // 0x0B50
+    const LIGHT0 = 16384;                // 0x4000
+    const LIGHT1 = 16385;                // 0x4001
+    const COLOR_MATERIAL = 2903;         // 0x0B57
+    const TEXTURE_2D = 3553;             // 0x0DE1
+    const NORMALIZE = 2977;              // 0x0BA1
+
+    // Blending
+    const SRC_ALPHA = 770;               // 0x0302
+    const ONE_MINUS_SRC_ALPHA = 771;     // 0x0303
+    const ONE = 1;
+    const ZERO = 0;
+
+    // Shading
+    const FLAT = 7424;                   // 0x1D00
+    const SMOOTH = 7425;                 // 0x1D01
+
+    // Depth Functions
+    const NEVER = 512;
+    const LESS = 513;
+    const EQUAL = 514;
+    const LEQUAL = 515;
+    const GREATER = 516;
+    const NOTEQUAL = 517;
+    const GEQUAL = 518;
+    const ALWAYS = 519;
+
+    // Methods
+    static fun clearColor(r, g, b, a) {
+        var alpha = 1.0;
+        if (a != null) alpha = a;
+        gl_clear_color(r, g, b, alpha);
+    }
+
+    static fun clear(mask) {
+        var m = 16640; // COLOR_BUFFER_BIT + DEPTH_BUFFER_BIT
+        if (mask != null) m = mask;
+        gl_clear(m);
+    }
+
+    static fun viewport(x, y, w, h) {
+        gl_viewport(x, y, w, h);
+    }
+
+    static fun enable(cap) {
+        gl_enable(cap);
+    }
+
+    static fun disable(cap) {
+        gl_disable(cap);
+    }
+
+    static fun matrixMode(mode) {
+        gl_matrix_mode(mode);
+    }
+
+    static fun loadIdentity() {
+        gl_load_identity();
+    }
+
+    static fun pushMatrix() {
+        gl_push_matrix();
+    }
+
+    static fun popMatrix() {
+        gl_pop_matrix();
+    }
+
+    static fun translate(x, y, z) {
+        gl_translate(x, y, z);
+    }
+
+    static fun rotate(angle, x, y, z) {
+        gl_rotate(angle, x, y, z);
+    }
+
+    static fun scale(x, y, z) {
+        gl_scale(x, y, z);
+    }
+
+    static fun ortho(l, r, b, t, n, f) {
+        gl_ortho(l, r, b, t, n, f);
+    }
+
+    static fun perspective(fovy, aspect, zNear, zFar) {
+        gl_perspective(fovy, aspect, zNear, zFar);
+    }
+
+    static fun lookAt(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) {
+        gl_look_at(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ);
+    }
+
+    static fun begin(mode) {
+        gl_begin(mode);
+    }
+
+    static fun end() {
+        gl_end();
+    }
+
+    static fun vertex2f(x, y) {
+        gl_vertex2f(x, y);
+    }
+
+    static fun vertex3f(x, y, z) {
+        gl_vertex3f(x, y, z);
+    }
+
+    static fun color3f(r, g, b) {
+        gl_color3f(r, g, b);
+    }
+
+    static fun color4f(r, g, b, a) {
+        gl_color4f(r, g, b, a);
+    }
+
+    static fun normal3f(nx, ny, nz) {
+        gl_normal3f(nx, ny, nz);
+    }
+
+    static fun texCoord2f(u, v) {
+        gl_tex_coord2f(u, v);
+    }
+
+    static fun saveScreenshot(path) {
+        return gl_save_screenshot(path);
+    }
+}

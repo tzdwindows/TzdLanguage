@@ -1,0 +1,46 @@
+/**
+ * TzdLang UI 标准库 - 应用程序生命周期
+ */
+
+class App {
+    static fun run(window) {
+        if (window != null) {
+            window.show();
+            window.run();
+        } else {
+            ui_run_loop(null);
+        }
+    }
+
+    static fun poll() {
+        return ui_poll_events();
+    }
+
+    static fun pollEvents() {
+        return ui_poll_events();
+    }
+
+    static fun setStyle(styleName, customOptions) {
+        var s = "windows";
+        if (styleName != null) s = styleName;
+        ui_set_global_style(s, customOptions);
+    }
+
+    static fun setTheme(themeMode) {
+        var m = "light";
+        if (themeMode != null) m = themeMode;
+        ui_set_global_theme(m);
+    }
+
+    static fun sleep(ms) {
+        sleep(ms);
+    }
+
+    static fun onError(callback) {
+        ui_set_global_error_handler(callback);
+    }
+
+    static fun setShowErrorDialog(show) {
+        ui_set_show_error_dialog(show);
+    }
+}

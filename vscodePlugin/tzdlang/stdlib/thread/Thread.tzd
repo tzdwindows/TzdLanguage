@@ -1,0 +1,29 @@
+class Thread {
+    var function target;
+    var ptr native_handle;
+
+    Thread(target) {
+        this.target = target;
+        this.native_handle = null;
+    }
+
+    fun start() {
+        if (this.native_handle == null) {
+            this.native_handle = sys_thread_start(this.target);
+        }
+    }
+
+    fun join() {
+        if (this.native_handle != null) {
+            sys_thread_join(this.native_handle);
+            this.native_handle = null;
+        }
+    }
+
+    fun detach() {
+        if (this.native_handle != null) {
+            sys_thread_detach(this.native_handle);
+            this.native_handle = null;
+        }
+    }
+}

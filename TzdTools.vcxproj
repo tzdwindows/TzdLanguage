@@ -73,6 +73,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>E:\Fintamath\include;C:\Program Files\Java\jdk-20\include\win32;C:\Program Files\Java\jdk-20\include;E:\LLVM_SDK\include;C:\Program Files\LLVM\include;E:\vcpkg\buildtrees\antlr4\src\4.13.2-b64128cc53.clean\runtime\Cpp\runtime\src;$(IncludePath)</IncludePath>
+    <GenerateManifest>true</GenerateManifest>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
@@ -148,6 +149,9 @@
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
       <AdditionalOptions>/WHOLEARCHIVE:LLVMX86CodeGen.lib /WHOLEARCHIVE:LLVMX86Desc.lib /WHOLEARCHIVE:LLVMX86Info.lib /WHOLEARCHIVE:LLVMX86AsmParser.lib /WHOLEARCHIVE:LLVMOrcJIT.lib /WHOLEARCHIVE:LLVMExecutionEngine.lib %(AdditionalOptions)</AdditionalOptions>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(ProjectDir)CommonControls.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
     <PostBuildEvent>
       <Command>robocopy "$(SolutionDir)stdlib" "$(OutDir)stdlib" /XO /E /NDL /NFL /NJH /NJS
 copy "$(SolutionDir)External\libtorch\lib\*.dll" "$(OutDir)" /Y >nul 2>&amp;1
@@ -174,6 +178,11 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClCompile Include="Generated\TzdLangParser.cpp" />
     <ClCompile Include="Generated\TzdLangVisitor.cpp" />
     <ClCompile Include="Generated\TzdNativeModule.cpp" />
+    <ClCompile Include="Generated\TzdNetModule.cpp" />
+    <ClCompile Include="Generated\TzdGlModule.cpp" />
+    <ClCompile Include="Generated\TzdUiModule.cpp" />
+    <ClCompile Include="Generated\TzdCryptoModule.cpp" />
+    <ClCompile Include="Generated\TzdSysModule.cpp" />
     <ClCompile Include="Generated\TzdOop.cpp" />
     <ClCompile Include="Generated\TzdPyTorch.cpp" />
     <ClCompile Include="Generated\TzdExperimentalCompute.cpp" />
@@ -249,6 +258,11 @@ if %ERRORLEVEL% LEQ 7 exit 0</Command>
     <ClInclude Include="TzdMemoryAsm.h" />
     <ClInclude Include="TzdDebugger.h" />
     <ClInclude Include="TzdStackTrace.h" />
+    <ClInclude Include="Generated\TzdNetModule.h" />
+    <ClInclude Include="Generated\TzdGlModule.h" />
+    <ClInclude Include="Generated\TzdUiModule.h" />
+    <ClInclude Include="Generated\TzdCryptoModule.h" />
+    <ClInclude Include="Generated\TzdSysModule.h" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="dyncall\dyncall_call_x64_generic_masm.asm">

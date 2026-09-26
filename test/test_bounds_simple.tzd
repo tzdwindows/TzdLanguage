@@ -1,0 +1,13 @@
+﻿import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    App.setStyle("macos");
+    var win = new Window("Test", 680, 500, 150, 120);
+    var btn = win.addButton("测试", 100, 50, 100, 30);
+    var b = btn.getBounds();
+    print("b[0]=" + b[0] + ", b[1]=" + b[1] + ", b[2]=" + b[2] + ", b[3]=" + b[3]);
+    win.close();
+}
+main();

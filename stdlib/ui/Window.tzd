@@ -1,0 +1,215 @@
+import "ui/Control.tzd";
+
+/**
+ * TzdLang UI 标准库 - 原生桌面窗口与控件布局
+ */
+class Window {
+    var ptr handle;
+    var string title;
+    var int width;
+    var int height;
+
+    Window(t, w, h, x, y) {
+        if (t != null) this.title = t; else this.title = "TzdLang Window";
+        if (w != null) this.width = w; else this.width = 640;
+        if (h != null) this.height = h; else this.height = 480;
+        var posX = 100;
+        if (x != null) posX = x;
+        var posY = 100;
+        if (y != null) posY = y;
+        this.handle = ui_create_window(this.title, posX, posY, this.width, this.height);
+    }
+
+    fun addButton(text, x, y, w, h) {
+        var btnH = ui_create_button(this.handle, text, x, y, w, h);
+        return new Button(btnH);
+    }
+
+    fun addLabel(text, x, y, w, h) {
+        var lblH = ui_create_label(this.handle, text, x, y, w, h);
+        return new Label(lblH);
+    }
+
+    fun addTextBox(text, x, y, w, h, isMultiline) {
+        var multi = false;
+        if (isMultiline != null) multi = isMultiline;
+        var editH = ui_create_textbox(this.handle, text, x, y, w, h, multi);
+        return new TextBox(editH);
+    }
+
+    fun addCheckBox(text, x, y, w, h) {
+        var chkH = ui_create_checkbox(this.handle, text, x, y, w, h);
+        return new CheckBox(chkH);
+    }
+
+    fun addRadioButton(text, x, y, w, h) {
+        var radH = ui_create_radio(this.handle, text, x, y, w, h);
+        return new RadioButton(radH);
+    }
+
+    fun addGroupBox(text, x, y, w, h) {
+        var gbH = ui_create_groupbox(this.handle, text, x, y, w, h);
+        return new GroupBox(gbH);
+    }
+
+    fun addProgressBar(x, y, w, h, minVal, maxVal) {
+        var min = 0;
+        if (minVal != null) min = minVal;
+        var max = 100;
+        if (maxVal != null) max = maxVal;
+        var pbH = ui_create_progressbar(this.handle, x, y, w, h, min, max);
+        return new ProgressBar(pbH);
+    }
+
+    fun addSlider(x, y, w, h, minVal, maxVal) {
+        var min = 0;
+        if (minVal != null) min = minVal;
+        var max = 100;
+        if (maxVal != null) max = maxVal;
+        var slH = ui_create_slider(this.handle, x, y, w, h, min, max);
+        return new Slider(slH);
+    }
+
+    fun addComboBox(x, y, w, h) {
+        var cbH = ui_create_combobox(this.handle, x, y, w, h);
+        return new ComboBox(cbH);
+    }
+
+    fun addListBox(x, y, w, h) {
+        var lbH = ui_create_listbox(this.handle, x, y, w, h);
+        return new ListBox(lbH);
+    }
+
+    fun addTabControl(x, y, w, h) {
+        var tabH = ui_create_tabcontrol(this.handle, x, y, w, h);
+        return new TabControl(tabH);
+    }
+
+    fun addDateTimePicker(x, y, w, h, isTimePicker) {
+        var isTime = false;
+        if (isTimePicker != null) isTime = isTimePicker;
+        var dtpH = ui_create_datetime_picker(this.handle, x, y, w, h, isTime);
+        return new DateTimePicker(dtpH);
+    }
+
+    fun addStatusBar() {
+        var sbH = ui_create_statusbar(this.handle);
+        return new StatusBar(sbH);
+    }
+
+    fun addImageView(x, y, w, h, imagePath) {
+        var p = "";
+        if (imagePath != null) p = imagePath;
+        var ivH = ui_create_image_view(this.handle, x, y, w, h, p);
+        return new ImageView(ivH);
+    }
+
+    fun setStyle(styleName, customOptions) {
+        var s = "windows";
+        if (styleName != null) s = styleName;
+        ui_set_style(this.handle, s, customOptions);
+        return this;
+    }
+
+    fun setTheme(themeMode) {
+        var m = "light";
+        if (themeMode != null) m = themeMode;
+        ui_set_theme(this.handle, m);
+        return this;
+    }
+
+    fun setAccentColor(r, g, b) {
+        ui_set_accent_color(this.handle, r, g, b);
+        return this;
+    }
+
+    fun setDarkMode(enable) {
+        var en = true;
+        if (enable != null) en = enable;
+        ui_set_dark_mode(this.handle, en);
+        return this;
+    }
+
+    fun setBackgroundColor(r, g, b) {
+        ui_set_window_bg(this.handle, r, g, b);
+        return this;
+    }
+
+    fun saveScreenshot(path) {
+        return ui_save_screenshot(this.handle, path);
+    }
+
+    fun setTitle(title) {
+        this.title = title;
+        ui_set_window_title(this.handle, title);
+        return this;
+    }
+
+    fun getTitle() {
+        return ui_get_window_title(this.handle);
+    }
+
+    fun setSize(w, h) {
+        this.width = w;
+        this.height = h;
+        ui_set_window_size(this.handle, w, h);
+        return this;
+    }
+
+    fun getSize() {
+        return ui_get_window_size(this.handle);
+    }
+
+    fun setPosition(x, y) {
+        ui_set_window_pos(this.handle, x, y);
+        return this;
+    }
+
+    fun getPosition() {
+        return ui_get_window_pos(this.handle);
+    }
+
+    fun show() {
+        ui_show_window(this.handle, true);
+        return this;
+    }
+
+    fun maximize() {
+        ui_maximize_window(this.handle);
+        return this;
+    }
+
+    fun restore() {
+        ui_restore_window(this.handle);
+        return this;
+    }
+
+    fun hide() {
+        ui_show_window(this.handle, false);
+        return this;
+    }
+
+    fun close() {
+        ui_close_window(this.handle);
+        this.handle = null;
+    }
+
+    fun onClose(callback) {
+        ui_on_close(this.handle, callback);
+        return this;
+    }
+
+    fun onResize(callback) {
+        ui_on_resize(this.handle, callback);
+        return this;
+    }
+
+    fun onError(callback) {
+        ui_on_error(this.handle, callback);
+        return this;
+    }
+
+    fun run() {
+        ui_run_loop(this.handle);
+    }
+}

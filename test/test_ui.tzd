@@ -1,0 +1,36 @@
+import "stdlib/ui/Window.tzd";
+import "stdlib/ui/Control.tzd";
+import "stdlib/ui/App.tzd";
+
+fun main() {
+    print("=== Win32 UI Test ===");
+    var win = new Window("TzdLang UI Demo", 400, 300, 100, 100);
+    print("Window created, title:", win.getTitle());
+
+    win.setTitle("TzdLang Automated Test Window");
+    print("Window new title:", win.getTitle());
+
+    var btn = win.addButton("Click Me", 20, 20, 100, 30);
+    print("Button text:", btn.getText());
+
+    var lbl = win.addLabel("Status: Ready", 20, 60, 200, 25);
+    print("Label text:", lbl.getText());
+
+    var txt = win.addTextBox("Initial Text", 20, 95, 200, 25, false);
+    print("TextBox text:", txt.getText());
+
+    var chk = win.addCheckBox("Enable Feature", 20, 130, 150, 25);
+    print("CheckBox checked:", chk.isChecked());
+    chk.setChecked(true);
+    print("CheckBox checked after set:", chk.isChecked());
+
+    win.show();
+    // Poll events once or twice to let Win32 process WM_CREATE / WM_SHOW
+    App.poll();
+    App.poll();
+
+    win.close();
+    print("Win32 UI Window & Controls Test Passed!");
+}
+
+main();

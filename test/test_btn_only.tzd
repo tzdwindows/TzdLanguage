@@ -1,0 +1,10 @@
+﻿import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+var win = new Window("Test", 400, 300, 100, 100);
+var btn = win.addButton("Btn", 40, 40, 100, 30);
+win.show();
+App.sleep(100);
+win.saveScreenshot("screenshots/test_btn_only.png");
+win.close();

@@ -1,0 +1,102 @@
+/**
+ * TzdLang OpenGL 标准库 - 窗口与渲染循环
+ */
+
+class GLWindow {
+    var ptr handle;
+    var string title;
+    var int width;
+    var int height;
+
+    GLWindow(t, w, h) {
+        if (t != null) {
+            this.title = t;
+        } else {
+            this.title = "OpenGL Window";
+        }
+        if (w != null) {
+            this.width = w;
+        } else {
+            this.width = 800;
+        }
+        if (h != null) {
+            this.height = h;
+        } else {
+            this.height = 600;
+        }
+        this.handle = gl_init_window(this.title, this.width, this.height);
+    }
+
+    fun isOpen() {
+        if (this.handle == null) return false;
+        return !gl_window_should_close(this.handle);
+    }
+
+    fun pollEvents() {
+        if (this.handle == null) return false;
+        return gl_poll_events(this.handle);
+    }
+
+    fun swapBuffers() {
+        if (this.handle != null) {
+            gl_swap_buffers(this.handle);
+        }
+    }
+
+    fun clear(mask) {
+        gl_clear(mask);
+    }
+
+    fun close() {
+        if (this.handle != null) {
+            gl_close_window(this.handle);
+            this.handle = null;
+        }
+    }
+
+    fun getKey(keyCode) {
+        if (this.handle == null) return false;
+        return gl_get_key(this.handle, keyCode);
+    }
+
+    fun getMousePos() {
+        if (this.handle == null) return [0, 0];
+        return gl_get_mouse_pos(this.handle);
+    }
+
+    fun getMouseBtn(btn) {
+        if (this.handle == null) return false;
+        return gl_get_mouse_btn(this.handle, btn);
+    }
+
+    fun saveScreenshot(path) {
+        return gl_save_screenshot(path);
+    }
+
+    fun run(renderCallback, updateCallback, targetFps) {
+        var fps = 60;
+        if (targetFps != null) {
+            if (targetFps > 0) {
+                fps = targetFps;
+            }
+        }
+        var frameDelayMs = 1000 / fps;
+
+        while (this.isOpen()) {
+            this.pollEvents();
+            if (!this.isOpen()) break;
+
+            if (updateCallback != null) {
+                updateCallback();
+            }
+
+            if (renderCallback != null) {
+                renderCallback();
+            }
+
+            this.swapBuffers();
+            time_sleep(frameDelayMs);
+        }
+        this.close();
+    }
+}

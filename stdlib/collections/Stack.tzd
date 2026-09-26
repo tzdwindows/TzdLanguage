@@ -1,0 +1,44 @@
+/**
+ * TzdLang 集合标准库 - Stack 后进先出栈
+ */
+
+class Stack {
+    var ptr items;
+
+    Stack() {
+        this.items = [ ];
+    }
+
+    fun push(item) {
+        this.items = concat(this.items, [item]);
+        return this;
+    }
+
+    fun pop() {
+        if (this.isEmpty()) return null;
+        var top = this.items[this.size() - 1];
+        this.items = slice(this.items, 0, this.size() - 1);
+        return top;
+    }
+
+    fun peek() {
+        if (this.isEmpty()) return null;
+        return this.items[this.size() - 1];
+    }
+
+    fun size() {
+        return len(this.items);
+    }
+
+    fun isEmpty() {
+        return this.size() == 0;
+    }
+
+    fun clear() {
+        this.items = [ ];
+    }
+
+    fun toArray() {
+        return this.items;
+    }
+}

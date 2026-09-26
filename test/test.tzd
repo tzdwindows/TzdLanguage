@@ -1,14 +1,34 @@
-class Test {
-    var string c;
-    fun a() {
-        return this;
-    }
+import "gl/GL.tzd";
+import "gl/GLWindow.tzd";
+import "gl/Mesh.tzd";
 
-    /*
-     * This is a comment
-     */
-    fun b() {
-        print("aaaa");
-    }
+// 创建原生 OpenGL 双缓冲窗口
+var win = new GLWindow("TzdLang 3D Demo", 800, 600);
+GL.clearColor(0.1, 0.15, 0.2, 1.0);
+GL.enable(GL.DEPTH_TEST);
+
+// 透视投影配置 (45度视场角, 宽高比, 近截面0.1, 远截面100.0)
+GL.matrixMode(GL.PROJECTION);
+GL.loadIdentity();
+GL.perspective(45.0, 800.0 / 600.0, 0.1, 100.0);
+
+var angle = 0.0;
+while (win.isOpen()) {
+    win.pollEvents();
+    win.clear(GL.COLOR_BUFFER_BIT + GL.DEPTH_BUFFER_BIT);
+
+    // 摄像机视口与模型视图矩阵
+    GL.matrixMode(GL.MODELVIEW);
+    GL.loadIdentity();
+    GL.translate(0.0, 0.0, -5.0);
+    GL.rotate(angle, 1.0, 1.0, 0.0);
+    angle = angle + 1.0;
+
+    // 绘制彩色 3D 立方体与网格
+    Mesh.coloredCube(1.5);
+    Mesh.grid(10.0, 1.0);
+
+    win.swapBuffers();
+    time_sleep(16);
 }
-new Test().a();
+win.close();

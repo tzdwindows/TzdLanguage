@@ -33,11 +33,10 @@ const __dirname = path.dirname(__filename);
 const connection = createConnection();
 const documents = new TextDocuments(TextDocument);
 
-const stdlibRoots = [
-  path.resolve(__dirname, "..", "..", "stdlib"),
-  path.resolve(__dirname, "..", "..", "..", "stdlib"),
-  path.resolve(__dirname, "..", "..", "..", "x64", "Release", "stdlib"),
-];
+let configuredToolsPath = "";
+let configuredStdlibPath = "";
+let configuredExtensionPath = "";
+const workspaceRoots = [];
 
 function uriToFsPath(uri) {
   if (!uri) return "";
@@ -70,11 +69,145 @@ function fileExistsSafe(filePath) {
   }
 }
 
+/**
+ * 多源、深层、智能解析 import 路径
+ * 支持:
+ * 1. 相对路径: "gl/GLWindow.tzd", "./helper.tzd", "../lib/A.tzd"
+ * 2. 点号语法: "gl.GLWindow" -> "gl/GLWindow.tzd"
+ * 3. 省略后缀: "gl/GLWindow" -> "gl/GLWindow.tzd"
+ * 4. 优先级检索:
+ *    - 当前文档所在目录及逐级向上直至根目录的 stdlib 目录
+ *    - 所有工作区 Workspace 文件夹及其 stdlib 目录
+ *    - 客户端传入的自定义 stdlibPath
+ *    - TzdTools.exe 所在目录及其子/父 stdlib 目录
+ *    - 插件自身打包内置的 stdlib 目录
+ */
+function resolveImportPath(importStr, docUri) {
+  if (!importStr || typeof importStr !== "string") return null;
+
+  let raw = importStr.trim();
+  if (
+    (raw.startsWith('"') && raw.endsWith('"')) ||
+    (raw.startsWith("'") && raw.endsWith("'"))
+  ) {
+    raw = raw.slice(1, -1).trim();
+  }
+  if (!raw) return null;
+
+  // 1. 点号语法转路径: 如 gl.GLWindow -> gl/GLWindow.tzd
+  if (!raw.includes("/") && !raw.includes("\\") && raw.includes(".")) {
+    raw = raw.replace(/\./g, "/") + ".tzd";
+  }
+
+  // 2. 构造文件名候选（原样与补全 .tzd）
+  const candidates = [raw];
+  if (!raw.endsWith(".tzd")) {
+    candidates.push(raw + ".tzd");
+  }
+
+  // 3. 同时支持带或不带 "stdlib/" 前缀
+  const altCandidates = [];
+  for (const c of candidates) {
+    altCandidates.push(c);
+    if (c.startsWith("stdlib/") || c.startsWith("stdlib\\")) {
+      altCandidates.push(c.slice(7));
+    } else {
+      altCandidates.push("stdlib/" + c);
+    }
+  }
+
+  // 4. 绝对路径快速命中
+  for (const c of altCandidates) {
+    const normC = c.replace(/\//g, path.sep);
+    if (path.isAbsolute(normC) && fileExistsSafe(normC)) {
+      try {
+        if (fs.statSync(normC).isFile()) return path.normalize(normC);
+      } catch (_) {}
+    }
+  }
+
+  // 5. 组装所有检索根目录
+  const searchRoots = [];
+
+  const docFsPath = uriToFsPath(docUri);
+  if (docFsPath) {
+    const docDir = path.dirname(docFsPath);
+    searchRoots.push(docDir);
+    searchRoots.push(path.join(docDir, "stdlib"));
+
+    // 向上逐级检索父目录的 stdlib (最多回溯 6 层)
+    let cur = docDir;
+    for (let i = 0; i < 6; i++) {
+      const parent = path.dirname(cur);
+      if (!parent || parent === cur) break;
+      searchRoots.push(path.join(parent, "stdlib"));
+      searchRoots.push(parent);
+      cur = parent;
+    }
+  }
+
+  // 工作区目录
+  for (const ws of workspaceRoots) {
+    if (ws) {
+      searchRoots.push(ws);
+      searchRoots.push(path.join(ws, "stdlib"));
+    }
+  }
+
+  // 配置的 stdlibPath
+  if (configuredStdlibPath && fileExistsSafe(configuredStdlibPath)) {
+    searchRoots.push(configuredStdlibPath);
+  }
+
+  // TzdTools.exe 所在目录
+  if (configuredToolsPath) {
+    const toolsDir = path.dirname(configuredToolsPath);
+    searchRoots.push(toolsDir);
+    searchRoots.push(path.join(toolsDir, "stdlib"));
+    searchRoots.push(path.join(toolsDir, "..", "stdlib"));
+    searchRoots.push(path.join(toolsDir, "..", "..", "stdlib"));
+  }
+
+  // 插件自身目录及内置 stdlib
+  if (configuredExtensionPath) {
+    searchRoots.push(path.join(configuredExtensionPath, "stdlib"));
+    searchRoots.push(configuredExtensionPath);
+  }
+  searchRoots.push(path.resolve(__dirname, "..", "stdlib"));
+  searchRoots.push(path.resolve(__dirname, ".."));
+  searchRoots.push(path.resolve(__dirname, "..", "..", "stdlib"));
+  searchRoots.push(path.resolve(__dirname, "..", "..", "..", "stdlib"));
+  searchRoots.push(path.resolve(__dirname, "..", "..", "..", "x64", "Release", "stdlib"));
+
+  // 6. 依次比对并验证文件存在
+  const tested = new Set();
+  for (const root of searchRoots) {
+    if (!root) continue;
+    for (const c of altCandidates) {
+      const normC = c.replace(/\//g, path.sep);
+      const fullPath = path.resolve(root, normC);
+      const lower = fullPath.toLowerCase();
+      if (tested.has(lower)) continue;
+      tested.add(lower);
+      if (fileExistsSafe(fullPath)) {
+        try {
+          if (fs.statSync(fullPath).isFile()) {
+            return path.normalize(fullPath);
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  return null;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // 全局缓存与白名单
 // ──────────────────────────────────────────────────────────────────────────
 const classCache = new Map();
-const globalFunctionsCache = new Set();
+const globalFunctionsCache = new Map(); // fnName -> [{ name, signature, argsCount, location, docComment }]
+const globalVariablesCache = new Map(); // varName -> { name, type, isConst, value, location }
 
 let defaultBuiltins = { classes: ["Runtime"], functions: [] };
 try {
@@ -423,10 +556,13 @@ function extractClassDefs(tree, text, uri) {
                     typeof md.expression === "function"
                       ? md.expression()
                       : null;
-                  if (!type && expr && expr.start && expr.stop) {
-                    const initStr = text
+                  let initStr = "";
+                  if (expr && expr.start && expr.stop) {
+                    initStr = text
                       .slice(expr.start.start, expr.stop.stop + 1)
                       .trim();
+                  }
+                  if (!type && initStr) {
                     const newM = initStr.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
                     if (newM) type = newM[1];
                     else if (/^-?\d+\.\d+$/.test(initStr)) type = "float";
@@ -435,10 +571,15 @@ function extractClassDefs(tree, text, uri) {
                     else if (initStr === "true" || initStr === "false")
                       type = "bool";
                   }
+                  const isConst = md instanceof TzdLangParser.FieldConstDeclContext;
+                  const isStatic = isConst || (typeof md.STATIC === "function" && !!md.STATIC());
                   members.push({
                     name,
                     kind: "field",
                     type,
+                    isStatic,
+                    isConst,
+                    value: initStr,
                     location: {
                       uri,
                       range: Range.create(
@@ -470,12 +611,15 @@ function extractClassDefs(tree, text, uri) {
             }
             if (lineStartDepth === 1) {
               let m = lineStr.match(
-                /^\s*(?:(?:public|private|protected|static)\s+)*(?:var|let|const)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)(?:\s*=\s*(.*?))?(?:;|$)/,
+                /^\s*(?:(?:public|private|protected|static)\s+)*(var|let|const)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)(?:\s*=\s*(.*?))?(?:;|$)/,
               );
               if (m) {
-                const name = m[2];
-                let type = m[1] || null;
-                const initExpr = m[3] ? m[3].trim() : "";
+                const declKind = m[1];
+                let type = m[2] || null;
+                const name = m[3];
+                const initExpr = m[4] ? m[4].trim() : "";
+                const isConst = declKind === "const";
+                const isStatic = isConst || /^\s*(?:(?:public|private|protected)\s+)*static\b/.test(lineStr);
                 if (!type && initExpr) {
                   const newM = initExpr.match(/^new\s+([A-Z][a-zA-Z0-9_]*)/);
                   if (newM) type = newM[1];
@@ -491,6 +635,9 @@ function extractClassDefs(tree, text, uri) {
                   name,
                   kind: "field",
                   type,
+                  isStatic,
+                  isConst,
+                  value: initExpr,
                   location: {
                     uri,
                     range: Range.create(i, col, i, col + name.length),
@@ -585,43 +732,185 @@ function extractClassDefs(tree, text, uri) {
   return defs;
 }
 
-function loadImportClasses(docText, docUri) {
-  const lines = docText.split("\n");
-  for (const line of lines) {
-    const m = line.match(/import\s+"(.+?)"\s*;/);
-    if (!m) continue;
-    const importPath = m[1];
-    let resolved = null;
+/**
+ * 提取文本中的所有 import 语句
+ */
+function extractImportStatements(text) {
+  const results = [];
+  if (!text) return results;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const cleanLine = rawLine.replace(/\/\/.*/, "");
+    const m = cleanLine.match(/^\s*import\s+["']([^"']+)["']\s*;?/);
+    if (m) {
+      const rawPath = m[1];
+      const quoteStart = rawLine.indexOf(rawPath) - 1;
+      const quoteEnd = quoteStart + rawPath.length + 2;
+      results.push({
+        line: i,
+        rawPath,
+        range: Range.create(i, Math.max(quoteStart, 0), i, quoteEnd),
+        fullLineRange: Range.create(i, 0, i, rawLine.length),
+      });
+    }
+  }
+  return results;
+}
 
-    const docFsPath = uriToFsPath(docUri);
-    const docDir = path.dirname(docFsPath);
-    const relPath = path.resolve(docDir, importPath.replace(/\//g, path.sep));
+/**
+ * 提取文件中的顶层全局函数
+ */
+function extractTopLevelFunctions(text, uri) {
+  const funcs = [];
+  if (!text) return funcs;
+  const lines = text.split("\n");
+  let inBlockComment = false;
 
-    if (fs.existsSync(relPath)) resolved = relPath;
-    else {
-      for (const root of stdlibRoots) {
-        const cand = path.resolve(root, importPath.replace(/\//g, path.sep));
-        if (fs.existsSync(cand)) {
-          resolved = cand;
-          break;
-        }
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const cleanLine = rawLine.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+    if (inBlockComment) {
+      if (cleanLine.includes("*/")) inBlockComment = false;
+      continue;
+    }
+    if (cleanLine.includes("/*")) {
+      if (!cleanLine.includes("*/")) inBlockComment = true;
+      continue;
+    }
+    if (cleanLine.trim().startsWith("//")) continue;
+
+    // 匹配顶层函数: fun name(params) 或 static fun, public fun 等修饰符
+    const m = cleanLine.match(
+      /^\s*(?:(?:public|private|protected|static|abstract|native)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/
+    );
+    if (m) {
+      const fnName = m[1];
+      const paramStr = m[2];
+      const col = rawLine.indexOf(fnName);
+      const args = paramStr
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x.length > 0);
+      const docComment = extractDocComment(text, i);
+      const fnDef = {
+        name: fnName,
+        signature: paramStr,
+        argsCount: args.length,
+        location: {
+          uri,
+          range: Range.create(i, col, i, col + fnName.length),
+        },
+        docComment,
+      };
+      funcs.push(fnDef);
+
+      if (!globalFunctionsCache.has(fnName)) {
+        globalFunctionsCache.set(fnName, []);
+      }
+      const list = globalFunctionsCache.get(fnName);
+      if (
+        !list.some(
+          (existing) =>
+            existing.location.uri === uri &&
+            existing.location.range.start.line === i
+        )
+      ) {
+        list.push(fnDef);
       }
     }
-    if (!resolved || classCache.has(resolved)) continue;
+  }
+  return funcs;
+}
+
+/**
+ * 提取文件中的顶层常量与变量
+ */
+function extractTopLevelVariables(text, uri) {
+  const vars = [];
+  if (!text) return vars;
+  const lines = text.split("\n");
+  let inBlockComment = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const cleanLine = rawLine
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/\/\/.*/, "");
+
+    if (inBlockComment) {
+      if (cleanLine.includes("*/")) inBlockComment = false;
+      continue;
+    }
+    if (cleanLine.includes("/*")) {
+      if (!cleanLine.includes("*/")) inBlockComment = true;
+      continue;
+    }
+
+    const m = cleanLine.match(
+      /^\s*(const|var|let)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)\s*(?:=\s*(.*?))?(?:;|$)/
+    );
+    if (m) {
+      const declKind = m[1];
+      const type = m[2] || null;
+      const name = m[3];
+      const initVal = m[4] ? m[4].trim() : "";
+      const isConst = declKind === "const";
+      const col = rawLine.indexOf(name);
+      const varDef = {
+        name,
+        type,
+        isConst,
+        value: initVal,
+        location: {
+          uri,
+          range: Range.create(i, col, i, col + name.length),
+        },
+      };
+      vars.push(varDef);
+      globalVariablesCache.set(name, varDef);
+    }
+  }
+  return vars;
+}
+
+/**
+ * 递归加载并分析 import 的所有文件及其子 import
+ */
+function loadImportClasses(docText, docUri, visited = new Set()) {
+  if (!docText) return;
+  const docFsPath = uriToFsPath(docUri);
+  if (docFsPath) visited.add(path.normalize(docFsPath).toLowerCase());
+
+  const importStmts = extractImportStatements(docText);
+  for (const item of importStmts) {
+    const resolved = resolveImportPath(item.rawPath, docUri);
+    if (!resolved || !fileExistsSafe(resolved)) continue;
+
+    const normResolved = path.normalize(resolved).toLowerCase();
+    if (visited.has(normResolved)) continue;
+    visited.add(normResolved);
 
     try {
       const fileContent = fs.readFileSync(resolved, "utf-8");
-      const fLines = fileContent.split("\n");
-      for (let fl of fLines) {
-        const fm = fl.match(/^\s*fun\s+([a-zA-Z_]\w*)/);
-        if (fm) globalFunctionsCache.add(fm[1]);
-      }
+      const fileUri = fsPathToUri(resolved);
+
+      // 提取顶层函数与变量
+      extractTopLevelFunctions(fileContent, fileUri);
+      extractTopLevelVariables(fileContent, fileUri);
+
+      // 提取类定义与成员
       const { tree } = parseTzd(fileContent);
-      const uri = fsPathToUri(resolved);
-      const defs = extractClassDefs(tree, fileContent, uri);
-      for (const def of defs) classCache.set(def.className, def);
+      const defs = extractClassDefs(tree, fileContent, fileUri);
+      for (const def of defs) {
+        classCache.set(def.className, def);
+      }
       classCache.set(resolved, { _file: true });
-    } catch {}
+
+      // 递归解析该被导入文件内部的子 import
+      loadImportClasses(fileContent, fileUri, visited);
+    } catch (_) {}
   }
 }
 
@@ -1183,9 +1472,12 @@ function evaluateChainType(exprStr, docUri, line, text, seen = new Set()) {
 function refreshLocalClassCache(text, docUri) {
   if (!text || !docUri) return;
   try {
+    loadImportClasses(text, docUri);
     const { tree } = parseTzd(text);
     const localDefs = extractClassDefs(tree, text, docUri);
     for (const def of localDefs) classCache.set(def.className, def);
+    extractTopLevelFunctions(text, docUri);
+    extractTopLevelVariables(text, docUri);
   } catch (_) {}
 }
 
@@ -1397,11 +1689,30 @@ function buildCompletions(text, line, col, docUri) {
     }
   }
 
-  //   c. 全局函数
-  for (const fn of globalFunctionsCache) {
-    items.push({ label: fn, kind: 3 /*Function*/,
-      insertTextFormat: 2, insertText: `${fn}($0)`,
-      detail: "function", sortText: "2" });
+  //   c. 全局函数 (包含跨文件导入的全局函数)
+  for (const [fn, defs] of globalFunctionsCache.entries()) {
+    const firstDef = defs && defs[0];
+    const sig = firstDef ? firstDef.signature : "";
+    const doc = firstDef ? firstDef.docComment : undefined;
+    items.push({
+      label: fn,
+      kind: 3 /*Function*/,
+      insertTextFormat: 2,
+      insertText: `${fn}($0)`,
+      detail: `fun ${fn}(${sig || ""})`,
+      documentation: doc ? { kind: "markdown", value: doc } : undefined,
+      sortText: "2",
+    });
+  }
+
+  //   c2. 全局常量/变量 (包含跨文件导入的变量与常量)
+  for (const [vn, vdef] of globalVariablesCache.entries()) {
+    items.push({
+      label: vn,
+      kind: vdef.isConst ? 21 /*Constant*/ : 6 /*Variable*/,
+      detail: vdef.isConst ? (vdef.value ? `const ${vn} = ${vdef.value}` : `const ${vn}`) : `var ${vn}`,
+      sortText: "2",
+    });
   }
 
   //   d. 类名
@@ -1564,6 +1875,22 @@ connection.onHover((params) => {
   const text = doc.getText();
   refreshLocalClassCache(text, params.textDocument.uri);
   const currentLine = text.split("\n")[params.position.line];
+  if (!currentLine) return null;
+
+  // ⭐ 优先级 0：import 语句悬浮显示真实解析路径
+  const importMatch = currentLine.match(/^\s*import\s+["']([^"']+)["']/);
+  if (importMatch) {
+    const rawPath = importMatch[1];
+    const resolved = resolveImportPath(rawPath, params.textDocument.uri);
+    let md = `### 📦 导入模块: \`${rawPath}\`\n\n`;
+    if (resolved && fileExistsSafe(resolved)) {
+      md += `*真实路径*: \`${resolved}\`\n\n按 \`F12\` 可直接跳转到该源文件。`;
+    } else {
+      md += `⚠️ **警告**: 未能解析并找到该模块文件。请检查路径或库配置。`;
+    }
+    return { contents: { kind: MarkupKind.Markdown, value: md } };
+  }
+
   let start = params.position.character;
   let end = params.position.character;
 
@@ -1603,7 +1930,9 @@ connection.onHover((params) => {
           return { contents: { kind: MarkupKind.Markdown, value: mdValue } };
         } else {
           const typePart = member.type ? ` ${member.type}` : "";
-          let mdValue = `\`\`\`tzdlang\nvar${typePart} ${member.name}\n\`\`\``;
+          const prefix = member.isConst ? "const" : member.isStatic ? "static var" : "var";
+          const valPart = member.value ? ` = ${member.value}` : "";
+          let mdValue = `\`\`\`tzdlang\n${prefix}${typePart} ${member.name}${valPart}\n\`\`\``;
           if (docComment) mdValue += `\n\n---\n${docComment}`;
           return { contents: { kind: MarkupKind.Markdown, value: mdValue } };
         }
@@ -1616,10 +1945,20 @@ connection.onHover((params) => {
   // ⭐ 优先级 2：当前文件或导入的类定义
   const classDef = classCache.get(word);
   if (classDef && !classDef._file) {
+    const ctors = classDef.members ? classDef.members.filter((m) => m.kind === "constructor") : [];
+    let md = `\`\`\`tzdlang\nclass ${word}${classDef.parentName ? ` extends ${classDef.parentName}` : ""}\n\`\`\``;
+    if (ctors.length > 0) {
+      md += "\n\n**构造函数 / Constructors:**\n";
+      for (const c of ctors) {
+        md += `- \`${word}(${c.signature || ""})\`\n`;
+      }
+    }
+    const docComment = extractDocComment(text, classDef.range?.start?.line);
+    if (docComment) md += `\n\n---\n${docComment}`;
     return {
       contents: {
         kind: MarkupKind.Markdown,
-        value: `\`\`\`tzdlang\nclass ${word}\n\`\`\``,
+        value: md,
       },
     };
   }
@@ -1650,6 +1989,24 @@ connection.onHover((params) => {
         },
       };
     }
+  }
+
+  // ⭐ 优先级 3.5：跨文件导入的全局函数
+  if (globalFunctionsCache.has(word)) {
+    const fns = globalFunctionsCache.get(word);
+    if (fns && fns.length > 0) {
+      const f = fns[0];
+      let md = `\`\`\`tzdlang\nfun ${word}(${f.signature || ""})\n\`\`\``;
+      if (f.docComment) md += `\n\n---\n${f.docComment}`;
+      return { contents: { kind: MarkupKind.Markdown, value: md } };
+    }
+  }
+
+  // ⭐ 优先级 3.6：跨文件导入的全局常量与变量
+  if (globalVariablesCache.has(word)) {
+    const v = globalVariablesCache.get(word);
+    let md = `\`\`\`tzdlang\n${v.isConst ? "const" : "var"}${v.type ? " " + v.type : ""} ${word}${v.value ? ` = ${v.value}` : ""}\n\`\`\``;
+    return { contents: { kind: MarkupKind.Markdown, value: md } };
   }
 
   // ⭐ 优先级 4 (最后兜底)：Native C++ 系统函数或类
@@ -1685,7 +2042,8 @@ function checkUndeclared(text, docUri) {
   for (const cls of classCache.keys()) {
     if (!cls.startsWith("file:///") && !cls.startsWith("_")) allowed.add(cls);
   }
-  for (const fn of globalFunctionsCache) allowed.add(fn);
+  for (const fn of globalFunctionsCache.keys()) allowed.add(fn);
+  for (const vn of globalVariablesCache.keys()) allowed.add(vn);
   for (const c of cachedRuntimeSymbols.classes) allowed.add(c);
   for (const f of cachedRuntimeSymbols.functions) allowed.add(f);
 
@@ -1719,22 +2077,49 @@ function checkUndeclared(text, docUri) {
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
       .replace(/\/\/.*/, "");
 
+    // 如果整行是 import 语句，忽略该行的变量误报
+    const isImportLine = /^\s*import\b/.test(cleanLine);
+
     let fnRegex = /(?:^|[^\w\.])([a-zA-Z_]\w*)\s*\(/g;
     let match;
     while ((match = fnRegex.exec(cleanLine)) !== null) {
       let name = match[1];
-      if (!allowed.has(name)) {
-        let col = origLine.indexOf(name, match.index);
-        diags.push(
-          Diagnostic.create(
-            Range.create(i, col, i, col + name.length),
-            `未声明的函数：'${name}'`,
-            DiagnosticSeverity.Error,
-            "tzdlang",
-          ),
-        );
+      const matchIdx = match.index + match[0].indexOf(name);
+      const beforeFn = cleanLine.slice(0, matchIdx);
+      const isNewExpr = /\bnew\s*$/.test(beforeFn);
+
+      if (isNewExpr) {
+        if (
+          !allowed.has(name) &&
+          !classCache.has(name) &&
+          !cachedRuntimeSymbols.classes.includes(name)
+        ) {
+          let col = origLine.indexOf(name, match.index);
+          diags.push(
+            Diagnostic.create(
+              Range.create(i, col, i, col + name.length),
+              `未声明的类：'${name}'`,
+              DiagnosticSeverity.Error,
+              "tzdlang",
+            ),
+          );
+        }
+      } else {
+        if (!allowed.has(name)) {
+          let col = origLine.indexOf(name, match.index);
+          diags.push(
+            Diagnostic.create(
+              Range.create(i, col, i, col + name.length),
+              `未声明的函数：'${name}'`,
+              DiagnosticSeverity.Error,
+              "tzdlang",
+            ),
+          );
+        }
       }
     }
+
+    if (isImportLine) continue;
 
     let varRegex = /(?:^|[^\w\.])([a-zA-Z_]\w*)(?![\w\(\.:])/g;
     while ((match = varRegex.exec(cleanLine)) !== null) {
@@ -1829,9 +2214,24 @@ connection.onRequest("tzdlang/getRecursions", (params) => {
 });
 
 connection.onInitialize((params) => {
-  const toolsPath = params.initializationOptions?.toolsPath || "";
-  if (toolsPath) {
-    fetchRuntimeSymbolsFromCpp(toolsPath);
+  configuredToolsPath = params.initializationOptions?.toolsPath || "";
+  configuredStdlibPath = params.initializationOptions?.stdlibPath || "";
+  configuredExtensionPath = params.initializationOptions?.extensionPath || "";
+
+  if (params.workspaceFolders && Array.isArray(params.workspaceFolders)) {
+    for (const folder of params.workspaceFolders) {
+      const fsP = uriToFsPath(folder.uri);
+      if (fsP && !workspaceRoots.includes(fsP)) workspaceRoots.push(fsP);
+    }
+  } else if (params.rootUri) {
+    const fsP = uriToFsPath(params.rootUri);
+    if (fsP && !workspaceRoots.includes(fsP)) workspaceRoots.push(fsP);
+  } else if (params.rootPath) {
+    if (!workspaceRoots.includes(params.rootPath)) workspaceRoots.push(params.rootPath);
+  }
+
+  if (configuredToolsPath) {
+    fetchRuntimeSymbolsFromCpp(configuredToolsPath);
   }
   return {
     capabilities: {
@@ -1864,6 +2264,21 @@ function findDefinition(docUri, text, line, col) {
   if (line >= lines.length) return null;
 
   const currentLine = lines[line];
+  if (!currentLine) return null;
+
+  // ⭐ 0. 优先检测当前行是否是 import 语句：支持在 import 行上按 F12 直接跳转到导入的文件！
+  const importMatch = currentLine.match(/^\s*import\s+["']([^"']+)["']/);
+  if (importMatch) {
+    const rawPath = importMatch[1];
+    const resolved = resolveImportPath(rawPath, docUri);
+    if (resolved && fileExistsSafe(resolved)) {
+      return {
+        uri: fsPathToUri(resolved),
+        range: Range.create(0, 0, 0, 0),
+      };
+    }
+  }
+
   let start = col;
   while (start > 0 && /[a-zA-Z_0-9]/.test(currentLine[start - 1])) start--;
   let end = col;
@@ -1882,6 +2297,10 @@ function findDefinition(docUri, text, line, col) {
     const argsStr = callMatch[1].trim();
     calledArgsCount = argsStr.length > 0 ? argsStr.split(",").length : 0;
   }
+
+  const beforeCursor = currentLine.slice(0, start);
+  const isNewCall = /\bnew\s*$/.test(beforeCursor);
+  const isMemberAccess = /\.\s*$/.test(beforeCursor);
 
   // 1. Super 构造函数跳转
   if (word === "super") {
@@ -1906,9 +2325,6 @@ function findDefinition(docUri, text, line, col) {
   }
 
   // 2. 点号成员跳转 (例如 e.message 或 MathToolkit.square(6) 或 new Test().a() 或 new Test().a().b())
-  const beforeCursor = currentLine.slice(0, start);
-  const isMemberAccess = /\.\s*$/.test(beforeCursor);
-
   if (isMemberAccess) {
     const exprBeforeDot = extractExpressionBeforeDot(beforeCursor);
     let targetClass = null;
@@ -1941,9 +2357,17 @@ function findDefinition(docUri, text, line, col) {
     }
   }
 
-  // 3. 类名跳转
+  // 3. 类名与构造函数跳转 (例如 new GLWindow(...) 或 GLWindow 或 class GLWindow)
   const def = classCache.get(word);
   if (def && def.file) {
+    if (isNewCall || calledArgsCount !== -1) {
+      const ctors = def.members ? def.members.filter((m) => m.kind === "constructor") : [];
+      if (ctors.length > 0) {
+        let targetCtor = ctors.find((c) => c.argsCount === calledArgsCount);
+        if (!targetCtor) targetCtor = ctors[0];
+        if (targetCtor && targetCtor.location) return targetCtor.location;
+      }
+    }
     return {
       uri: def.file,
       range: Range.create(
@@ -1983,7 +2407,7 @@ function findDefinition(docUri, text, line, col) {
     }
   }
 
-  // ⭐ 5. 本地/全局函数精准正则匹配 (支持 static fun, public fun 等修饰符)
+  // ⭐ 5. 本地函数精准正则匹配 (支持 static fun, public fun 等修饰符)
   const fnPattern = new RegExp(
     `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${escaped}\\s*\\(([^)]*)\\)`,
   );
@@ -2007,6 +2431,16 @@ function findDefinition(docUri, text, line, col) {
     }
   }
   if (fallbackLoc) return fallbackLoc; // 如果没有严格匹配的重载，就返回找到的第一个
+
+  // ⭐ 5.5 跨文件导入的全局函数精准跳转
+  if (globalFunctionsCache.has(word)) {
+    const fns = globalFunctionsCache.get(word);
+    if (fns && fns.length > 0) {
+      let targetFn = fns.find((f) => f.argsCount === calledArgsCount);
+      if (!targetFn) targetFn = fns[0];
+      if (targetFn && targetFn.location) return targetFn.location;
+    }
+  }
 
   // 6. 如果在某个类内，且上述未匹配到，则在当前类或其继承链中尝试兜底查找
   // 避免在顶层调用未定义函数时错误跳转到不相关的类方法
@@ -2035,6 +2469,12 @@ function findDefinition(docUri, text, line, col) {
         };
       }
     }
+  }
+
+  // ⭐ 7.5 跨文件导入的全局常量与变量跳转
+  if (globalVariablesCache.has(word)) {
+    const v = globalVariablesCache.get(word);
+    if (v && v.location) return v.location;
   }
 
   return null;

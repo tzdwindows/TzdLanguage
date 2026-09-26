@@ -29,6 +29,11 @@ namespace std { namespace experimental {
 #include "fintamath/numbers/Real.hpp"
 
 #include "TzdNativeModule.h"
+#include "TzdNetModule.h"
+#include "TzdGlModule.h"
+#include "TzdUiModule.h"
+#include "TzdCryptoModule.h"
+#include "TzdSysModule.h"
 
 #include <iostream>
 #include <fstream>
@@ -257,6 +262,11 @@ void TzdNativeModule::init(TzdInterpreter* interp) {
     regConv(interp);
     regExtraMath(interp);
     regExtended(interp);
+    TzdNetModule::init(interp);
+    TzdGlModule::init(interp);
+    TzdUiModule::init(interp);
+    TzdCryptoModule::init(interp);
+    TzdSysModule::init(interp);
 #ifdef WITH_LIBTORCH
     TzdPyTorch::init(interp);
 #endif
@@ -667,12 +677,16 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
         return result;
         });
 
-    reg("len", [](auto args) {
+    auto getLenFunc = [](auto args) {
         if (args.empty()) return TzdValue(0.0);
         if (args[0].type == TzdValue::ARRAY) return TzdValue((double)args[0].arrVal.size());
         if (args[0].type == TzdValue::STRING) return TzdValue((double)args[0].sVal.length());
+        if (args[0].type == TzdValue::MAP) return TzdValue((double)args[0].mapVal.size());
         return TzdValue(0.0);
-        });
+    };
+    reg("len", getLenFunc);
+    reg("length", getLenFunc);
+    reg("size", getLenFunc);
     reg("sys_thread_start", &sys_thread_start);
     reg("sys_thread_join", &sys_thread_join);
     reg("sys_thread_detach", &sys_thread_detach);
@@ -1146,6 +1160,13 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
         return TzdValue((double)pos);
     });
 
+    reg("lastIndexOf", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue(-1.0);
+        size_t pos = args[0].sVal.rfind(args[1].sVal);
+        if (pos == std::string::npos) return TzdValue(-1.0);
+        return TzdValue((double)pos);
+    });
+
     reg("charAt", [](auto args) -> TzdValue {
         if (args.size() < 2) return TzdValue("");
         int idx = (int)valToDouble(args[1]);
@@ -1241,17 +1262,21 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
         TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
     };
 
-    reg("push", [](auto args) -> TzdValue {
+    auto pushFn = [](auto args) -> TzdValue {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         TzdValue result = args[0];
         for (size_t i = 1; i < args.size(); ++i) result.arrVal.push_back(args[i]);
         return result;
-    });
+    };
+    reg("push", pushFn);
+    reg("array_push", pushFn);
 
-    reg("pop", [](auto args) -> TzdValue {
+    auto popFn = [](auto args) -> TzdValue {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue();
         return args[0].arrVal.back();
-    });
+    };
+    reg("pop", popFn);
+    reg("array_pop", popFn);
 
     reg("shift", [](auto args) -> TzdValue {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue();
@@ -2700,20 +2725,23 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
     reg("GOLDEN_RATIO", [](auto args) -> TzdValue { return TzdValue(1.61803398874989484820); });
     reg("EPSILON", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::epsilon()); });
 
-    // ---- Map utility functions (essential for Module system) ----
-    reg("mapKeys", [](auto args) -> TzdValue {
+    auto getMapKeys = [](auto args) -> TzdValue {
         if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
         for (const auto& [k, v] : args[0].mapVal) result.push_back(TzdValue(k));
         return TzdValue(result);
-    });
+    };
+    reg("mapKeys", getMapKeys);
+    reg("keys", getMapKeys);
 
-    reg("mapValues", [](auto args) -> TzdValue {
+    auto getMapValues = [](auto args) -> TzdValue {
         if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
         for (const auto& [k, v] : args[0].mapVal) result.push_back(v);
         return TzdValue(result);
-    });
+    };
+    reg("mapValues", getMapValues);
+    reg("values", getMapValues);
 
     reg("mapHas", [](auto args) -> TzdValue {
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return TzdValue(false);

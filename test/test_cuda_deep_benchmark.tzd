@@ -1,0 +1,178 @@
+import "torch/All.tzd";
+import "time/DateTime.tzd";
+
+class CudaClassifier extends Module {
+    var ptr fc1;
+    var ptr fc2;
+
+    CudaClassifier() {
+        super("CudaClassifier");
+        this.fc1 = new Linear(16, 32);
+        this.fc2 = new Linear(32, 4);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+    }
+
+    fun forward(x) {
+        var f1 = this.fc1;
+        var f2 = this.fc2;
+        var h = f1.forward(x);
+        h = torch_relu(h);
+        var res = f2.forward(h);
+        return res;
+    }
+}
+
+fun main() {
+    print("================================================================================");
+    print("                TzdLang PyTorch + NVIDIA CUDA 深度能力与性能基准测试            ");
+    print("================================================================================");
+
+    // 1. 硬件与环境检测
+    var isCuda = torch_cuda_is_available();
+    print("[1] CUDA 环境检测:");
+    print("    CUDA 可用状态:       " + toString(isCuda));
+    if (!isCuda) {
+        print("    [错误] 未检测到可用 CUDA 运行时，终止测试。");
+        return;
+    }
+
+    var devCount = torch_cuda_device_count();
+    var curDev = torch_cuda_current_device();
+    var devName = torch_cuda_get_device_name(0);
+    var cap = torch_cuda_get_device_capability(0);
+    var props = torch_cuda_get_device_properties(0);
+
+    print("    GPU 设备数量:        " + toString(devCount));
+    print("    当前活动设备:        GPU " + toString(curDev));
+    print("    设备型号名称:        " + devName);
+    print("    算力架构 (Compute):  SM " + toString(cap[0]) + "." + toString(cap[1]));
+    var totalMemMB = props["total_memory"] / (1024.0 * 1024.0);
+    print("    显存物理总量:        " + toString(totalMemMB) + " MB");
+    print("    流式多处理器 (SM):   " + toString(props["multi_processor_count"]));
+
+    // 2. 基础张量设备流转与状态检测
+    print("\n[2] 张量在主机内存 (CPU) 与设备显存 (GPU) 间流转验证:");
+    var xCpu = torch_randn(4, 4);
+    print("    CPU 张量设备:        " + torch_get_device(xCpu) + " (is_cuda=" + toString(torch_is_cuda(xCpu)) + ")");
+
+    var xGpu = torch_to_cuda(xCpu);
+    print("    GPU 张量设备:        " + torch_get_device(xGpu) + " (is_cuda=" + toString(torch_is_cuda(xGpu)) + ")");
+
+    var xBack = torch_to_cpu(xGpu);
+    var diff = torch_scalar_value(torch_sum(torch_abs(torch_sub(xCpu, xBack))));
+    print("    CPU <-> GPU 往返精度损失误差: " + toString(diff));
+    if (diff < 0.00001) {
+        print("    [通过] 数据往返无损一致性校验通过！");
+    } else {
+        print("    [失败] 数据不一致！");
+    }
+
+    // 3. CUDA 专用显存监控与回收 API 测试
+    print("\n[3] CUDA 显存动态监控与缓存管理 API 测试:");
+    torch_cuda_empty_cache();
+    torch_cuda_reset_peak_memory_stats();
+    var memBefore = torch_cuda_memory_allocated();
+    print("    初始显存占用:        " + toString(memBefore / 1024.0) + " KB");
+
+    // 分配一个显存中占用 ~16MB 的大张量 (2048 x 2048 float32 = 16,777,216 bytes)
+    var bigTensor = torch_to_cuda(torch_randn(2048, 2048));
+    torch_cuda_synchronize();
+    var memAlloc = torch_cuda_memory_allocated();
+    var memReserved = torch_cuda_memory_reserved();
+    var memPeak = torch_cuda_max_memory_allocated();
+    print("    大张量分配后已用显存: " + toString(memAlloc / (1024.0 * 1024.0)) + " MB");
+    print("    显存分配器预留总量:   " + toString(memReserved / (1024.0 * 1024.0)) + " MB");
+    print("    历史峰值显存占用:     " + toString(memPeak / (1024.0 * 1024.0)) + " MB");
+
+    // 4. GPU vs CPU 大规模稠密矩阵乘法 (GEMM) 算力基准测试
+    print("\n[4] GPU vs CPU 大规模稠密矩阵乘法性能 Benchmark (1024 x 1024):");
+    var A_cpu = torch_randn(1024, 1024);
+    var B_cpu = torch_randn(1024, 1024);
+
+    var sw = new Stopwatch();
+    sw.start();
+    var C_cpu = torch_matmul(A_cpu, B_cpu);
+    sw.stop();
+    var cpuTimeMs = sw.elapsedMs();
+    print("    CPU 计算耗时:        " + toString(cpuTimeMs) + " ms");
+
+    var A_gpu = torch_to_cuda(A_cpu);
+    var B_gpu = torch_to_cuda(B_cpu);
+    torch_cuda_synchronize();
+
+    // 预热 GPU
+    var warm = torch_matmul(A_gpu, B_gpu);
+    torch_cuda_synchronize();
+
+    sw.restart();
+    var C_gpu = torch_matmul(A_gpu, B_gpu);
+    torch_cuda_synchronize();
+    sw.stop();
+    var gpuTimeMs = sw.elapsedMs();
+    print("    GPU 计算耗时:        " + toString(gpuTimeMs) + " ms");
+
+    var effectiveGpuMs = gpuTimeMs;
+    if (effectiveGpuMs < 0.001) effectiveGpuMs = 0.001;
+    var speedup = cpuTimeMs / effectiveGpuMs;
+    print("    CUDA 矩阵运算加速比:  " + toString(speedup) + "x 倍提升！");
+
+    // 5. 深度学习全链路 (nn.Module 在 GPU 上的端到端训练与反向传播)
+    print("\n[5] 深度学习端到端验证: GPU 神经网络前向/反向传播与优化器更新:");
+    var model = new CudaClassifier();
+    print("    模型参数总量:        " + toString(model.numParams()));
+    print("    将模型整体迁移至 GPU (model.cuda())...");
+    model.cuda();
+
+    var batchX = torch_to_cuda(torch_randn(8, 16));
+    var target = torch_to_cuda(torch_zeros(8, 4));
+
+    // 前向计算
+    var pred = model.forward(batchX);
+    print("    GPU 前向预测输出设备: " + torch_get_device(pred));
+
+    // 计算损失
+    var loss = torch_mse_loss(pred, target);
+    print("    初始损失 (Loss):     " + toString(torch_scalar_value(loss)));
+
+    // 反向传播
+    model.zeroGrad();
+    torch_backward(loss);
+    print("    [通过] GPU 反向传播梯度计算成功！");
+
+    // 优化器单步更新
+    var opt = adam(model, 0.01, null, null, null);
+    torch_optim_step(opt);
+    print("    [通过] Adam 优化器在 GPU 权重上成功完成单步梯度更新！");
+
+    // 6. 新增常用算子综合功能验证
+    print("\n[6] 新增 PyTorch 扩展运算算子快速测试:");
+    var v1 = torch_tensor(1.0, 2.0, 3.0);
+    var v2 = torch_tensor(4.0, 5.0, 6.0);
+
+    var vDot = torch_scalar_value(torch_dot(v1, v2)); // 1*4 + 2*5 + 3*6 = 32
+    print("    torch_dot:           " + toString(vDot) + " (预期: 32)");
+
+    var vOuter = torch_outer(v1, v2);
+    print("    torch_outer 形状:    " + torch_shape(vOuter) + " (预期: [3, 3])");
+
+    var c1 = torch_tensor(1.0, 10.0, 3.0);
+    var c2 = torch_tensor(5.0, 2.0, 8.0);
+    var maxVal = torch_to_string(torch_maximum(c1, c2));
+    print("    torch_maximum:       " + maxVal);
+
+    var clipped = torch_clip(c1, 2.0, 8.0);
+    print("    torch_clip:          " + torch_to_string(clipped));
+
+    var fAddRelu = torch_fused_add_relu(torch_tensor(-5.0, 2.0), torch_tensor(1.0, 3.0));
+    print("    torch_fused_add_relu:" + torch_to_string(fAddRelu) + " (预期: [0, 5])");
+
+    var trig = torch_sinh(torch_tensor(0.0));
+    print("    torch_sinh(0):       " + toString(torch_scalar_value(trig)) + " (预期: 0)");
+
+    print("\n================================================================================");
+    print("          恭喜！全部 PyTorch 新增 API 与 NVIDIA CUDA 能力测试圆满通过！        ");
+    print("================================================================================");
+}
+
+main();

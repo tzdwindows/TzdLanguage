@@ -1,0 +1,53 @@
+/**
+ * TzdLang OpenGL 标准库 - 3D 几何体与网格绘制
+ */
+
+class Mesh {
+    static fun cube(size) {
+        var s = 1.0;
+        if (size != null) s = size;
+        gl_draw_cube(s);
+    }
+
+    static fun coloredCube(size) {
+        var s = 1.0;
+        if (size != null) s = size;
+        gl_draw_colored_cube(s);
+    }
+
+    static fun sphere(radius, slices, stacks) {
+        var r = 1.0;
+        if (radius != null) r = radius;
+        var sl = 24;
+        if (slices != null) sl = slices;
+        var st = 24;
+        if (stacks != null) st = stacks;
+        gl_draw_sphere(r, sl, st);
+    }
+
+    static fun cylinder(baseRadius, topRadius, height, slices) {
+        var br = 1.0;
+        if (baseRadius != null) br = baseRadius;
+        var tr = 1.0;
+        if (topRadius != null) tr = topRadius;
+        var h = 2.0;
+        if (height != null) h = height;
+        var sl = 24;
+        if (slices != null) sl = slices;
+        gl_draw_cylinder(br, tr, h, sl);
+    }
+
+    static fun grid(size, step) {
+        var sz = 10.0;
+        if (size != null) sz = size;
+        var st = 1.0;
+        if (step != null) st = step;
+        gl_draw_grid(sz, st);
+    }
+
+    static fun axes(length) {
+        var l = 2.0;
+        if (length != null) l = length;
+        gl_draw_axes(l);
+    }
+}

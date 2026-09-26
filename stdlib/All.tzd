@@ -1,0 +1,31 @@
+/**
+ * TzdLang 全量标准库统一引入入口
+ */
+
+import "net.Http";
+import "net.Socket";
+import "net.Url";
+
+import "gl.GL";
+import "gl.GLWindow";
+import "gl.Camera";
+import "gl.Mesh";
+
+import "ui.Dialog";
+import "ui.Control";
+import "ui.Window";
+import "ui.App";
+
+import "crypto.Crypto";
+import "time.DateTime";
+
+import "fs.File";
+import "fs.Path";
+import "fs.Directory";
+
+import "collections.Queue";
+import "collections.Stack";
+import "collections.Set";
+import "collections.LinkedList";
+
+import "sys.Process";

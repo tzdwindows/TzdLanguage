@@ -1,0 +1,156 @@
+/**
+ * TzdLang 时间与日期标准库 - DateTime, TimeSpan, Stopwatch
+ */
+
+class TimeSpan {
+    var float totalMilliseconds;
+    var float totalSeconds;
+    var int days;
+    var int hours;
+    var int minutes;
+    var int seconds;
+    var int milliseconds;
+
+    TimeSpan(ms) {
+        if (ms != null) {
+            this.totalMilliseconds = ms;
+        } else {
+            this.totalMilliseconds = 0.0;
+        }
+        this.totalSeconds = this.totalMilliseconds / 1000.0;
+
+        var totalSec = (int)this.totalSeconds;
+        this.milliseconds = (int)(this.totalMilliseconds) % 1000;
+        this.seconds = totalSec % 60;
+        var totalMin = totalSec / 60;
+        this.minutes = totalMin % 60;
+        var totalHours = totalMin / 60;
+        this.hours = totalHours % 24;
+        this.days = totalHours / 24;
+    }
+
+    fun toString() {
+        return this.days + "d " + this.hours + "h " + this.minutes + "m " + this.seconds + "s " + this.milliseconds + "ms";
+    }
+}
+
+class DateTime {
+    var float timestamp;
+    var int year;
+    var int month;
+    var int day;
+    var int hour;
+    var int minute;
+    var int second;
+    var int dayOfWeek;
+    var int dayOfYear;
+
+    DateTime(ts) {
+        if (ts != null) {
+            this.timestamp = ts;
+        } else {
+            this.timestamp = time_now_sec();
+        }
+        var parts = time_date_parts(this.timestamp);
+        if (parts != null) {
+            this.year = parts["year"];
+            this.month = parts["month"];
+            this.day = parts["day"];
+            this.hour = parts["hour"];
+            this.minute = parts["minute"];
+            this.second = parts["second"];
+            this.dayOfWeek = parts["dayOfWeek"];
+            this.dayOfYear = parts["dayOfYear"];
+        }
+    }
+
+    static fun now() {
+        return new DateTime(time_now_sec());
+    }
+
+    static fun nowMs() {
+        return time_now_ms();
+    }
+
+    static fun nowNs() {
+        return time_now_ns();
+    }
+
+    static fun sleep(ms) {
+        time_sleep(ms);
+    }
+
+    fun format(fmtPattern) {
+        var pattern = "%Y-%m-%d %H:%M:%S";
+        if (fmtPattern != null) {
+            pattern = fmtPattern;
+        }
+        return time_format(this.timestamp, pattern);
+    }
+
+    fun diff(otherDateTime) {
+        if (otherDateTime == null) return new TimeSpan(0);
+        var deltaSec = this.timestamp - otherDateTime.timestamp;
+        return new TimeSpan(deltaSec * 1000.0);
+    }
+
+    fun toString() {
+        return this.format("%Y-%m-%d %H:%M:%S");
+    }
+}
+
+class Stopwatch {
+    var float startNs;
+    var float elapsedNs;
+    var bool running;
+
+    Stopwatch() {
+        this.startNs = 0.0;
+        this.elapsedNs = 0.0;
+        this.running = false;
+    }
+
+    static fun startNew() {
+        var sw = new Stopwatch();
+        sw.start();
+        return sw;
+    }
+
+    fun start() {
+        if (!this.running) {
+            this.startNs = time_now_ns();
+            this.running = true;
+        }
+    }
+
+    fun stop() {
+        if (this.running) {
+            var now = time_now_ns();
+            this.elapsedNs = this.elapsedNs + (now - this.startNs);
+            this.running = false;
+        }
+    }
+
+    fun reset() {
+        this.startNs = 0.0;
+        this.elapsedNs = 0.0;
+        this.running = false;
+    }
+
+    fun restart() {
+        this.reset();
+        this.start();
+    }
+
+    fun elapsedMs() {
+        if (this.running) {
+            var now = time_now_ns();
+            return (this.elapsedNs + (now - this.startNs)) / 1000000.0;
+        }
+        return this.elapsedNs / 1000000.0;
+    }
+
+    fun elapsedSec() {
+        return this.elapsedMs() / 1000.0;
+    }
+}

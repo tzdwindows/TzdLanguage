@@ -1,0 +1,156 @@
+/**
+ * TzdLang 网络标准库 - HTTP / HTTPS 客户端
+ */
+
+class HttpResponse {
+    var int status;
+    var string statusText;
+    var string body;
+    var bool ok;
+    var string error;
+    var any headers;
+
+    HttpResponse(resMap) {
+        if (resMap == null) {
+            this.status = 0;
+            this.statusText = "";
+            this.body = "";
+            this.ok = false;
+            this.error = "Empty response";
+            this.headers = {};
+        } else {
+            this.status = resMap["status"];
+            this.statusText = resMap["statusText"];
+            this.body = resMap["body"];
+            this.ok = resMap["ok"];
+            this.error = resMap["error"];
+            this.headers = resMap["headers"];
+        }
+    }
+
+    fun isOk() {
+        return this.ok;
+    }
+
+    fun json() {
+        if (this.body == null || this.body == "") {
+            return null;
+        }
+        return jsonParse(this.body);
+    }
+
+    fun text() {
+        return this.body;
+    }
+
+    fun header(name) {
+        if (this.headers != null && this.headers[name] != null) {
+            return this.headers[name];
+        }
+        return "";
+    }
+}
+
+class HttpRequest {
+    var string url;
+    var string method;
+    var any headers;
+    var string body;
+    var int timeoutMs;
+
+    HttpRequest(url, m) {
+        this.url = url;
+        if (m != null) {
+            this.method = m;
+        } else {
+            this.method = "GET";
+        }
+        this.headers = {};
+        this.body = "";
+        this.timeoutMs = 30000;
+    }
+
+    fun header(key, val) {
+        this.headers[key] = val;
+        return this;
+    }
+
+    fun setHeaders(headersMap) {
+        this.headers = headersMap;
+        return this;
+    }
+
+    fun setBody(data) {
+        this.body = data;
+        return this;
+    }
+
+    fun setJson(obj) {
+        this.body = jsonStringify(obj);
+        this.headers["Content-Type"] = "application/json";
+        return this;
+    }
+
+    fun timeout(ms) {
+        this.timeoutMs = ms;
+        return this;
+    }
+
+    fun send() {
+        var rawRes = net_http_request(this.method, this.url, this.headers, this.body, this.timeoutMs);
+        return new HttpResponse(rawRes);
+    }
+}
+
+class Http {
+    static fun get(url, headers, timeoutMs) {
+        var req = new HttpRequest(url, "GET");
+        if (headers != null) req.setHeaders(headers);
+        if (timeoutMs != null) req.timeout(timeoutMs);
+        return req.send();
+    }
+
+    static fun post(url, body, headers, timeoutMs) {
+        var req = new HttpRequest(url, "POST");
+        if (body != null) req.setBody(body);
+        if (headers != null) req.setHeaders(headers);
+        if (timeoutMs != null) req.timeout(timeoutMs);
+        return req.send();
+    }
+
+    static fun postJson(url, jsonObj, headers, timeoutMs) {
+        var req = new HttpRequest(url, "POST");
+        req.setJson(jsonObj);
+        if (headers != null) {
+            req.setHeaders(headers);
+            req.headers["Content-Type"] = "application/json";
+        }
+        if (timeoutMs != null) req.timeout(timeoutMs);
+        return req.send();
+    }
+
+    static fun put(url, body, headers, timeoutMs) {
+        var req = new HttpRequest(url, "PUT");
+        if (body != null) req.setBody(body);
+        if (headers != null) req.setHeaders(headers);
+        if (timeoutMs != null) req.timeout(timeoutMs);
+        return req.send();
+    }
+
+    static fun delete(url, headers, timeoutMs) {
+        var req = new HttpRequest(url, "DELETE");
+        if (headers != null) req.setHeaders(headers);
+        if (timeoutMs != null) req.timeout(timeoutMs);
+        return req.send();
+    }
+
+    static fun download(url, destPath, timeoutMs) {
+        var t = 60000;
+        if (timeoutMs != null) t = timeoutMs;
+        return net_http_download(url, destPath, t);
+    }
+
+    static fun request(method, url) {
+        return new HttpRequest(url, method);
+    }
+}

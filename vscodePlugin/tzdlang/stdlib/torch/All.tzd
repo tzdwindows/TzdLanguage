@@ -1,0 +1,14 @@
+// ============================================================================
+// All.tzd - Single import for the complete PyTorch Module system
+// Usage: import "torch/All.tzd";
+// This imports: Module, Sequential, ModuleList, all Layers, all Losses,
+// Training utilities, and weight initialization helpers.
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Sequential.tzd";
+import "torch/ModuleList.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+import "torch/Init.tzd";

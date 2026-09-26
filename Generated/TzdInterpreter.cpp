@@ -26,7 +26,7 @@ TzdValue::TzdValue(const TzdValue& o)
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(o.sVal), bVal(o.bVal), arrVal(o.arrVal), mapVal(o.mapVal),
       params(o.params), paramTypes(o.paramTypes), funcBody(o.funcBody),
-      nativeFunc(o.nativeFunc), classDefVal(o.classDefVal),
+      nativeFunc(o.nativeFunc), closureScope(o.closureScope), classDefVal(o.classDefVal),
       instanceVal(o.instanceVal), sourceFile(o.sourceFile),
       line(o.line), column(o.column),
       jitInternalName(o.jitInternalName), nativeArr(o.nativeArr),
@@ -40,7 +40,7 @@ TzdValue::TzdValue(TzdValue&& o) noexcept
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(std::move(o.sVal)), bVal(o.bVal), arrVal(std::move(o.arrVal)), mapVal(std::move(o.mapVal)),
       params(std::move(o.params)), paramTypes(std::move(o.paramTypes)), funcBody(o.funcBody),
-      nativeFunc(std::move(o.nativeFunc)), classDefVal(o.classDefVal),
+      nativeFunc(std::move(o.nativeFunc)), closureScope(std::move(o.closureScope)), classDefVal(o.classDefVal),
       instanceVal(o.instanceVal), sourceFile(std::move(o.sourceFile)),
       line(o.line), column(o.column),
       jitInternalName(std::move(o.jitInternalName)), nativeArr(std::move(o.nativeArr)),
@@ -71,6 +71,7 @@ TzdValue& TzdValue::operator=(const TzdValue& o) {
     paramTypes = o.paramTypes;
     funcBody = o.funcBody;
     nativeFunc = o.nativeFunc;
+    closureScope = o.closureScope;
     classDefVal = o.classDefVal;
     instanceVal = o.instanceVal;
     sourceFile = o.sourceFile;
@@ -106,6 +107,7 @@ TzdValue& TzdValue::operator=(TzdValue&& o) noexcept {
     paramTypes = std::move(o.paramTypes);
     funcBody = o.funcBody;
     nativeFunc = std::move(o.nativeFunc);
+    closureScope = std::move(o.closureScope);
     classDefVal = o.classDefVal;
     instanceVal = o.instanceVal;
     sourceFile = std::move(o.sourceFile);
@@ -2006,18 +2008,26 @@ bool TzdInterpreter::isTruthy(const TzdValue& v) {
 
 bool TzdInterpreter::valuesEqual(const TzdValue& l, const TzdValue& r) {
     if (l.type == r.type) {
+        if (l.type == TzdValue::NONE) return true;
         if (l.type == TzdValue::BOOL) return l.bVal == r.bVal;
         if (l.type == TzdValue::STRING) return l.sVal == r.sVal;
+        if (l.type == TzdValue::INSTANCE) return l.instanceVal == r.instanceVal;
+        if (l.type == TzdValue::CLASS_DEF) return l.classDefVal == r.classDefVal;
+        if (l.type == TzdValue::POINTER) return l.ptrVal == r.ptrVal;
         if (l.type == TzdValue::BIGINT) return bigint_compare(l.sVal, r.sVal) == 0;
         if (l.type == TzdValue::RATIONAL) return rational_compare(l.sVal, r.sVal) == 0;
         if (l.type == TzdValue::FLOAT || l.type == TzdValue::DOUBLE) return l.dVal == r.dVal;
         if (l.type >= TzdValue::SBYTE && l.type <= TzdValue::ULONG) return l.lVal == r.lVal;
     }
+    if (l.type == TzdValue::NONE || r.type == TzdValue::NONE) return false;
     // Mixed BIGINT/RATIONAL with other numeric types
     if (l.type == TzdValue::BIGINT || r.type == TzdValue::BIGINT)
         return bigint_compare(to_bigint_str(l), to_bigint_str(r)) == 0;
     if (l.type == TzdValue::RATIONAL || r.type == TzdValue::RATIONAL)
         return rational_compare(to_rational_str(l), to_rational_str(r)) == 0;
+    bool lNum = (l.type >= TzdValue::SBYTE && l.type <= TzdValue::DOUBLE);
+    bool rNum = (r.type >= TzdValue::SBYTE && r.type <= TzdValue::DOUBLE);
+    if (!lNum || !rNum) return false;
     return getAsDoubleInternal(l) == getAsDoubleInternal(r);
 }
 
@@ -2896,9 +2906,11 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     // 分支之前执行，以保持与原有行为一致。
     if (func.type == TzdValue::FUNCTION) {
         if (args.size() != func.params.size()) {
-            throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
-                std::to_string(func.params.size()) + " 个，实际 " +
-                std::to_string(args.size()) + " 个");
+            if (!(func.jittedPtr && func.params.empty())) {
+                throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
+                    std::to_string(func.params.size()) + " 个，实际 " +
+                    std::to_string(args.size()) + " 个");
+            }
         }
         for (size_t i = 0; i < args.size(); ++i) {
             if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
@@ -2921,7 +2933,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     if (func.jittedPtr && (!TzdDebugger::g_DebugActive || TzdJitEngine::isJitDebugEnabled())) {
         return callScriptFunction(func.name, func.params, func.paramTypes,
             func.funcBody, func.jittedPtr, func.instanceVal, args,
-            func.sourceFile, func.line);
+            func.sourceFile, func.line, func.closureScope);
     }
 
     // --- 分支 D: 字节码 VM 快速路径 ---
@@ -2939,7 +2951,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue& func, const std::vector<Tz
     // --- 分支 E: 脚本函数 (解释执行)，走公共核心 ---
     return callScriptFunction(func.name, func.params, func.paramTypes,
         func.funcBody, func.jittedPtr, func.instanceVal, args,
-        func.sourceFile, func.line);
+        func.sourceFile, func.line, func.closureScope);
 }
 
 TzdValue TzdInterpreter::callMethod(ClassMethod& method, TzdInstance* receiver,
@@ -3002,11 +3014,47 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
     TzdInstance* receiver,
     const std::vector<TzdValue>& args,
     const std::string& sourceFile,
-    int line) {
+    int line,
+    std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope) {
 
     // Arg/type checks are performed by the callers (callFunction / callMethod)
     // before dispatching to this core, so that the bytecode VM and native
     // paths also honour them consistently.
+
+    struct ClosureScopeGuard {
+        std::vector<std::unordered_map<std::string, TzdValue>>& scopes;
+        std::shared_ptr<std::unordered_map<std::string, TzdValue>> closure;
+        bool pushed = false;
+        ClosureScopeGuard(std::vector<std::unordered_map<std::string, TzdValue>>& sc,
+                          const std::shared_ptr<std::unordered_map<std::string, TzdValue>>& cl)
+            : scopes(sc), closure(cl) {
+            if (closure && !closure->empty()) {
+                scopes.push_back(*closure);
+                pushed = true;
+            }
+        }
+        ~ClosureScopeGuard() {
+            if (pushed) {
+                if (closure && !scopes.empty()) {
+                    auto modified = scopes.back();
+                    scopes.pop_back();
+                    for (const auto& [k, v] : modified) {
+                        (*closure)[k] = v;
+                        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+                            auto varIt = it->find(k);
+                            if (varIt != it->end()) {
+                                varIt->second = v;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    scopes.pop_back();
+                }
+            }
+        }
+    };
+    ClosureScopeGuard closureGuard(scopes, closureScope);
 
     // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行，除非启用JIT调试且该函数内无断点且未处于单步状态) ---
     int endLine = (funcBody && funcBody->getStop()) ? (int)funcBody->getStop()->getLine() : -1;
@@ -3029,6 +3077,18 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
 
         this->m_argFrameStack.push_back(std::move(jitArgs));
         this->m_argPtrStack.push_back(this->m_argFrameStack.back().data());
+
+        TzdCallFrame callFrame;
+        if (receiver != nullptr) {
+            callFrame.thisPtr = this->m_argFrameStack.back().data();
+            callFrame.args = this->m_argFrameStack.back().data() + 1;
+            callFrame.argCount = (int)args.size();
+        } else {
+            callFrame.thisPtr = nullptr;
+            callFrame.args = this->m_argFrameStack.back().data();
+            callFrame.argCount = (int)args.size();
+        }
+        this->m_callFrameStack.push_back(callFrame);
 
         std::unordered_map<std::string, TzdValue> jitScope;
         if (receiver) jitScope["this"] = TzdValue(receiver);
@@ -3063,12 +3123,14 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
         }
         catch (...) {
             scopes.pop_back();
+            this->m_callFrameStack.pop_back();
             this->m_argPtrStack.pop_back();
             this->m_argFrameStack.pop_back();
             throw;
         }
 
         scopes.pop_back();
+        this->m_callFrameStack.pop_back();
         this->m_argPtrStack.pop_back();
         this->m_argFrameStack.pop_back();
 
@@ -3301,6 +3363,12 @@ std::any TzdInterpreter::visitLambdaExpr(TzdLangParser::LambdaExprContext* ctx) 
     TzdValue funcVal("", params, ctx->block());
     funcVal.paramTypes = paramTypes;
     funcVal.type = TzdValue::FUNCTION;
+    funcVal.closureScope = std::make_shared<std::unordered_map<std::string, TzdValue>>();
+    for (const auto& sc : scopes) {
+        for (const auto& [k, val] : sc) {
+            (*funcVal.closureScope)[k] = val;
+        }
+    }
     return funcVal;
 }
 
@@ -3619,7 +3687,10 @@ std::any TzdInterpreter::visitExprStmt(TzdLangParser::ExprStmtContext* ctx) {
 }
 
 std::any TzdInterpreter::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
-    auto decl = ctx->variableDeclaration();
+    return visit(ctx->variableDeclaration());
+}
+
+std::any TzdInterpreter::visitVariableDeclaration(TzdLangParser::VariableDeclarationContext* decl) {
     std::string id = decl->IDENTIFIER()->getText();
 
     // --- 修复点 1：安全获取类型 ---
@@ -3665,7 +3736,7 @@ std::any TzdInterpreter::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx
             TzdClassDef* cls = TzdOopManager::getClass(declaredType);
             if (cls && val.type == TzdValue::INSTANCE) {
                 if (!TzdOopManager::isInstanceOf(val.instanceVal, declaredType)) {
-                    throw TzdRuntimeException("类型不匹配: 无法将 " + val.instanceVal->definition->fullName + " 赋值给 " + declaredType, ctx->getStart());
+                    throw TzdRuntimeException("类型不匹配: 无法将 " + val.instanceVal->definition->fullName + " 赋值给 " + declaredType, decl->getStart());
                 }
             }
         }
@@ -4609,6 +4680,22 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             newClass->staticValues[fieldName] = staticVal;
         }
 
+        // D2. 处理常量与静态字段 (const)
+        else if (auto constCtx = dynamic_cast<TzdLangParser::FieldConstDeclContext*>(decl)) {
+            std::string fieldName = constCtx->IDENTIFIER()->getText();
+            std::string typeName = constCtx->typeType() ? constCtx->typeType()->getText() : "var";
+            if (constCtx->typeType() && !isTypeValid(typeName)) throw TzdRuntimeException("未知类型: " + typeName, constCtx->typeType()->getStart());
+
+            ClassField f; f.name = fieldName; f.type = typeName; f.isStatic = true; f.isConst = true;
+            newClass->fields[fieldName] = f;
+
+            TzdValue constVal(0LL);
+            if (constCtx->expression()) {
+                constVal = std::any_cast<TzdValue>(visit(constCtx->expression()));
+            }
+            newClass->staticValues[fieldName] = constVal;
+        }
+
         // E. 处理普通方法 (fun)
         else if (auto methodCtx = dynamic_cast<TzdLangParser::MethodDeclContext*>(decl)) {
             std::string mName = methodCtx->IDENTIFIER()->getText();
@@ -4757,7 +4844,7 @@ bool TzdInterpreter::isTypeValid(const std::string& typeName) {
     static const std::unordered_set<std::string> primitives = {
          "int", "float", "string", "bool", "long", "ptr", "void",
          "i32", "i64", "double", "byte", "u8", "ulong", "hwnd",
-         "function", "fn"
+         "function", "fn", "any", "object"
     };
     if (primitives.count(typeName)) return true;
 

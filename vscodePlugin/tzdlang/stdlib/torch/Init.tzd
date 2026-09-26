@@ -1,0 +1,57 @@
+// ============================================================================
+// Init.tzd - Weight initialization utilities for neural network parameters
+// ============================================================================
+
+// Initialize tensor with normal distribution
+fun initNormal(tensor, mean, std) {
+    var m = 0.0;
+    var s = 0.02;
+    if (mean != null) { m = mean; }
+    if (std != null) { s = std; }
+    return torch_init_normal(tensor, m, s);
+}
+
+// Initialize tensor with uniform distribution
+fun initUniform(tensor, low, high) {
+    var lo = -0.05;
+    var hi = 0.05;
+    if (low != null) { lo = low; }
+    if (high != null) { hi = high; }
+    return torch_init_uniform(tensor, lo, hi);
+}
+
+// Xavier/Glorot initialization - good for tanh/sigmoid
+fun initXavier(tensor) {
+    return torch_init_xavier(tensor);
+}
+
+// Kaiming/He initialization - good for ReLU
+fun initKaiming(tensor) {
+    return torch_init_kaiming(tensor);
+}
+
+// Initialize with zeros
+fun initZeros(tensor) {
+    return torch_init_zeros(tensor);
+}
+
+// Initialize with ones
+fun initOnes(tensor) {
+    return torch_init_ones(tensor);
+}
+
+// Default initialization for linear layers
+fun initLinear(weight, bias) {
+    initXavier(weight);
+    if (bias != null) {
+        initZeros(bias);
+    }
+}
+
+// Default initialization for conv layers
+fun initConv(weight, bias) {
+    initKaiming(weight);
+    if (bias != null) {
+        initZeros(bias);
+    }
+}

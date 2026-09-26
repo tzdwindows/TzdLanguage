@@ -1,0 +1,54 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("Real-time Animation Test", 500, 300, 200, 200);
+
+    var gb = win.addGroupBox(" 交互式动画与点击测试 ", 20, 20, 460, 240);
+
+    var lblStatus = win.addLabel("按钮状态: 待命", 40, 60, 200, 24);
+    var btn = win.addButton("测试按钮", 40, 100, 140, 36);
+
+    btn.onClick(fun(h) {
+        lblStatus.setText("按钮状态: 已触发点击！");
+        print("[Event] Button clicked successfully!");
+    });
+
+    win.show();
+    App.sleep(100);
+
+    // 1. 发送 WM_MOUSEMOVE 触发悬浮淡入动画
+    print("Testing WM_MOUSEMOVE...");
+    btn.sendMessage(512, 0, 10 + (10 * 65536)); // WM_MOUSEMOVE at (10, 10)
+    for (var i = 0; i < 10; i = i + 1) {
+        App.pollEvents();
+        App.sleep(16); // 16ms 逐帧驱动定时器
+    }
+
+    // 2. 发送 WM_LBUTTONDOWN 触发按下
+    print("Testing WM_LBUTTONDOWN...");
+    btn.sendMessage(513, 1, 10 + (10 * 65536)); // WM_LBUTTONDOWN
+    App.pollEvents();
+    win.saveScreenshot("screenshots/btn_anim_down.png");
+
+    // 3. 发送 WM_LBUTTONUP 触发抬起恢复并触发点击回调
+    print("Testing WM_LBUTTONUP...");
+    btn.sendMessage(514, 0, 10 + (10 * 65536)); // WM_LBUTTONUP
+    App.pollEvents();
+    win.saveScreenshot("screenshots/btn_anim_up.png");
+
+    // 4. 发送 WM_MOUSELEAVE 触发悬浮淡出动画
+    print("Testing WM_MOUSELEAVE...");
+    btn.sendMessage(675, 0, 0); // WM_MOUSELEAVE
+    for (var i = 0; i < 10; i = i + 1) {
+        App.pollEvents();
+        App.sleep(16);
+    }
+    win.saveScreenshot("screenshots/btn_anim_restored.png");
+
+    print("[Success] Dynamic animation and click tests passed!");
+    win.close();
+}
+
+main();

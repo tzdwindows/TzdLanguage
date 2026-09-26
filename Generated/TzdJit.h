@@ -157,6 +157,7 @@ public:
     virtual std::any visitClassDeclStmt(TzdLangParser::ClassDeclStmtContext* ctx) override;
     virtual std::any visitExprStmt(TzdLangParser::ExprStmtContext* ctx) override;
     virtual std::any visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) override;
+    virtual std::any visitVariableDeclaration(TzdLangParser::VariableDeclarationContext* ctx) override;
     virtual std::any visitLambdaExpr(TzdLangParser::LambdaExprContext* ctx) override;
 
     virtual std::any visitBlock(TzdLangParser::BlockContext* ctx) override;

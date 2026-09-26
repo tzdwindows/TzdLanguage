@@ -1,0 +1,70 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("macOS Cupertino Style Demo", 680, 520, 100, 100);
+    win.setStyle("macos");
+    win.setTheme("light");
+
+    var gb = win.addGroupBox(" macOS Controls & Layout ", 25, 15, 630, 440);
+
+    var lblUser = win.addLabel("用户账号:", 45, 50, 80, 24);
+    var txtUser = win.addTextBox("tzd_developer@macos", 130, 47, 220, 28, false);
+
+    var btnNormal = win.addButton("标准按钮", 45, 95, 110, 32);
+    var btnPrimary = win.addButton("确认提交", 170, 95, 110, 32);
+    btnPrimary.setPrimary(true);
+
+    var chk = win.addCheckBox("启用毛玻璃沉浸质感", 45, 145, 200, 24);
+    chk.setChecked(true);
+
+    var rad1 = win.addRadioButton("浅色外观", 45, 180, 120, 24);
+    rad1.setChecked(true);
+    var rad2 = win.addRadioButton("暗色外观", 175, 180, 120, 24);
+
+    var combo = win.addComboBox(380, 47, 240, 160);
+    combo.addItem("macOS Sonoma 14.5");
+    combo.addItem("macOS Sequoia 15.0");
+    combo.addItem("Windows 11 Fluent 23H2");
+    combo.addItem("Ubuntu Linux 24.04");
+    combo.setSelectedIndex(1);
+
+    var listbox = win.addListBox(380, 95, 240, 110);
+    listbox.addItem("1. SF Pro Rounded 字体渲染");
+    listbox.addItem("2. 🔴 🟡 🟢 拟真红绿灯交互");
+    listbox.addItem("3. 动态 GDI+ 抗锯齿胶囊圆角");
+    listbox.addItem("4. 统一闭包环境作用域绑定");
+    listbox.setSelectedIndex(1);
+
+    var lblSlider = win.addLabel("音量调节 (滑块): 75%", 45, 225, 250, 24);
+    var slider = win.addSlider(45, 255, 340, 35, 0, 100);
+    slider.setValue(75);
+
+    var lblProgress = win.addLabel("编译进度: 75%", 45, 305, 200, 24);
+    var pbar = win.addProgressBar(45, 335, 340, 26, 0, 100);
+    pbar.setProgress(75);
+
+    var btnStep = win.addButton("进度 +10%", 410, 332, 110, 32);
+    btnStep.setPrimary(true);
+    btnStep.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("编译进度: " + cur + "%");
+        lblSlider.setText("音量调节 (滑块): " + cur + "%");
+    });
+
+    win.show();
+    App.sleep(250);
+    while(true) {
+        App.pollEvents();
+    }
+
+    win.saveScreenshot("screenshots/ui_macos_style.png");
+    print("[Success] macOS style screenshot saved to screenshots/ui_macos_style.png");
+    win.close();
+}
+
+main();

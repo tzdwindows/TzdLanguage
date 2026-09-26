@@ -1,0 +1,76 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    App.setStyle("macos");
+
+    var win = new Window("macOS Cupertino Style Demo", 680, 500, 150, 120);
+
+    // Group 1: Controls (left)
+    var gbControls = win.addGroupBox("macOS Controls", 20, 20, 310, 210);
+
+    var lblName = win.addLabel("用户账号:", 38, 55, 68, 24);
+    var txtName = win.addTextBox("tzd_developer@macos", 110, 52, 200, 26, false);
+
+    var btnNormal = win.addButton("标准按钮", 38, 98, 100, 30);
+    var btnPrimary = win.addButton("确认提交", 148, 98, 110, 30);
+    btnPrimary.setPrimary(true);
+
+    var chk = win.addCheckBox("启用毛玻璃沉浸质感", 38, 148, 200, 24);
+    chk.setChecked(true);
+
+    var radA = win.addRadioButton("浅色外观", 38, 184, 100, 24);
+    radA.setChecked(true);
+    var radB = win.addRadioButton("暗色外观", 148, 184, 100, 24);
+
+    // Group 2: List (right)
+    var gbList = win.addGroupBox("Layout", 350, 20, 305, 210);
+
+    var combo = win.addComboBox(365, 52, 275, 180);
+    combo.addItem("macOS Sequoia 15.0");
+    combo.addItem("macOS Sonoma 14.0");
+    combo.addItem("macOS Ventura 13.0");
+    combo.setSelectedIndex(0);
+
+    var listbox = win.addListBox(365, 90, 275, 130);
+    listbox.addItem("1. SF Pro Rounded 字体渲染");
+    listbox.addItem("2. ● ○ ○  拟真红绿灯交互");
+    listbox.addItem("3. 动态 GDI+ 抗锯齿胶囊圆角");
+    listbox.addItem("4. 统一闭包环境作用域绑定");
+    listbox.setSelectedIndex(1);
+
+    // Group 3: Progress (full width bottom)
+    var gbProgress = win.addGroupBox("Progress", 20, 248, 635, 210);
+
+    var lblSlider = win.addLabel("音量调节 (滑块): 75%", 40, 282, 250, 24);
+    var slider = win.addSlider(40, 312, 380, 32, 0, 100);
+    slider.setValue(75);
+
+    var lblProgress = win.addLabel("编译进度: 75%", 40, 362, 200, 24);
+    var pbar = win.addProgressBar(40, 390, 380, 26, 0, 100);
+    pbar.setProgress(75);
+
+    var btnStep = win.addButton("进度 +10%", 445, 387, 110, 30);
+    btnStep.setPrimary(true);
+    btnStep.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("编译进度: " + cur + "%");
+        lblSlider.setText("音量调节 (滑块): " + cur + "%");
+    });
+
+    win.show();
+    App.sleep(500);
+    for (var i = 0; i < 40; i = i + 1) {
+        App.pollEvents();
+    }
+
+    win.saveScreenshot("screenshots/ui_macos.png");
+    print("[Success] macOS screenshot saved.");
+    win.close();
+}
+
+main();

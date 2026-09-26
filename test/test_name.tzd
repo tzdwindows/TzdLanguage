@@ -1,0 +1,14 @@
+import "torch/All.tzd";
+
+class MyNet extends Module {
+    MyNet() {
+        super("MyNet");
+        var fc1 = new Linear(10, 32);
+        this.registerModule("fc1", fc1);
+    }
+}
+
+var net = new MyNet();
+var submod = net.getModule("fc1");
+print("submod: " + toString(submod));
+print("submod name: '" + submod.getName() + "'");

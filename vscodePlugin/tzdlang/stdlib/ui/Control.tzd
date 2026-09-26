@@ -1,0 +1,470 @@
+/**
+ * TzdLang UI 标准库 - 原生控件系统 (Button, Label, TextBox, CheckBox, RadioButton, GroupBox, ProgressBar, Slider, ComboBox, ListBox)
+ */
+
+class Control {
+    var ptr handle;
+
+    Control(h) {
+        this.handle = h;
+    }
+
+    fun setText(text) {
+        if (this.handle != null) {
+            ui_set_text(this.handle, text);
+        }
+        return this;
+    }
+
+    fun getText() {
+        if (this.handle != null) {
+            return ui_get_text(this.handle);
+        }
+        return "";
+    }
+
+    fun setEnabled(enabled) {
+        if (this.handle != null) {
+            ui_set_enabled(this.handle, enabled);
+        }
+        return this;
+    }
+
+    fun setVisible(visible) {
+        if (this.handle != null) {
+            ui_set_visible(this.handle, visible);
+        }
+        return this;
+    }
+
+    fun isVisible() {
+        if (this.handle != null) {
+            return ui_get_visible(this.handle);
+        }
+        return false;
+    }
+
+    fun setBounds(x, y, w, h) {
+        if (this.handle != null) {
+            ui_set_bounds(this.handle, x, y, w, h);
+        }
+        return this;
+    }
+
+    fun getBounds() {
+        if (this.handle != null) {
+            return ui_get_bounds(this.handle);
+        }
+        return [0, 0, 0, 0];
+    }
+
+    fun onClick(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_click(this.handle, callback);
+        }
+        return this;
+    }
+
+    fun onChange(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+
+    fun performClick() {
+        if (this.handle != null) {
+            ui_perform_click(this.handle);
+        }
+        return this;
+    }
+
+    fun setPrimary(isPrimary) {
+        var p = true;
+        if (isPrimary != null) p = isPrimary;
+        if (this.handle != null) {
+            ui_set_control_primary(this.handle, p);
+        }
+        return this;
+    }
+
+    fun setAccent(isAccent) {
+        return this.setPrimary(isAccent);
+    }
+}
+
+class Button extends Control {
+    Button(h) {
+        super(h);
+    }
+}
+
+class Label extends Control {
+    Label(h) {
+        super(h);
+    }
+}
+
+class TextBox extends Control {
+    TextBox(h) {
+        super(h);
+    }
+
+    fun setReadOnly(readOnly) {
+        if (this.handle != null) {
+            ui_set_readonly(this.handle, readOnly);
+        }
+        return this;
+    }
+
+    fun clear() {
+        if (this.handle != null) {
+            ui_set_text(this.handle, "");
+        }
+        return this;
+    }
+}
+
+class CheckBox extends Control {
+    CheckBox(h) {
+        super(h);
+    }
+
+    fun isChecked() {
+        if (this.handle != null) {
+            return ui_get_checked(this.handle);
+        }
+        return false;
+    }
+
+    fun setChecked(checked) {
+        if (this.handle != null) {
+            ui_set_checked(this.handle, checked);
+        }
+        return this;
+    }
+
+    fun onToggle(callback) {
+        return this.onClick(callback);
+    }
+}
+
+class RadioButton extends Control {
+    RadioButton(h) {
+        super(h);
+    }
+
+    fun isChecked() {
+        if (this.handle != null) {
+            return ui_get_checked(this.handle);
+        }
+        return false;
+    }
+
+    fun setChecked(checked) {
+        if (this.handle != null) {
+            ui_set_checked(this.handle, checked);
+        }
+        return this;
+    }
+
+    fun onToggle(callback) {
+        return this.onClick(callback);
+    }
+}
+
+class GroupBox extends Control {
+    GroupBox(h) {
+        super(h);
+    }
+}
+
+class ProgressBar extends Control {
+    var int value;
+
+    ProgressBar(h) {
+        super(h);
+        this.value = 0;
+    }
+
+    fun setProgress(val) {
+        this.value = val;
+        if (this.handle != null) {
+            ui_set_progress(this.handle, val);
+        }
+        return this;
+    }
+
+    fun getProgress() {
+        if (this.handle != null) {
+            var v = ui_get_progress(this.handle);
+            if (v != null && v > 0) {
+                this.value = v;
+                return v;
+            }
+        }
+        return this.value;
+    }
+
+    fun setRange(min, max) {
+        if (this.handle != null) {
+            ui_set_progress_range(this.handle, min, max);
+        }
+        return this;
+    }
+
+    fun step() {
+        if (this.handle != null) {
+            ui_step_progress(this.handle);
+            this.value = ui_get_progress(this.handle);
+        }
+        return this;
+    }
+}
+
+class Slider extends Control {
+    Slider(h) {
+        super(h);
+    }
+
+    fun setValue(val) {
+        if (this.handle != null) {
+            ui_set_slider_val(this.handle, val);
+        }
+        return this;
+    }
+
+    fun getValue() {
+        if (this.handle != null) {
+            return ui_get_slider_val(this.handle);
+        }
+        return 0;
+    }
+
+    fun setRange(min, max) {
+        if (this.handle != null) {
+            ui_set_slider_range(this.handle, min, max);
+        }
+        return this;
+    }
+
+    fun onChange(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+}
+
+class ComboBox extends Control {
+    ComboBox(h) {
+        super(h);
+    }
+
+    fun addItem(text) {
+        if (this.handle != null) {
+            return ui_combobox_add_item(this.handle, text);
+        }
+        return -1;
+    }
+
+    fun removeItem(index) {
+        if (this.handle != null) {
+            ui_combobox_remove_item(this.handle, index);
+        }
+        return this;
+    }
+
+    fun getSelectedIndex() {
+        if (this.handle != null) {
+            return ui_combobox_get_selected_index(this.handle);
+        }
+        return -1;
+    }
+
+    fun setSelectedIndex(index) {
+        if (this.handle != null) {
+            ui_combobox_set_selected_index(this.handle, index);
+        }
+        return this;
+    }
+
+    fun getSelectedItem() {
+        if (this.handle != null) {
+            return ui_combobox_get_selected_item(this.handle);
+        }
+        return "";
+    }
+
+    fun getCount() {
+        if (this.handle != null) {
+            return ui_combobox_get_count(this.handle);
+        }
+        return 0;
+    }
+
+    fun clear() {
+        if (this.handle != null) {
+            ui_combobox_clear(this.handle);
+        }
+        return this;
+    }
+
+    fun onChange(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+}
+
+class ListBox extends Control {
+    ListBox(h) {
+        super(h);
+    }
+
+    fun addItem(text) {
+        if (this.handle != null) {
+            return ui_listbox_add_item(this.handle, text);
+        }
+        return -1;
+    }
+
+    fun removeItem(index) {
+        if (this.handle != null) {
+            ui_listbox_remove_item(this.handle, index);
+        }
+        return this;
+    }
+
+    fun getSelectedIndex() {
+        if (this.handle != null) {
+            return ui_listbox_get_selected_index(this.handle);
+        }
+        return -1;
+    }
+
+    fun setSelectedIndex(index) {
+        if (this.handle != null) {
+            ui_listbox_set_selected_index(this.handle, index);
+        }
+        return this;
+    }
+
+    fun getSelectedItem() {
+        if (this.handle != null) {
+            return ui_listbox_get_selected_item(this.handle);
+        }
+        return "";
+    }
+
+    fun getCount() {
+        if (this.handle != null) {
+            return ui_listbox_get_count(this.handle);
+        }
+        return 0;
+    }
+
+    fun clear() {
+        if (this.handle != null) {
+            ui_listbox_clear(this.handle);
+        }
+        return this;
+    }
+
+    fun onSelect(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+}
+
+class TabControl extends Control {
+    TabControl(h) {
+        super(h);
+    }
+
+    fun addTab(title, index) {
+        if (this.handle != null) {
+            return ui_tab_add(this.handle, title, index);
+        }
+        return -1;
+    }
+
+    fun getSelectedIndex() {
+        if (this.handle != null) {
+            return ui_tab_get_cur_sel(this.handle);
+        }
+        return -1;
+    }
+
+    fun setSelectedIndex(index) {
+        if (this.handle != null) {
+            ui_tab_set_cur_sel(this.handle, index);
+        }
+        return this;
+    }
+
+    fun onChange(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+}
+
+class DateTimePicker extends Control {
+    DateTimePicker(h) {
+        super(h);
+    }
+
+    fun getDateTime() {
+        if (this.handle != null) {
+            return ui_get_datetime(this.handle);
+        }
+        return "";
+    }
+
+    fun setDateTime(year, month, day, hour, minute, second) {
+        if (this.handle != null) {
+            ui_set_datetime(this.handle, year, month, day, hour, minute, second);
+        }
+        return this;
+    }
+
+    fun onChange(callback) {
+        if (this.handle != null && callback != null) {
+            ui_on_change(this.handle, callback);
+        }
+        return this;
+    }
+}
+
+class StatusBar extends Control {
+    StatusBar(h) {
+        super(h);
+    }
+
+    fun setText(text, part) {
+        if (this.handle != null) {
+            var p = 0;
+            if (part != null) p = part;
+            ui_set_statusbar_text(this.handle, text, p);
+        }
+        return this;
+    }
+}
+
+class ImageView extends Control {
+    ImageView(h) {
+        super(h);
+    }
+
+    fun setImage(path) {
+        if (this.handle != null) {
+            ui_set_image(this.handle, path);
+        }
+        return this;
+    }
+}

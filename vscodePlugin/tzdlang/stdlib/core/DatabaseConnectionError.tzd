@@ -1,0 +1,29 @@
+import "core/Error.tzd";
+
+class DatabaseConnectionError extends Error {
+    var string host;
+    var int port;
+
+    DatabaseConnectionError(message, host, port) {
+        super(message, "DB_CONN_ERROR");
+        this.host = host;
+        this.port = port;
+    }
+
+    DatabaseConnectionError(message, host, port, cause) {
+        super(message, "DB_CONN_ERROR", cause);
+        this.host = host;
+        this.port = port;
+    }
+
+    fun toString() {
+        var base = "[" + this.code + "] " + this.message;
+        if (this.cause != null) {
+            base = base + "\n  Caused by: [" + this.cause.code + "] " + this.cause.message;
+        }
+        if (this.stack_trace != "") {
+            base = base + "\n" + this.stack_trace;
+        }
+        ret base + "\n  Database: " + this.host + ":" + this.port;
+    }
+}

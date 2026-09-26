@@ -1,0 +1,100 @@
+/**
+ * TzdLang 集合标准库 - Set 互斥集合
+ */
+
+class Set {
+    var ptr data;
+    var int count;
+
+    Set() {
+        this.data = {};
+        this.count = 0;
+    }
+
+    fun add(item) {
+        var key = "" + item;
+        if (this.data[key] == null) {
+            this.data[key] = item;
+            this.count = this.count + 1;
+        }
+        return this;
+    }
+
+    fun remove(item) {
+        var key = "" + item;
+        if (this.data[key] != null) {
+            this.data[key] = null;
+            this.count = this.count - 1;
+            return true;
+        }
+        return false;
+    }
+
+    fun contains(item) {
+        var key = "" + item;
+        return this.data[key] != null;
+    }
+
+    fun size() {
+        return this.count;
+    }
+
+    fun isEmpty() {
+        return this.count == 0;
+    }
+
+    fun clear() {
+        this.data = {};
+        this.count = 0;
+    }
+
+    fun toArray() {
+        var arr = [ ];
+        var kList = keys(this.data);
+        for (var i = 0; i < len(kList); i = i + 1) {
+            var k = kList[i];
+            if (this.data[k] != null) {
+                arr = push(arr, this.data[k]);
+            }
+        }
+        return arr;
+    }
+
+    fun union(otherSet) {
+        var res = new Set();
+        var arr1 = this.toArray();
+        for (var i = 0; i < len(arr1); i = i + 1) {
+            res.add(arr1[i]);
+        }
+        if (otherSet != null) {
+            var arr2 = otherSet.toArray();
+            for (var j = 0; j < len(arr2); j = j + 1) {
+                res.add(arr2[j]);
+            }
+        }
+        return res;
+    }
+
+    fun intersect(otherSet) {
+        var res = new Set();
+        if (otherSet == null) return res;
+        var arr1 = this.toArray();
+        for (var i = 0; i < len(arr1); i = i + 1) {
+            if (otherSet.contains(arr1[i])) {
+                res.add(arr1[i]);
+            }
+        }
+        return res;
+    }
+
+    fun difference(otherSet) {
+        var res = new Set();
+        var arr1 = this.toArray();
+        for (var i = 0; i < len(arr1); i = i + 1) {
+            if (otherSet == null || !otherSet.contains(arr1[i])) {
+                res.add(arr1[i]);
+            }
+        }
+        return res;
+    }
+}

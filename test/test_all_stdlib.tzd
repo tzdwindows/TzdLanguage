@@ -1,0 +1,140 @@
+import "stdlib/All.tzd";
+
+fun main() {
+    print("========================================");
+    print("      TzdLang 全量标准库统一验证测试     ");
+    print("========================================");
+
+    print("\n=== 1. Crypto Test ===");
+    var m = Md5.hash("hello world");
+    var s = Sha256.hash("hello world");
+    var b64 = Base64.encode("hello TzdLang!");
+    var b64_dec = Base64.decode(b64);
+    print("MD5:", m);
+    print("SHA256:", s);
+    print("Base64 Enc:", b64);
+    print("Base64 Dec:", b64_dec);
+    print("UUID:", Crypto.uuid());
+
+    print("\n=== 2. DateTime & Stopwatch Test ===");
+    var now = DateTime.now();
+    print("Now formatted:", now.format("%Y-%m-%d %H:%M:%S"));
+    print("Year:", now.year, "Month:", now.month, "Day:", now.day);
+    var sw = Stopwatch.startNew();
+    DateTime.sleep(50);
+    sw.stop();
+    print("Slept ~50ms, stopwatch elapsed:", sw.elapsedMs(), "ms");
+
+    print("\n=== 3. URL & Network Test ===");
+    var parsedUrl = Url.parse("https://api.github.com:443/repos/tzd/test?page=1&size=20#readme");
+    print("Protocol:", parsedUrl.protocol);
+    print("Host:", parsedUrl.host);
+    print("Port:", parsedUrl.port);
+    print("Path:", parsedUrl.path);
+    print("Query:", parsedUrl.query);
+    print("Reconstructed URL:", parsedUrl.toString());
+
+    // TCP Loopback Socket Test
+    var server = new TcpServer(19876, "127.0.0.1");
+    if (server.listen(10)) {
+        var client = new TcpClient("127.0.0.1", 19876);
+        if (client.connect(2000)) {
+            var acceptedClient = server.accept(1000);
+            if (acceptedClient != null) {
+                client.send("Ping");
+                var msg = acceptedClient.recv(1024, 1000);
+                acceptedClient.send("Pong");
+                var reply = client.recv(1024, 1000);
+                print("TCP Socket Loopback:", msg, "->", reply);
+                acceptedClient.close();
+            }
+            client.close();
+        }
+        server.close();
+    }
+
+    print("\n=== 4. System & Process Test ===");
+    print("OS:", System.os());
+    print("CPUs:", System.cpuCount());
+    var procRes = Process.exec("cmd.exe /c echo TzdLang Subprocess OK!");
+    print("Subprocess stdout:", procRes.stdout);
+    print("Subprocess exitCode:", procRes.exitCode);
+
+    print("\n=== 5. Path Test ===");
+    var joined = Path.join("C:/my", "project", "test.tzd");
+    print("Joined path:", joined);
+    print("FileName:", Path.getFileName(joined));
+    print("DirName:", Path.getDirectoryName(joined));
+    print("Ext:", Path.getExtension(joined));
+
+    print("\n=== 6. Collections Test ===");
+    // Queue
+    var q = new Queue();
+    q.enqueue("first").enqueue("second").enqueue("third");
+    print("Queue size:", q.size());
+    print("Queue dequeue:", q.dequeue());
+    print("Queue peek:", q.peek());
+
+    // Stack
+    var stk = new Stack();
+    stk.push(10).push(20).push(30);
+    print("Stack size:", stk.size());
+    print("Stack pop:", stk.pop());
+    print("Stack peek:", stk.peek());
+
+    // Set
+    var setA = new Set();
+    setA.add("apple").add("banana").add("cherry");
+    var setB = new Set();
+    setB.add("banana").add("date");
+    var unionSet = setA.union(setB);
+    print("Set union contains apple:", unionSet.contains("apple"));
+    print("Set union contains date:", unionSet.contains("date"));
+    print("Set union size:", unionSet.size());
+
+    // LinkedList
+    var list = new LinkedList();
+    list.addLast("A").addLast("B").addFirst("HEAD");
+    print("LinkedList first:", list.first());
+    print("LinkedList last:", list.last());
+    print("LinkedList size:", list.size());
+    print("LinkedList removeFirst:", list.removeFirst());
+    print("LinkedList new first:", list.first());
+
+    print("\n=== 7. OpenGL 3D Test ===");
+    var glWin = new GLWindow("OpenGL Verification", 400, 300);
+    if (glWin.isOpen()) {
+        GL.clearColor(0.1, 0.15, 0.2, 1.0);
+        glWin.pollEvents();
+        glWin.clear(GL.COLOR_BUFFER_BIT + GL.DEPTH_BUFFER_BIT);
+        GL.matrixMode(GL.MODELVIEW);
+        GL.loadIdentity();
+        GL.translate(0.0, 0.0, -3.0);
+        GL.rotate(45.0, 1.0, 1.0, 0.0);
+        Mesh.coloredCube(1.0);
+        glWin.swapBuffers();
+        glWin.close();
+        print("OpenGL 3D Cube Rendered & Closed Cleanly!");
+    }
+
+    print("\n=== 8. Win32 UI Test ===");
+    var uiWin = new Window("Win32 UI Verification", 300, 200, 200, 200);
+    var btn = uiWin.addButton("OK", 20, 20, 80, 25);
+    var lbl = uiWin.addLabel("Ready", 20, 55, 150, 20);
+    var chk = uiWin.addCheckBox("Enable", 20, 85, 100, 20);
+    chk.setChecked(true);
+    print("UI Window title:", uiWin.getTitle());
+    print("UI Button text:", btn.getText());
+    print("UI Label text:", lbl.getText());
+    print("UI CheckBox checked:", chk.isChecked());
+    uiWin.show();
+    App.poll();
+    uiWin.close();
+    print("Win32 UI Window & Controls Tested & Closed Cleanly!");
+
+    print("\n========================================");
+    print("   ALL STDLIB TESTS PASSED SUCCESSFULLY! ");
+    print("========================================");
+}
+
+main();

@@ -112,6 +112,26 @@ function findStdlib(toolsPath) {
 }
 
 /**
+ * 构造 LSP ClientOptions 配置，携带 toolsPath 与 stdlibPath
+ */
+function getClientOptions(toolsPath, context) {
+  let stdlib = toolsPath ? findStdlib(toolsPath) : null;
+  if (!stdlib && context) {
+    const bundled = context.asAbsolutePath("stdlib");
+    if (fs.existsSync(bundled)) stdlib = bundled;
+  }
+  return {
+    documentSelector: [{ scheme: "file", language: "tzdlang" }],
+    diagnosticCollectionName: "tzdlang",
+    initializationOptions: {
+      toolsPath: toolsPath || "",
+      stdlibPath: stdlib || "",
+      extensionPath: context ? context.extensionPath : "",
+    },
+  };
+}
+
+/**
  * 将文本写入输出通道并滚动到底部。
  */
 function appendToOutput(text, isError = false) {
@@ -357,11 +377,7 @@ async function resetToolsPath(context) {
         options: { execArgv: ["--nolazy", "--inspect=6009"] },
       },
     };
-    const clientOptions = {
-      documentSelector: [{ scheme: "file", language: "tzdlang" }],
-      diagnosticCollectionName: "tzdlang",
-      initializationOptions: { toolsPath: selectedPath },
-    };
+    const clientOptions = getClientOptions(selectedPath, context);
 
     lspClient = new LanguageClient(
       "tzdlang-lsp",
@@ -411,13 +427,7 @@ async function startLspClient(context) {
     },
   };
 
-  const clientOptions = {
-    documentSelector: [{ scheme: "file", language: "tzdlang" }],
-    diagnosticCollectionName: "tzdlang",
-    initializationOptions: {
-      toolsPath: toolsPath,
-    },
-  };
+  const clientOptions = getClientOptions(toolsPath, context);
 
   lspClient = new LanguageClient(
     "tzdlang-lsp",
@@ -990,13 +1000,7 @@ function activate(context) {
       },
     };
 
-    const clientOptions = {
-      documentSelector: [{ scheme: "file", language: "tzdlang" }],
-      diagnosticCollectionName: "tzdlang",
-      initializationOptions: {
-        toolsPath: resolvedToolsPath,
-      },
-    };
+    const clientOptions = getClientOptions(resolvedToolsPath, context);
 
     lspClient = new LanguageClient(
       "tzdlang-lsp",

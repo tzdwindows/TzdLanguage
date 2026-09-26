@@ -1,0 +1,111 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("TzdLang UI Component Showcase", 680, 520, 150, 150);
+
+    // 1. 分组框 - 基本输入与控制
+    var gbBasic = win.addGroupBox(" 基本控件与输入 ", 20, 15, 300, 220);
+
+    var lblName = win.addLabel("用户名:", 35, 45, 60, 24);
+    var txtName = win.addTextBox("TzdUser", 100, 42, 200, 26, false);
+
+    var lblStatus = win.addLabel("就绪状态: 等待操作", 35, 80, 265, 24);
+
+    var btnSubmit = win.addButton("更新状态", 35, 115, 120, 32);
+    btnSubmit.onClick(fun(h) {
+        var text = txtName.getText();
+        lblStatus.setText("当前用户: " + text);
+        print("[Submit Clicked] Username updated: " + text);
+    });
+
+    var chkOption = win.addCheckBox("启用硬件加速", 35, 160, 150, 24);
+    chkOption.setChecked(true);
+
+    var radMale = win.addRadioButton("选项 A (标准)", 35, 195, 120, 24);
+    radMale.setChecked(true);
+    var radFemale = win.addRadioButton("选项 B (高级)", 165, 195, 120, 24);
+
+    // 2. 分组框 - 数据展示与选择控件
+    var gbSelect = win.addGroupBox(" 选择与列表控件 ", 340, 15, 310, 220);
+
+    var lblCombo = win.addLabel("下拉选择语言:", 355, 45, 100, 24);
+    var combo = win.addComboBox(460, 42, 175, 180);
+    combo.addItem("TzdLang (Native)");
+    combo.addItem("C / C++ 20");
+    combo.addItem("Rust 2024");
+    combo.addItem("Python 3.12");
+    combo.setSelectedIndex(0);
+
+    var lblList = win.addLabel("组件列表:", 355, 80, 90, 24);
+    var listbox = win.addListBox(355, 105, 280, 115);
+    listbox.addItem("1. 3D OpenGL 渲染器");
+    listbox.addItem("2. 字节码虚拟机 & JIT");
+    listbox.addItem("3. 原生 Win32 UI 框架");
+    listbox.addItem("4. LibTorch 深度学习运行时");
+    listbox.setSelectedIndex(2);
+
+    // 3. 分组框 - 进度与数值调节
+    var gbProgress = win.addGroupBox(" 进度与调节滑块 ", 20, 250, 630, 190);
+
+    var lblSlider = win.addLabel("音量调节 (滑块): 65%", 40, 280, 250, 24);
+    var slider = win.addSlider(40, 310, 350, 35, 0, 100);
+    slider.setValue(65);
+
+    var lblProgress = win.addLabel("任务进度: 65%", 40, 360, 200, 24);
+    var pbar = win.addProgressBar(40, 390, 350, 26, 0, 100);
+    pbar.setProgress(65);
+
+    slider.onChange(fun(h) {
+        var v = slider.getValue();
+        lblSlider.setText("音量调节 (滑块): " + v + "%");
+        pbar.setProgress(v);
+        lblProgress.setText("任务进度: " + v + "%");
+        print("[Slider onChange fired] Value: " + v);
+    });
+
+    var btnStep = win.addButton("进度 +10%", 420, 387, 100, 32);
+    btnStep.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("任务进度: " + cur + "%");
+        lblSlider.setText("音量调节 (滑块): " + cur + "%");
+        print("[btnStep onClick fired] New progress: " + cur);
+    });
+
+    win.show();
+    App.sleep(200);
+    for (var i = 0; i < 20; i = i + 1) {
+        App.pollEvents();
+    }
+
+    // Test clicking btnStep 3 times (+30%)
+    print("[Testing] Initial progress: " + pbar.getProgress());
+    btnStep.performClick();
+    App.pollEvents();
+    btnStep.performClick();
+    App.pollEvents();
+    btnStep.performClick();
+    App.pollEvents();
+
+    var finalProg = pbar.getProgress();
+    print("[Testing] Progress after 3 clicks: " + finalProg);
+    if (finalProg == 95) {
+        print("=== SHOWCASE PROGRESS TEST SUCCESS: 65% + 30% = 95% ===");
+    } else {
+        print("=== SHOWCASE PROGRESS TEST FAILED: expected 95%, got " + finalProg + " ===");
+    }
+
+    // Test clicking btnSubmit
+    btnSubmit.performClick();
+    App.pollEvents();
+
+    win.saveScreenshot("screenshots/ui_showcase.png");
+    print("[Success] Showcase screenshot saved to screenshots/ui_showcase.png");
+    win.close();
+}
+
+main();

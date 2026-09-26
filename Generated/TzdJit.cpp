@@ -235,6 +235,15 @@ static bool isNonNumericParam(TzdLangParser::ParamContext* p) {
     return false;
 }
 
+static bool isExplicitNumericParam(TzdLangParser::ParamContext* p) {
+    if (!p) return false;
+    if (p->typeType()) {
+        std::string t = p->typeType()->getText();
+        return (t == "int" || t == "float" || t == "double" || t == "number" || t == "i32" || t == "i64");
+    }
+    return false;
+}
+
 static bool isParamNonDouble(antlr4::tree::ParseTree* tree, const std::string& paramName) {
     if (!tree) return false;
 
@@ -252,18 +261,13 @@ static bool isParamNonDouble(antlr4::tree::ParseTree* tree, const std::string& p
 
         // 3. 作为实参传递给非纯数值函数或方法调用
         std::string callee = call->atom() ? call->atom()->getText() : "";
-        bool isNonMathCallee = (callee.find('.') != std::string::npos ||
-                                callee.rfind("torch_", 0) == 0 ||
-                                callee.rfind("map", 0) == 0 ||
-                                callee.rfind("json", 0) == 0 ||
-                                callee.rfind("str", 0) == 0 ||
-                                callee.rfind("print", 0) == 0 ||
-                                callee.rfind("init", 0) == 0 ||
-                                callee.rfind("register", 0) == 0 ||
-                                callee.rfind("load", 0) == 0 ||
-                                callee.rfind("save", 0) == 0 ||
-                                callee == "push" || callee == "pop" || callee == "insert" ||
-                                callee == "len" || callee == "range");
+        static const std::unordered_set<std::string> s_mathFuncs = {
+            "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+            "sinh", "cosh", "tanh", "exp", "log", "log10", "log2",
+            "sqrt", "cbrt", "ceil", "floor", "round", "trunc", "abs",
+            "pow", "fmod", "hypot"
+        };
+        bool isNonMathCallee = (s_mathFuncs.find(callee) == s_mathFuncs.end());
         if (isNonMathCallee && call->exprList()) {
             for (auto expr : call->exprList()->expression()) {
                 if (expr->getText() == paramName) return true;
@@ -327,14 +331,14 @@ static bool isParamUsedAsContainer(antlr4::tree::ParseTree* tree, const std::str
 // #endregion
 
 // 辅助函数：判断表达式是否明确为非纯数值类型（例如对象、this、字符串、容器、布尔等）
-static bool isExprNonDouble(antlr4::tree::ParseTree* tree) {
+static bool isExprNonDouble(antlr4::tree::ParseTree* tree, antlr4::tree::ParseTree* block = nullptr) {
     if (!tree) return false;
 
     if (auto paren = dynamic_cast<TzdLangParser::ParenExprContext*>(tree)) {
-        return isExprNonDouble(paren->expression());
+        return isExprNonDouble(paren->expression(), block);
     }
     if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(tree)) {
-        return isExprNonDouble(atomExpr->atom());
+        return isExprNonDouble(atomExpr->atom(), block);
     }
 
     if (dynamic_cast<TzdLangParser::StringExprContext*>(tree)) return true;
@@ -368,6 +372,36 @@ static bool isExprNonDouble(antlr4::tree::ParseTree* tree) {
         }
     }
 
+    if (block && !text.empty()) {
+        if (TzdOopManager::getClass(text)) return true;
+        if (isParamNonDouble(block, text)) return true;
+
+        bool isDeclNonDouble = false;
+        std::function<void(antlr4::tree::ParseTree*)> checkDecls = [&](antlr4::tree::ParseTree* node) {
+            if (!node || isDeclNonDouble) return;
+            if (auto varDecl = dynamic_cast<TzdLangParser::VariableDeclarationContext*>(node)) {
+                if (varDecl->IDENTIFIER() && varDecl->IDENTIFIER()->getText() == text) {
+                    if (varDecl->typeType()) {
+                        std::string t = varDecl->typeType()->getText();
+                        if (t != "int" && t != "float" && t != "double" && t != "number" && t != "i32" && t != "i64") {
+                            isDeclNonDouble = true;
+                            return;
+                        }
+                    }
+                    if (varDecl->expression() && isExprNonDouble(varDecl->expression(), block)) {
+                        isDeclNonDouble = true;
+                        return;
+                    }
+                }
+            }
+            for (size_t i = 0; i < node->children.size(); ++i) {
+                checkDecls(node->children[i]);
+            }
+        };
+        checkDecls(block);
+        if (isDeclNonDouble) return true;
+    }
+
     return false;
 }
 
@@ -397,7 +431,7 @@ static bool isBlockReturningDouble(antlr4::tree::ParseTree* block) {
 
     for (auto* ret : returns) {
         if (!ret->expression()) return false;
-        if (isExprNonDouble(ret->expression())) return false;
+        if (isExprNonDouble(ret->expression(), block)) return false;
     }
 
     return true;
@@ -1279,14 +1313,31 @@ extern "C" {
         if (!a || !b) return make_bool(false);
         TzdValue* v1 = (TzdValue*)a;
         TzdValue* v2 = (TzdValue*)b;
+        if (v1->type == v2->type) {
+            if (v1->type == TzdValue::NONE) return make_bool(true);
+            if (v1->type == TzdValue::BOOL) return make_bool(v1->bVal == v2->bVal);
+            if (v1->type == TzdValue::STRING) return make_bool(v1->sVal == v2->sVal);
+            if (v1->type == TzdValue::INSTANCE) return make_bool(v1->instanceVal == v2->instanceVal);
+            if (v1->type == TzdValue::CLASS_DEF) return make_bool(v1->classDefVal == v2->classDefVal);
+            if (v1->type == TzdValue::POINTER) return make_bool(v1->ptrVal == v2->ptrVal);
+            if (v1->type == TzdValue::RATIONAL)
+                return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) == 0);
+            if (v1->type == TzdValue::BIGINT)
+                return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) == 0);
+            if (v1->type == TzdValue::DOUBLE || v1->type == TzdValue::FLOAT)
+                return make_bool(v1->dVal == v2->dVal);
+            if (v1->type >= TzdValue::SBYTE && v1->type <= TzdValue::ULONG)
+                return make_bool(v1->lVal == v2->lVal);
+        }
+        if (v1->type == TzdValue::NONE || v2->type == TzdValue::NONE)
+            return make_bool(false);
         if (v1->type == TzdValue::RATIONAL || v2->type == TzdValue::RATIONAL)
             return make_bool(rational_compare(to_rational_str(*v1), to_rational_str(*v2)) == 0);
         if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
             return make_bool(bigint_compare(to_bigint_str(*v1), to_bigint_str(*v2)) == 0);
-        if (v1->type == TzdValue::DOUBLE && v2->type == TzdValue::DOUBLE)
-            return make_bool(v1->dVal == v2->dVal);
-        if (v1->type == TzdValue::STRING && v2->type == TzdValue::STRING)
-            return make_bool(v1->sVal == v2->sVal);
+        bool v1Num = (v1->type >= TzdValue::SBYTE && v1->type <= TzdValue::DOUBLE);
+        bool v2Num = (v2->type >= TzdValue::SBYTE && v2->type <= TzdValue::DOUBLE);
+        if (!v1Num || !v2Num) return make_bool(false);
         return make_bool(TzdInterpreter::getAsDoubleInternal(*v1) == TzdInterpreter::getAsDoubleInternal(*v2));
     }
 
@@ -1850,6 +1901,7 @@ extern "C" {
                         frameName += ") (JIT Compiled)";
 
                         g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
+                        g_CurrentInterpreter->m_callFrameStack.push_back({ nullptr, args, argCount });
                         g_CurrentInterpreter->m_argPtrStack.push_back(args);
                         ++g_CurrentInterpreter->m_callDepth;
 
@@ -1857,6 +1909,7 @@ extern "C" {
 
                         if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
                         g_CurrentInterpreter->m_argPtrStack.pop_back();
+                        g_CurrentInterpreter->m_callFrameStack.pop_back();
                         g_CurrentInterpreter->m_callStackFrames.pop_back();
                         return result;
                     }
@@ -2098,6 +2151,12 @@ extern "C" {
         TzdValue* v = g_JitPool.next();
         v->type = TzdValue::FUNCTION;
         v->name = lambdaName;
+        v->closureScope = std::make_shared<std::unordered_map<std::string, TzdValue>>();
+        for (const auto& sc : g_CurrentInterpreter->scopes) {
+            for (const auto& [k, val] : sc) {
+                (*v->closureScope)[k] = val;
+            }
+        }
         if (g_CurrentInterpreter->m_jitEngine) {
             v->jittedPtr = (void(*)(void*, void*))g_CurrentInterpreter->m_jitEngine->lookupSymbolAsPtr(lambdaName);
         }
@@ -2610,7 +2669,9 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             m_namedValues[pName] = boxedAlloc;
 
             // Native double version — unbox at entry for fast numeric access + native worker
-            if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctx->block(), pName)) {
+            bool isNumeric = isExplicitNumericParam(pList[i]) ||
+                (isBlockReturningDouble(ctx->block()) && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctx->block(), pName));
+            if (isNumeric) {
                 Value* nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -2846,7 +2907,9 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
                 m_builder.CreateStore(argVal, alloc);
                 m_namedValues[pName] = alloc;
 
-                if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(methodCtx->block(), pName)) {
+                bool isNumeric = isExplicitNumericParam(pList[i]) ||
+                    (returnsDouble && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(methodCtx->block(), pName));
+                if (isNumeric) {
                     Value* nativeVal = inlineToDoubleFast(argVal);
                     AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                     m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -2913,7 +2976,7 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
             m_builder.CreateStore(argVal, alloc);
             m_namedValues[pName] = alloc;
 
-            if (!isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctorCtx->block(), pName)) {
+            if (isExplicitNumericParam(pList[i])) {
                 Value* nativeVal = inlineToDoubleFast(argVal);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -3064,11 +3127,9 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
             m_builder.CreateStore(argPtr, boxedAlloc);
             m_namedValues[pName] = boxedAlloc;
 
-            // Native double version — unbox at function entry for fast numeric access.
-            // visitIdExpr checks m_nativeDoubleLocals first, returning the double.
-            // Inline unbox: direct GEP+Load on dVal field (no function call)
-            // Skip "this" — it's an instance pointer, not a numeric value!
-            if (pName != "this" && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(block, pName)) {
+            bool isNumeric = isExplicitNumericParam(pList[i]) ||
+                (isBlockReturningDouble(block) && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(block, pName));
+            if (pName != "this" && isNumeric) {
                 Value* nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
                 m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -3267,7 +3328,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         m_namedValues[pName] = boxedAlloc;
 
         // Skip "this" — it's an instance pointer, not a numeric value!
-        if (pName != "this" && !isParamUsedAsContainer(block, pName)) {
+        if (pName != "this" && isBlockReturningDouble(block) && !isParamUsedAsContainer(block, pName)) {
             Value* nativeVal = inlineToDoubleFast(argPtr);
             AllocaInst* nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
             m_builder.CreateStore(nativeVal, nativeAlloc);
@@ -4058,22 +4119,26 @@ std::any TzdCompiler::visitBlock(TzdLangParser::BlockContext* ctx) {
 
 
 std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
-    std::string name = ctx->variableDeclaration()->IDENTIFIER()->getText();
+    return visit(ctx->variableDeclaration());
+}
+
+std::any TzdCompiler::visitVariableDeclaration(TzdLangParser::VariableDeclarationContext* decl) {
+    std::string name = decl->IDENTIFIER()->getText();
     m_declaredLocals.insert(name);
 
     // 追踪变量的类类型，供实例方法内联与 Direct Native Worker 派发
-    if (ctx->variableDeclaration()->typeType()) {
-        std::string tName = ctx->variableDeclaration()->typeType()->getText();
+    if (decl->typeType()) {
+        std::string tName = decl->typeType()->getText();
         if (TzdOopManager::getClass(tName)) {
             m_varClassTypes[name] = tName;
         }
     }
-    if (ctx->variableDeclaration()->expression()) {
-        std::string newClass = getNewExprClassName(ctx->variableDeclaration()->expression());
+    if (decl->expression()) {
+        std::string newClass = getNewExprClassName(decl->expression());
         if (!newClass.empty()) {
             m_varClassTypes[name] = newClass;
         } else {
-            std::string rhsText = ctx->variableDeclaration()->expression()->getText();
+            std::string rhsText = decl->expression()->getText();
             auto it = m_varClassTypes.find(rhsText);
             if (it != m_varClassTypes.end()) {
                 m_varClassTypes[name] = it->second;
@@ -4082,8 +4147,8 @@ std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
     }
 
     Value* initVal = nullptr;
-    if (ctx->variableDeclaration()->expression()) {
-        initVal = std::any_cast<Value*>(visit(ctx->variableDeclaration()->expression()));
+    if (decl->expression()) {
+        initVal = std::any_cast<Value*>(visit(decl->expression()));
     }
     else {
         initVal = m_builder.CreateCall(getRtFunc("rt_create_null"));
@@ -4103,11 +4168,9 @@ std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
         }
         m_builder.CreateStore(initVal, alloc);
 
-        if (isTopLevel) {
-            Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-            Value* boxedVal = boxToTzdValue(initVal);
-            m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
-        }
+        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+        Value* boxedVal = boxToTzdValue(initVal);
+        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedVal });
         return std::any();
     }
 
@@ -4123,10 +4186,8 @@ std::any TzdCompiler::visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) {
     }
     m_builder.CreateStore(stableVal, alloca);
 
-    if (isTopLevel) {
-        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
-        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, stableVal });
-    }
+    Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+    m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, stableVal });
     return std::any();
 }
 
@@ -4820,6 +4881,8 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* 
 
     if (m_namedValues.count(name)) {
         m_builder.CreateStore(boxedRhs, m_namedValues[name]);
+        Value* nameStr = m_builder.CreateGlobalStringPtr(name);
+        m_builder.CreateCall(getRtFunc("rt_store_var"), { nameStr, boxedRhs });
     }
     else if (m_namedValues.count("this")) {
         Value* thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"]);
@@ -5365,16 +5428,16 @@ std::any TzdCompiler::visitEqualityExpr(TzdLangParser::EqualityExprContext* ctx)
 std::any TzdCompiler::visitLogicalAndExpr(TzdLangParser::LogicalAndExprContext* ctx) {
     Function* func = m_builder.GetInsertBlock()->getParent();
     AllocaInst* resultSlot = CreateEntryBlockAlloca(m_boolTy, nullptr, "and.sc");
-    BasicBlock* headBB = m_builder.GetInsertBlock();
 
     Value* lhs = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* lhsBool = toNativeBool(boxToTzdValue(lhs));
+    BasicBlock* lhsEndBB = m_builder.GetInsertBlock();
 
     BasicBlock* rhsBB = BasicBlock::Create(m_context, "and.rhs", func);
     BasicBlock* falseBB = BasicBlock::Create(m_context, "and.false", func);
     BasicBlock* endBB = BasicBlock::Create(m_context, "and.end", func);
 
-    m_builder.SetInsertPoint(headBB);
+    m_builder.SetInsertPoint(lhsEndBB);
     m_builder.CreateCondBr(lhsBool, rhsBB, falseBB);
 
     m_builder.SetInsertPoint(falseBB);
@@ -5384,6 +5447,8 @@ std::any TzdCompiler::visitLogicalAndExpr(TzdLangParser::LogicalAndExprContext* 
     m_builder.SetInsertPoint(rhsBB);
     Value* rhs = std::any_cast<Value*>(visit(ctx->expression(1)));
     Value* rhsBool = toNativeBool(boxToTzdValue(rhs));
+    BasicBlock* rhsEndBB = m_builder.GetInsertBlock();
+    m_builder.SetInsertPoint(rhsEndBB);
     m_builder.CreateStore(rhsBool, resultSlot);
     m_builder.CreateBr(endBB);
 
@@ -5394,16 +5459,16 @@ std::any TzdCompiler::visitLogicalAndExpr(TzdLangParser::LogicalAndExprContext* 
 std::any TzdCompiler::visitLogicalOrExpr(TzdLangParser::LogicalOrExprContext* ctx) {
     Function* func = m_builder.GetInsertBlock()->getParent();
     AllocaInst* resultSlot = CreateEntryBlockAlloca(m_boolTy, nullptr, "or.sc");
-    BasicBlock* headBB = m_builder.GetInsertBlock();
 
     Value* lhs = std::any_cast<Value*>(visit(ctx->expression(0)));
     Value* lhsBool = toNativeBool(boxToTzdValue(lhs));
+    BasicBlock* lhsEndBB = m_builder.GetInsertBlock();
 
     BasicBlock* rhsBB = BasicBlock::Create(m_context, "or.rhs", func);
     BasicBlock* trueBB = BasicBlock::Create(m_context, "or.true", func);
     BasicBlock* endBB = BasicBlock::Create(m_context, "or.end", func);
 
-    m_builder.SetInsertPoint(headBB);
+    m_builder.SetInsertPoint(lhsEndBB);
     m_builder.CreateCondBr(lhsBool, trueBB, rhsBB);
 
     m_builder.SetInsertPoint(trueBB);
@@ -5413,6 +5478,8 @@ std::any TzdCompiler::visitLogicalOrExpr(TzdLangParser::LogicalOrExprContext* ct
     m_builder.SetInsertPoint(rhsBB);
     Value* rhs = std::any_cast<Value*>(visit(ctx->expression(1)));
     Value* rhsBool = toNativeBool(boxToTzdValue(rhs));
+    BasicBlock* rhsEndBB = m_builder.GetInsertBlock();
+    m_builder.SetInsertPoint(rhsEndBB);
     m_builder.CreateStore(rhsBool, resultSlot);
     m_builder.CreateBr(endBB);
 
@@ -5461,7 +5528,8 @@ std::any TzdCompiler::visitSuperExpr(TzdLangParser::SuperExprContext* ctx) {
 
     if (ctx->exprList()) {
         for (auto e : ctx->exprList()->expression()) {
-            args.push_back(std::any_cast<Value*>(visit(e)));
+            Value* v = std::any_cast<Value*>(visit(e));
+            args.push_back(boxToTzdValue(v));
         }
     }
     Value* argCount = m_builder.getInt32((unsigned int)args.size() - 1);
@@ -6005,12 +6073,14 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             std::string memberName = memberCtx->IDENTIFIER()->getText();
             Value* nameStr = m_builder.CreateGlobalStringPtr(memberName);
             TzdSelector sel = internSelectorConstant(memberName);
+            Value* objPtr = (obj && obj->getType()->isDoubleTy()) ? boxToTzdValue(obj) : obj;
             Value* resPtr = m_builder.CreateCall(getRtFunc("rt_tzd_call_method"),
-                { obj, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
+                { objPtr, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
             return std::any((Value*)resPtr);
         }
         Value* callee = castAnyToValue(visit(ctx->atom()), "visitCallExpr.callee");
-        Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { callee, m_builder.getInt32(argCount), argsArray });
+        Value* calleePtr = (callee && callee->getType()->isDoubleTy()) ? boxToTzdValue(callee) : callee;
+        Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { calleePtr, m_builder.getInt32(argCount), argsArray });
         return std::any((Value*)resPtr);
     }
 
@@ -6059,8 +6129,11 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         // -- Slow Path: 回退到普通 C++ 函数 --
         m_builder.SetInsertPoint(slowCallBB);
         Value* slowResPtr = m_builder.CreateCall(getRtFunc("rt_call_sub_fast"), { funcNameStr, m_builder.getInt32(argCount), argsArray });
+        if (m_currentRetPtr && !isa<ConstantPointerNull>(m_currentRetPtr)) {
+            Value* stable = m_builder.CreateCall(getRtFunc("rt_stabilize_value"), { slowResPtr });
+            m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, stable });
+        }
         Value* slowRes = inlineToDoubleFast(slowResPtr);
-        m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), { m_currentRetPtr, slowRes });
         if (currentFunc->arg_size() > 0) {
             m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { currentFunc->getArg(0) });
         }
@@ -6090,10 +6163,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     std::vector<Type*> workerSignature = { m_ptrTy, m_ptrTy, m_ptrTy };
     FunctionType* workerFTy = FunctionType::get(m_doubleTy, workerSignature, false);
     Value* interp = currentFunc->getArg(0);
-    Value* dummyResSlotFast = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
-    CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, dummyResSlotFast, argsArray });
-    Value* boxedFast = m_builder.CreateCall(getRtFunc("rt_create_num"), { fastRes });
-    m_builder.CreateStore(boxedFast, resPtrSlot);
+    Value* resSlotFast = m_builder.CreateCall(getRtFunc("rt_create_null"), {});
+    m_builder.CreateCall(workerFTy, workerPtr, { interp, resSlotFast, argsArray });
+    m_builder.CreateStore(resSlotFast, resPtrSlot);
 
     m_builder.CreateBr(mergeBB);
 

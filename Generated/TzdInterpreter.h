@@ -128,6 +128,7 @@ struct TzdValue {
     TzdLangParser::BlockContext* funcBody = nullptr;
     using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
     NativeFuncType nativeFunc;
+    std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope;
 
     TzdClassDef* classDefVal = nullptr;
     TzdInstance* instanceVal = nullptr;
@@ -440,6 +441,7 @@ public:
     virtual std::any visitClassDeclStmt(TzdLangParser::ClassDeclStmtContext* ctx) override;
     virtual std::any visitExprStmt(TzdLangParser::ExprStmtContext* ctx) override;
     virtual std::any visitVarDeclStmt(TzdLangParser::VarDeclStmtContext* ctx) override;
+    virtual std::any visitVariableDeclaration(TzdLangParser::VariableDeclarationContext* ctx) override;
     virtual std::any visitBlock(TzdLangParser::BlockContext* ctx) override;
     virtual std::any visitArrayLiteralExpr(TzdLangParser::ArrayLiteralExprContext* ctx) override;
     virtual std::any visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* ctx) override;
@@ -617,7 +619,8 @@ private:
         TzdInstance* receiver,
         const std::vector<TzdValue>& args,
         const std::string& sourceFile,
-        int line);
+        int line,
+        std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope = nullptr);
 
     // Resolve (and cache) the TzdSelector + member name for a member-access
     // AST site. The cache is keyed by the AST node pointer and is stable for

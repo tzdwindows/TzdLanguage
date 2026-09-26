@@ -1,0 +1,266 @@
+// Layer.tzd
+import "torch/Module.tzd";
+import "torch/Init.tzd";
+
+class Linear extends Module {
+    var int in_features;
+    var int out_features;
+    var int use_bias;
+
+    Linear(in_features, out_features) {
+        super("Linear");
+        this.in_features = in_features;
+        this.out_features = out_features;
+        this.use_bias = true;
+        var w = torch_zeros(out_features, in_features);
+        initXavier(w);
+        this.registerParameter("weight", w);
+        var b = torch_zeros(out_features);
+        initZeros(b);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        return torch_linear(x, this._params["weight"], this._params["bias"]);
+    }
+}
+
+class Dropout extends Module {
+    var int p;
+    Dropout(p) { super("Dropout"); this.p = p; }
+    fun forward(x) {
+        if (this._training) { return torch_dropout(x, this.p, true); }
+        return x;
+    }
+}
+
+class Flatten extends Module {
+    Flatten() { super("Flatten"); }
+    fun forward(x) { return torch_flatten(x, 1, -1); }
+}
+
+class MaxPool2d extends Module {
+    var int kernel_size;
+    var int stride;
+    var int padding;
+    MaxPool2d(kernel_size) { super("MaxPool2d"); this.kernel_size = kernel_size; this.stride = kernel_size; this.padding = 0; }
+    MaxPool2d(kernel_size, stride) { super("MaxPool2d"); this.kernel_size = kernel_size; this.stride = stride; this.padding = 0; }
+    MaxPool2d(kernel_size, stride, padding) { super("MaxPool2d"); this.kernel_size = kernel_size; this.stride = stride; this.padding = padding; }
+    fun forward(x) { return torch_max_pool2d(x, this.kernel_size, this.stride); }
+}
+
+class ReLU extends Module { ReLU() { super("ReLU"); } fun forward(x) { return torch_relu(x); } }
+class GELU extends Module { GELU() { super("GELU"); } fun forward(x) { return torch_gelu(x); } }
+class Tanh extends Module { Tanh() { super("Tanh"); } fun forward(x) { return torch_tanh(x); } }
+class Sigmoid extends Module { Sigmoid() { super("Sigmoid"); } fun forward(x) { return torch_sigmoid(x); } }
+class Softmax extends Module { Softmax() { super("Softmax"); } fun forward(x) { return torch_softmax(x, -1); } }
+class SiLU extends Module { SiLU() { super("SiLU"); } fun forward(x) { return torch_silu(x); } }
+class SELU extends Module { SELU() { super("SELU"); } fun forward(x) { return torch_selu(x); } }
+class LeakyReLU extends Module {
+    var int slope;
+    LeakyReLU() { super("LeakyReLU"); this.slope = 0.01; }
+    fun forward(x) { return torch_leaky_relu(x, this.slope); }
+}
+
+class Conv2d extends Module {
+    var int in_channels;
+    var int out_channels;
+    var int kernel_size;
+    var int stride;
+    var int padding;
+    var int use_bias;
+
+    Conv2d(in_channels, out_channels, kernel_size) {
+        super("Conv2d");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+        this.kernel_size = kernel_size;
+        this.stride = 1;
+        this.padding = 0;
+        this.use_bias = true;
+        var w = torch_randn(out_channels, in_channels, kernel_size, kernel_size);
+        var fan_in = in_channels * kernel_size * kernel_size;
+        var bound = sqrt(1.0 / fan_in);
+        w = torch_mul(w, bound);
+        this.registerParameter("weight", w);
+        var b = torch_zeros(out_channels);
+        this.registerParameter("bias", b);
+    }
+
+    Conv2d(in_channels, out_channels, kernel_size, stride, padding) {
+        super("Conv2d");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+        this.kernel_size = kernel_size;
+        this.stride = stride;
+        this.padding = padding;
+        this.use_bias = true;
+        var w = torch_randn(out_channels, in_channels, kernel_size, kernel_size);
+        var fan_in = in_channels * kernel_size * kernel_size;
+        var bound = sqrt(1.0 / fan_in);
+        w = torch_mul(w, bound);
+        this.registerParameter("weight", w);
+        var b = torch_zeros(out_channels);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        return torch_conv2d(x, this._params["weight"], this._params["bias"], this.stride, this.padding);
+    }
+}
+
+class Conv1d extends Module {
+    var int in_channels;
+    var int out_channels;
+    var int kernel_size;
+    var int stride;
+    var int padding;
+    var int use_bias;
+
+    Conv1d(in_channels, out_channels, kernel_size) {
+        super("Conv1d");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+        this.kernel_size = kernel_size;
+        this.stride = 1;
+        this.padding = 0;
+        this.use_bias = true;
+        var w = torch_randn(out_channels, in_channels, kernel_size);
+        var bound = sqrt(1.0 / (in_channels * kernel_size));
+        w = torch_mul(w, bound);
+        this.registerParameter("weight", w);
+        var b = torch_zeros(out_channels);
+        this.registerParameter("bias", b);
+    }
+
+    Conv1d(in_channels, out_channels, kernel_size, stride, padding) {
+        super("Conv1d");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+        this.kernel_size = kernel_size;
+        this.stride = stride;
+        this.padding = padding;
+        this.use_bias = true;
+        var w = torch_randn(out_channels, in_channels, kernel_size);
+        var bound = sqrt(1.0 / (in_channels * kernel_size));
+        w = torch_mul(w, bound);
+        this.registerParameter("weight", w);
+        var b = torch_zeros(out_channels);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        return torch_conv1d(x, this._params["weight"], this._params["bias"], this.stride, this.padding);
+    }
+}
+
+class BatchNorm1d extends Module {
+    var int num_features;
+    var int eps;
+    var int momentum;
+    var int affine;
+
+    BatchNorm1d(num_features) {
+        super("BatchNorm1d");
+        this.num_features = num_features;
+        this.eps = 0.00001;
+        this.momentum = 0.1;
+        this.affine = true;
+        var w = torch_ones(num_features);
+        var b = torch_zeros(num_features);
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+        var rm = torch_zeros(num_features);
+        var rv = torch_ones(num_features);
+        this.registerBuffer("running_mean", rm);
+        this.registerBuffer("running_var", rv);
+    }
+
+    fun forward(x) {
+        if (this._training) {
+            return torch_batch_norm1d(x, this._params["weight"], this._params["bias"], true, this._buffers["running_mean"], this._buffers["running_var"], this.eps, this.momentum);
+        }
+        return torch_batch_norm1d(x, this._params["weight"], this._params["bias"], false, this._buffers["running_mean"], this._buffers["running_var"], this.eps, 0.0);
+    }
+}
+
+class BatchNorm2d extends Module {
+    var int num_features;
+    var int eps;
+    var int momentum;
+    var int affine;
+
+    BatchNorm2d(num_features) {
+        super("BatchNorm2d");
+        this.num_features = num_features;
+        this.eps = 0.00001;
+        this.momentum = 0.1;
+        this.affine = true;
+        var w = torch_ones(num_features);
+        var b = torch_zeros(num_features);
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+        var rm = torch_zeros(num_features);
+        var rv = torch_ones(num_features);
+        this.registerBuffer("running_mean", rm);
+        this.registerBuffer("running_var", rv);
+    }
+
+    fun forward(x) {
+        if (this._training) {
+            return torch_batch_norm2d(x, this._params["weight"], this._params["bias"], true, this._buffers["running_mean"], this._buffers["running_var"], this.eps, this.momentum);
+        }
+        return torch_batch_norm2d(x, this._params["weight"], this._params["bias"], false, this._buffers["running_mean"], this._buffers["running_var"], this.eps, 0.0);
+    }
+}
+
+class LayerNorm extends Module {
+    var int normalized_shape;
+    var int eps;
+
+    LayerNorm(normalized_shape) {
+        super("LayerNorm");
+        this.normalized_shape = normalized_shape;
+        this.eps = 0.00001;
+        var w = torch_ones(normalized_shape);
+        var b = torch_zeros(normalized_shape);
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        return torch_layer_norm(x, this._params["weight"], this._params["bias"], this.eps);
+    }
+}
+
+class Embedding extends Module {
+    var int num_embeddings;
+    var int embedding_dim;
+
+    Embedding(num_embeddings, embedding_dim) {
+        super("Embedding");
+        this.num_embeddings = num_embeddings;
+        this.embedding_dim = embedding_dim;
+        var w = torch_randn(num_embeddings, embedding_dim);
+        w = torch_mul(w, 0.02);
+        this.registerParameter("weight", w);
+    }
+
+    fun forward(indices) {
+        return torch_embedding(indices, this._params["weight"]);
+    }
+}
+
+class AvgPool2d extends Module {
+    var int kernel_size;
+    var int stride;
+    AvgPool2d(kernel_size) { super("AvgPool2d"); this.kernel_size = kernel_size; this.stride = kernel_size; }
+    AvgPool2d(kernel_size, stride) { super("AvgPool2d"); this.kernel_size = kernel_size; this.stride = stride; }
+    fun forward(x) { return torch_avg_pool2d(x, this.kernel_size, this.stride); }
+}
+
+class AdaptiveAvgPool2d extends Module {
+    var int output_size;
+    AdaptiveAvgPool2d(output_size) { super("AdaptiveAvgPool2d"); this.output_size = output_size; }
+    fun forward(x) { return torch_adaptive_avg_pool2d(x, this.output_size, this.output_size); }
+}
