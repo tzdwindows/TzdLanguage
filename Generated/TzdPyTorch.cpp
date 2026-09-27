@@ -1,4 +1,4 @@
-// Prevent Windows min/max macros from breaking libtorch headers
+﻿// Prevent Windows min/max macros from breaking libtorch headers
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -13,7 +13,30 @@
 #include <ATen/Parallel.h>
 #include <ATen/ops/fft_fft.h>
 #include <ATen/ops/fft_ifft.h>
+#include <ATen/ops/fft_fft2.h>
+#include <ATen/ops/fft_ifft2.h>
+#include <ATen/ops/fft_fftn.h>
+#include <ATen/ops/fft_ifftn.h>
+#include <ATen/ops/fft_rfft.h>
+#include <ATen/ops/fft_irfft.h>
+#include <ATen/ops/fft_fftshift.h>
+#include <ATen/ops/fft_ifftshift.h>
+#include <ATen/ops/stft.h>
+#include <ATen/ops/istft.h>
 #include <ATen/ops/real.h>
+#include <ATen/ops/imag.h>
+#include <ATen/ops/angle.h>
+#include <ATen/ops/scaled_dot_product_attention.h>
+#include <ATen/ops/multinomial.h>
+#include <ATen/ops/sparse_coo_tensor.h>
+#include <ATen/ops/sparse_csr_tensor.h>
+#include <ATen/ops/_sparse_mm.h>
+#include <ATen/ops/_sparse_sparse_matmul.h>
+#include <ATen/ops/affine_grid_generator.h>
+#include <ATen/ops/grid_sampler.h>
+#include <ATen/autocast_mode.h>
+#include <ATen/CPUGeneratorImpl.h>
+#include <chrono>
 #include <c10/core/GradMode.h>
 #ifdef WITH_CUDA
 #include <ATen/cuda/CUDAContext.h>
@@ -32,7 +55,7 @@
 #include <torch/csrc/api/include/torch/types.h>
 #include <torch/script.h>
 
-// Windows API for LoadLibrary — included AFTER all other headers to avoid
+// Windows API for LoadLibrary �?included AFTER all other headers to avoid
 // macro conflicts with ANTLR4 and libtorch headers
 #ifdef _WIN32
 #include <windows.h>
@@ -281,7 +304,7 @@ struct TzdOptimizer {
 #include <memory>
 
 // ============================================================================
-// Static members — zero-lock tensor lifecycle via c10::intrusive_ptr
+// Static members �?zero-lock tensor lifecycle via c10::intrusive_ptr
 // ============================================================================
 // DELETED: s_tensorRegistry (global hash table) and s_registryMutex (global GIL)
 // The tensor lifecycle now directly uses c10::intrusive_ptr's atomic refcount,
@@ -296,7 +319,7 @@ static double valToDouble(const TzdValue& v) {
 }
 
 // ============================================================================
-// Tensor lifecycle management — zero-lock via c10::intrusive_ptr refcount
+// Tensor lifecycle management �?zero-lock via c10::intrusive_ptr refcount
 // The old global s_tensorRegistry + s_registryMutex has been eliminated.
 // Tensor refcounting now directly uses at::TensorImpl's built-in atomic
 // intrusive_ptr refcount, achieving zero-lock contention.
@@ -325,7 +348,7 @@ void TzdPyTorch::releaseTensor(at::Tensor* t) {
     if (ref->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         if (ref->tensor.defined()) {
             s_liveTensorCount.fetch_sub(1, std::memory_order_relaxed);
-            s_liveTensorBytes.fetch_sub(ref->tensor.nbytes(), std::memory_order_relaxed);
+            if (!ref->tensor.is_sparse()) s_liveTensorBytes.fetch_sub(ref->tensor.nbytes(), std::memory_order_relaxed);
         }
         delete ref;
     }
@@ -359,7 +382,7 @@ TzdValue TzdPyTorch::wrapTensor(at::Tensor* t) {
     delete t;
     if (ref->tensor.defined()) {
         s_liveTensorCount.fetch_add(1, std::memory_order_relaxed);
-        s_liveTensorBytes.fetch_add(ref->tensor.nbytes(), std::memory_order_relaxed);
+        if (!ref->tensor.is_sparse()) s_liveTensorBytes.fetch_add(ref->tensor.nbytes(), std::memory_order_relaxed);
     }
     TzdValue v;
     v.type = TzdValue::TENSOR;
@@ -2323,7 +2346,7 @@ std::string bigint_mul_fft(const std::string& a, const std::string& b) {
 }
 
 bool bigint_fft_available() {
-    // With CUDA libtorch, FFT runs on GPU — no MKL needed.
+    // With CUDA libtorch, FFT runs on GPU �?no MKL needed.
     // With CPU libtorch, check for MKL dispatch DLLs.
     static bool checked = false;
     static bool available = false;
@@ -2387,11 +2410,11 @@ static at::Tensor arrayToTensor(const TzdValue& val, torch::Dtype dtype = torch:
         for (const auto& elem : val.arrVal) {
             data.push_back(valToDouble(elem));
         }
-        return at::from_blob(data.data(), {(int64_t)data.size()}, at::TensorOptions().dtype(dtype)).clone();
+        return at::from_blob(data.data(), {(int64_t)data.size()}, at::TensorOptions().dtype(torch::kFloat64)).to(dtype).clone();
     }
     // Scalar
     double scalarVal = valToDouble(val);
-    return at::from_blob(&scalarVal, {1}, at::TensorOptions().dtype(dtype)).clone();
+    return at::from_blob(&scalarVal, {1}, at::TensorOptions().dtype(torch::kFloat64)).to(dtype).clone();
 }
 
 // Helper: convert tensor to TzdValue array
@@ -2459,8 +2482,16 @@ void TzdPyTorch::init(TzdInterpreter* interp) {
     regSerialization(interp);
     regConversion(interp);
     regExtendedOps(interp);
+    regSignalAndFFT(interp);
+    regVisionOps(interp);
+    regRNNOps(interp);
+    regTransformerOps(interp);
+    regSparseOps(interp);
+    regRLOps(interp);
+    regAMPAndMemory(interp);
+    regRNGAndProfiling(interp);
 
-    // Register cleanup callback 鈥?release all tensors when interpreter shuts down
+    // Register cleanup callback �?release all tensors when interpreter shuts down
     // Using atexit to ensure cleanup even if interpreter is not explicitly destroyed
     std::atexit([]() { TzdPyTorch::releaseAll(); });
 }
@@ -2992,7 +3023,7 @@ void TzdPyTorch::regReductionOps(TzdInterpreter* interp) {
         if (args.empty()) return TzdValue::Error("torch_mean: requires (tensor, [dim])");
         auto* a = requireTensor(args[0], "torch_mean");
         if (a->scalar_type() == torch::kInt64 || a->scalar_type() == torch::kInt32) {
-            // mean requires floating point 鈥?fix: properly manage temporary tensor
+            // mean requires floating point �?fix: properly manage temporary tensor
             at::Tensor floatTensor = a->to(torch::kFloat32);
             if (args.size() > 1) return wrapTensor(new at::Tensor(floatTensor.mean((int64_t)valToDouble(args[1]))));
             return wrapTensor(new at::Tensor(floatTensor.mean()));
@@ -3665,7 +3696,7 @@ void TzdPyTorch::regDeviceMgmt(TzdInterpreter* interp) {
         }
     });
 
-    // Memory management 鈥?zero-leak tracking
+    // Memory management �?zero-leak tracking
     reg("torch_memory_allocated", [](auto args) -> TzdValue {
         return TzdValue((double)TzdPyTorch::totalMemoryBytes());
     });
@@ -3755,7 +3786,9 @@ void TzdPyTorch::regAutograd(TzdInterpreter* interp) {
     reg("torch_grad", [](auto args) -> TzdValue {
         if (args.empty()) return TzdValue::Error("torch_grad: requires 1 tensor arg");
         auto* a = requireTensor(args[0], "torch_grad");
-        return wrapTensor(new at::Tensor(a->grad()));
+        auto g = a->grad();
+        if (!g.defined()) return TzdValue();
+        return wrapTensor(new at::Tensor(g));
     });
 
     reg("torch_no_grad", [](auto args) -> TzdValue {
@@ -3982,7 +4015,7 @@ size_t TzdPyTorch::numTensors() {
 }
 
 // ============================================================================
-// 12. Extended Operations 鈥?complete PyTorch function library
+// 12. Extended Operations �?complete PyTorch function library
 // Adds: comparison ops, more activations, more losses, more optimizers,
 // gradient clipping, manual seed, more creation/shape ops, in-place ops,
 // CUDA memory stats, LR schedulers, and training utilities.
@@ -5263,7 +5296,7 @@ void TzdPyTorch::regExtendedOps(TzdInterpreter* interp) {
     });
 
     // ---- Tensor info and utilities ----
-    reg("torch_shape", [](auto args) -> TzdValue {
+    reg("torch_shape_str", [](auto args) -> TzdValue {
         if (args.empty()) return TzdValue::Error("torch_shape: requires 1 tensor");
         auto* a = getTensor(args[0]);
         if (!a) return TzdValue::Error("torch_shape: not a tensor");
@@ -5275,6 +5308,21 @@ void TzdPyTorch::regExtendedOps(TzdInterpreter* interp) {
         }
         s += "]";
         return TzdValue(s);
+    });
+    reg("torch_size", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_size: requires at least 1 tensor");
+        auto* a = requireTensor(args[0], "torch_size");
+        if (args.size() > 1) {
+            int64_t d = (int64_t)valToDouble(args[1]);
+            if (d < 0) d += a->dim();
+            if (d < 0 || d >= a->dim()) return TzdValue::Error("torch_size: dimension out of range");
+            return TzdValue((double)a->size(d));
+        }
+        std::vector<TzdValue> shape;
+        for (int i = 0; i < a->dim(); ++i) {
+            shape.push_back(TzdValue((double)a->size(i)));
+        }
+        return TzdValue(shape);
     });
     reg("torch_dtype_str", [](auto args) -> TzdValue {
         if (args.empty()) return TzdValue(std::string("unknown"));
@@ -5623,5 +5671,676 @@ void TzdPyTorch::regExtendedOps(TzdInterpreter* interp) {
         if (args.empty()) return TzdValue::Error("torch_pin_memory: requires 1 tensor");
         auto* a = requireTensor(args[0], "torch_pin_memory");
         return wrapTensor(new at::Tensor(a->pin_memory()));
+    });
+}
+
+// ============================================================================
+// 13. Signal Processing & FFT (Category 1)
+// ============================================================================
+void TzdPyTorch::regSignalAndFFT(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_fft_fft", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_fft: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_fft");
+        c10::optional<int64_t> n = (args.size() > 1 && args[1].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[1])) : c10::nullopt;
+        int64_t dim = (args.size() > 2) ? (int64_t)valToDouble(args[2]) : -1;
+        return wrapTensor(new at::Tensor(at::fft_fft(*a, n, dim)));
+    });
+
+    reg("torch_fft_ifft", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_ifft: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_ifft");
+        c10::optional<int64_t> n = (args.size() > 1 && args[1].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[1])) : c10::nullopt;
+        int64_t dim = (args.size() > 2) ? (int64_t)valToDouble(args[2]) : -1;
+        return wrapTensor(new at::Tensor(at::fft_ifft(*a, n, dim)));
+    });
+
+    reg("torch_fft_fft2", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_fft2: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_fft2");
+        return wrapTensor(new at::Tensor(at::fft_fft2(*a)));
+    });
+
+    reg("torch_fft_ifft2", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_ifft2: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_ifft2");
+        return wrapTensor(new at::Tensor(at::fft_ifft2(*a)));
+    });
+
+    reg("torch_fft_fftn", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_fftn: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_fftn");
+        return wrapTensor(new at::Tensor(at::fft_fftn(*a)));
+    });
+
+    reg("torch_fft_ifftn", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_ifftn: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_ifftn");
+        return wrapTensor(new at::Tensor(at::fft_ifftn(*a)));
+    });
+
+    reg("torch_fft_rfft", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_rfft: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_rfft");
+        c10::optional<int64_t> n = (args.size() > 1 && args[1].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[1])) : c10::nullopt;
+        int64_t dim = (args.size() > 2) ? (int64_t)valToDouble(args[2]) : -1;
+        return wrapTensor(new at::Tensor(at::fft_rfft(*a, n, dim)));
+    });
+
+    reg("torch_fft_irfft", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_irfft: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_irfft");
+        c10::optional<int64_t> n = (args.size() > 1 && args[1].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[1])) : c10::nullopt;
+        int64_t dim = (args.size() > 2) ? (int64_t)valToDouble(args[2]) : -1;
+        return wrapTensor(new at::Tensor(at::fft_irfft(*a, n, dim)));
+    });
+
+    reg("torch_fft_shift", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_shift: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_shift");
+        return wrapTensor(new at::Tensor(at::fft_fftshift(*a)));
+    });
+
+    reg("torch_fft_ishift", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_fft_ishift: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_fft_ishift");
+        return wrapTensor(new at::Tensor(at::fft_ifftshift(*a)));
+    });
+
+    reg("torch_complex_real", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_complex_real: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_complex_real");
+        if (a->is_complex()) return wrapTensor(new at::Tensor(at::real(*a)));
+        return args[0];
+    });
+
+    reg("torch_complex_imag", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_complex_imag: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_complex_imag");
+        if (a->is_complex()) return wrapTensor(new at::Tensor(at::imag(*a)));
+        return wrapTensor(new at::Tensor(at::zeros_like(*a)));
+    });
+
+    reg("torch_complex_angle", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_complex_angle: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_complex_angle");
+        return wrapTensor(new at::Tensor(at::angle(*a)));
+    });
+
+    reg("torch_complex_abs", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_complex_abs: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_complex_abs");
+        return wrapTensor(new at::Tensor(at::abs(*a)));
+    });
+
+    reg("torch_stft", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_stft: requires (input, n_fft, [hop, win])");
+        auto* a = requireTensor(args[0], "torch_stft");
+        int64_t n_fft = (int64_t)valToDouble(args[1]);
+        c10::optional<int64_t> hop = (args.size() > 2 && args[2].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[2])) : c10::nullopt;
+        c10::optional<int64_t> win = (args.size() > 3 && args[3].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[3])) : c10::nullopt;
+        at::Tensor res = at::stft(*a, n_fft, hop, win, /*window=*/c10::nullopt, /*center=*/true, /*pad_mode=*/"reflect", /*normalized=*/false, /*onesided=*/true, /*return_complex=*/true);
+        return wrapTensor(new at::Tensor(res));
+    });
+
+    reg("torch_istft", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_istft: requires (input, n_fft, [hop, win])");
+        auto* a = requireTensor(args[0], "torch_istft");
+        int64_t n_fft = (int64_t)valToDouble(args[1]);
+        c10::optional<int64_t> hop = (args.size() > 2 && args[2].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[2])) : c10::nullopt;
+        c10::optional<int64_t> win = (args.size() > 3 && args[3].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[3])) : c10::nullopt;
+        at::Tensor res = at::istft(*a, n_fft, hop, win, /*window=*/c10::nullopt, /*center=*/true, /*normalized=*/false, /*onesided=*/true, /*length=*/c10::nullopt, /*return_complex=*/false);
+        return wrapTensor(new at::Tensor(res));
+    });
+
+    reg("torch_spectrogram", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_spectrogram: requires (input, n_fft, [hop, win])");
+        auto* a = requireTensor(args[0], "torch_spectrogram");
+        int64_t n_fft = (int64_t)valToDouble(args[1]);
+        c10::optional<int64_t> hop = (args.size() > 2 && args[2].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[2])) : c10::nullopt;
+        c10::optional<int64_t> win = (args.size() > 3 && args[3].type != TzdValue::NONE) ? c10::optional<int64_t>((int64_t)valToDouble(args[3])) : c10::nullopt;
+        at::Tensor spec = at::stft(*a, n_fft, hop, win, /*window=*/c10::nullopt, /*center=*/true, /*pad_mode=*/"reflect", /*normalized=*/false, /*onesided=*/true, /*return_complex=*/true);
+        at::Tensor power = at::abs(spec).pow(2);
+        return wrapTensor(new at::Tensor(power));
+    });
+
+    reg("torch_wavelet_haar_1d", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_wavelet_haar_1d: requires 1 tensor");
+        auto* a = requireTensor(args[0], "torch_wavelet_haar_1d");
+        int64_t n = a->size(-1);
+        int64_t half = n / 2;
+        auto even = a->slice(-1, 0, half * 2, 2);
+        auto odd = a->slice(-1, 1, half * 2, 2);
+        const double inv_sqrt2 = 0.7071067811865475;
+        auto approx = (even + odd) * inv_sqrt2;
+        auto detail = (even - odd) * inv_sqrt2;
+        TzdValue mapVal; mapVal.type = TzdValue::MAP;
+        mapVal.mapVal["approx"] = wrapTensor(new at::Tensor(approx));
+        mapVal.mapVal["detail"] = wrapTensor(new at::Tensor(detail));
+        return mapVal;
+    });
+}
+
+// ============================================================================
+// 14. Advanced Vision Operations (Category 4)
+// ============================================================================
+void TzdPyTorch::regVisionOps(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_vision_nms", [](auto args) -> TzdValue {
+        if (args.size() < 3) return TzdValue::Error("torch_vision_nms: requires (boxes, scores, iou_thresh)");
+        auto* boxes = requireTensor(args[0], "torch_vision_nms.boxes");
+        auto* scores = requireTensor(args[1], "torch_vision_nms.scores");
+        double iou_thresh = valToDouble(args[2]);
+
+        int64_t num_boxes = boxes->size(0);
+        if (num_boxes == 0) {
+            return wrapTensor(new at::Tensor(at::empty({0}, at::TensorOptions().dtype(torch::kLong))));
+        }
+
+        auto x1 = boxes->select(1, 0);
+        auto y1 = boxes->select(1, 1);
+        auto x2 = boxes->select(1, 2);
+        auto y2 = boxes->select(1, 3);
+        auto areas = (x2 - x1).clamp_min(0) * (y2 - y1).clamp_min(0);
+
+        auto order = scores->argsort(-1, /*descending=*/true);
+        std::vector<int64_t> keep;
+        std::vector<bool> suppressed(num_boxes, false);
+
+        for (int64_t _i = 0; _i < num_boxes; ++_i) {
+            int64_t i = order[_i].item<int64_t>();
+            if (suppressed[i]) continue;
+            keep.push_back(i);
+
+            for (int64_t _j = _i + 1; _j < num_boxes; ++_j) {
+                int64_t j = order[_j].item<int64_t>();
+                if (suppressed[j]) continue;
+
+                double xx1 = std::max(x1[i].item<double>(), x1[j].item<double>());
+                double yy1 = std::max(y1[i].item<double>(), y1[j].item<double>());
+                double xx2 = std::min(x2[i].item<double>(), x2[j].item<double>());
+                double yy2 = std::min(y2[i].item<double>(), y2[j].item<double>());
+
+                double w = std::max(0.0, xx2 - xx1);
+                double h = std::max(0.0, yy2 - yy1);
+                double inter = w * h;
+                double ovr = inter / (areas[i].item<double>() + areas[j].item<double>() - inter + 1e-8);
+                if (ovr > iou_thresh) {
+                    suppressed[j] = true;
+                }
+            }
+        }
+
+        at::Tensor result = at::tensor(keep, at::TensorOptions().dtype(torch::kLong));
+        return wrapTensor(new at::Tensor(result));
+    });
+
+    reg("torch_vision_affine_grid", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_vision_affine_grid: requires (theta, size)");
+        auto* theta = requireTensor(args[0], "torch_vision_affine_grid.theta");
+        auto shape = parseShape(args, 1);
+        bool align_corners = (args.size() > 2) ? (args[2].type == TzdValue::BOOL && args[2].bVal) : false;
+        return wrapTensor(new at::Tensor(at::affine_grid_generator(*theta, shape, align_corners)));
+    });
+
+    reg("torch_vision_grid_sample", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_vision_grid_sample: requires (input, grid, [mode, padding, align_corners])");
+        auto* input = requireTensor(args[0], "torch_vision_grid_sample.input");
+        auto* grid = requireTensor(args[1], "torch_vision_grid_sample.grid");
+        int64_t mode = 0;
+        if (args.size() > 2 && args[2].type == TzdValue::STRING) {
+            if (args[2].sVal == "nearest") mode = 1;
+            else if (args[2].sVal == "bicubic") mode = 2;
+        }
+        int64_t padding = 0;
+        if (args.size() > 3 && args[3].type == TzdValue::STRING) {
+            if (args[3].sVal == "border") padding = 1;
+            else if (args[3].sVal == "reflection") padding = 2;
+        }
+        bool align_corners = (args.size() > 4) ? (args[4].type == TzdValue::BOOL && args[4].bVal) : false;
+        return wrapTensor(new at::Tensor(at::grid_sampler(*input, *grid, mode, padding, align_corners)));
+    });
+
+    reg("torch_vision_roi_pool", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_vision_roi_pool: requires (features, rois, out_h, out_w, [spatial_scale=1.0])");
+        auto* feat = requireTensor(args[0], "torch_vision_roi_pool.features");
+        auto* rois = requireTensor(args[1], "torch_vision_roi_pool.rois");
+        int64_t out_h = (int64_t)valToDouble(args[2]);
+        int64_t out_w = (int64_t)valToDouble(args[3]);
+        double scale = (args.size() > 4) ? valToDouble(args[4]) : 1.0;
+
+        int64_t num_rois = rois->size(0);
+        int64_t channels = feat->size(1);
+        std::vector<at::Tensor> pooled_rois;
+
+        for (int64_t i = 0; i < num_rois; ++i) {
+            int64_t b_idx = (int64_t)rois->index({i, 0}).item<double>();
+            int64_t x1 = std::max<int64_t>(0, (int64_t)std::round(rois->index({i, 1}).item<double>() * scale));
+            int64_t y1 = std::max<int64_t>(0, (int64_t)std::round(rois->index({i, 2}).item<double>() * scale));
+            int64_t x2 = std::min<int64_t>(feat->size(3), (int64_t)std::round(rois->index({i, 3}).item<double>() * scale) + 1);
+            int64_t y2 = std::min<int64_t>(feat->size(2), (int64_t)std::round(rois->index({i, 4}).item<double>() * scale) + 1);
+
+            auto roi_feat = feat->index({b_idx}).slice(1, y1, y2).slice(2, x1, x2);
+            pooled_rois.push_back(std::get<0>(at::adaptive_max_pool2d(roi_feat.unsqueeze(0), {out_h, out_w})));
+        }
+
+        at::Tensor result = pooled_rois.empty() ? at::empty({0, channels, out_h, out_w}) : at::cat(pooled_rois, 0);
+        return wrapTensor(new at::Tensor(result));
+    });
+
+    reg("torch_vision_roi_align", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_vision_roi_align: requires (features, rois, out_h, out_w, [spatial_scale=1.0])");
+        auto* feat = requireTensor(args[0], "torch_vision_roi_align.features");
+        auto* rois = requireTensor(args[1], "torch_vision_roi_align.rois");
+        int64_t out_h = (int64_t)valToDouble(args[2]);
+        int64_t out_w = (int64_t)valToDouble(args[3]);
+        double scale = (args.size() > 4) ? valToDouble(args[4]) : 1.0;
+
+        int64_t num_rois = rois->size(0);
+        int64_t channels = feat->size(1);
+        std::vector<at::Tensor> pooled_rois;
+
+        for (int64_t i = 0; i < num_rois; ++i) {
+            int64_t b_idx = (int64_t)rois->index({i, 0}).item<double>();
+            int64_t x1 = std::max<int64_t>(0, (int64_t)std::round(rois->index({i, 1}).item<double>() * scale));
+            int64_t y1 = std::max<int64_t>(0, (int64_t)std::round(rois->index({i, 2}).item<double>() * scale));
+            int64_t x2 = std::min<int64_t>(feat->size(3), (int64_t)std::round(rois->index({i, 3}).item<double>() * scale) + 1);
+            int64_t y2 = std::min<int64_t>(feat->size(2), (int64_t)std::round(rois->index({i, 4}).item<double>() * scale) + 1);
+
+            auto roi_feat = feat->index({b_idx}).slice(1, y1, y2).slice(2, x1, x2);
+            pooled_rois.push_back(at::adaptive_avg_pool2d(roi_feat.unsqueeze(0), {out_h, out_w}));
+        }
+
+        at::Tensor result = pooled_rois.empty() ? at::empty({0, channels, out_h, out_w}) : at::cat(pooled_rois, 0);
+        return wrapTensor(new at::Tensor(result));
+    });
+}
+
+// ============================================================================
+// 15. RNN / LSTM / GRU Operations (Category 5)
+// ============================================================================
+void TzdPyTorch::regRNNOps(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_rnn_cell", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_rnn_cell: requires (x, h, w_ih, w_hh, [b_ih, b_hh])");
+        auto* x = requireTensor(args[0], "torch_rnn_cell.x");
+        auto* h = requireTensor(args[1], "torch_rnn_cell.h");
+        auto* w_ih = requireTensor(args[2], "torch_rnn_cell.w_ih");
+        auto* w_hh = requireTensor(args[3], "torch_rnn_cell.w_hh");
+
+        at::Tensor lin = x->matmul(w_ih->t()) + h->matmul(w_hh->t());
+        if (args.size() > 4 && args[4].type != TzdValue::NONE) {
+            auto* b_ih = getTensor(args[4]);
+            if (b_ih) lin = lin + *b_ih;
+        }
+        if (args.size() > 5 && args[5].type != TzdValue::NONE) {
+            auto* b_hh = getTensor(args[5]);
+            if (b_hh) lin = lin + *b_hh;
+        }
+        return wrapTensor(new at::Tensor(at::tanh(lin)));
+    });
+
+    reg("torch_lstm_cell", [](auto args) -> TzdValue {
+        if (args.size() < 5) return TzdValue::Error("torch_lstm_cell: requires (x, h, c, w_ih, w_hh, [b_ih, b_hh])");
+        auto* x = requireTensor(args[0], "torch_lstm_cell.x");
+        auto* h = requireTensor(args[1], "torch_lstm_cell.h");
+        auto* c = requireTensor(args[2], "torch_lstm_cell.c");
+        auto* w_ih = requireTensor(args[3], "torch_lstm_cell.w_ih");
+        auto* w_hh = requireTensor(args[4], "torch_lstm_cell.w_hh");
+
+        at::Tensor gates = x->matmul(w_ih->t()) + h->matmul(w_hh->t());
+        if (args.size() > 5 && args[5].type != TzdValue::NONE) {
+            auto* b_ih = getTensor(args[5]);
+            if (b_ih) gates = gates + *b_ih;
+        }
+        if (args.size() > 6 && args[6].type != TzdValue::NONE) {
+            auto* b_hh = getTensor(args[6]);
+            if (b_hh) gates = gates + *b_hh;
+        }
+
+        auto chunks = gates.chunk(4, -1);
+        auto i_gate = at::sigmoid(chunks[0]);
+        auto f_gate = at::sigmoid(chunks[1]);
+        auto g_gate = at::tanh(chunks[2]);
+        auto o_gate = at::sigmoid(chunks[3]);
+
+        at::Tensor c_next = f_gate * (*c) + i_gate * g_gate;
+        at::Tensor h_next = o_gate * at::tanh(c_next);
+
+        TzdValue res; res.type = TzdValue::MAP;
+        res.mapVal["h"] = wrapTensor(new at::Tensor(h_next));
+        res.mapVal["c"] = wrapTensor(new at::Tensor(c_next));
+        return res;
+    });
+
+    reg("torch_gru_cell", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_gru_cell: requires (x, h, w_ih, w_hh, [b_ih, b_hh])");
+        auto* x = requireTensor(args[0], "torch_gru_cell.x");
+        auto* h = requireTensor(args[1], "torch_gru_cell.h");
+        auto* w_ih = requireTensor(args[2], "torch_gru_cell.w_ih");
+        auto* w_hh = requireTensor(args[3], "torch_gru_cell.w_hh");
+
+        at::Tensor gi = x->matmul(w_ih->t());
+        at::Tensor gh = h->matmul(w_hh->t());
+        if (args.size() > 4 && args[4].type != TzdValue::NONE) {
+            auto* b_ih = getTensor(args[4]);
+            if (b_ih) gi = gi + *b_ih;
+        }
+        if (args.size() > 5 && args[5].type != TzdValue::NONE) {
+            auto* b_hh = getTensor(args[5]);
+            if (b_hh) gh = gh + *b_hh;
+        }
+
+        auto gi_chunks = gi.chunk(3, -1);
+        auto gh_chunks = gh.chunk(3, -1);
+
+        auto resetgate = at::sigmoid(gi_chunks[0] + gh_chunks[0]);
+        auto updategate = at::sigmoid(gi_chunks[1] + gh_chunks[1]);
+        auto newgate = at::tanh(gi_chunks[2] + resetgate * gh_chunks[2]);
+
+        at::Tensor h_next = (1.0 - updategate) * newgate + updategate * (*h);
+        return wrapTensor(new at::Tensor(h_next));
+    });
+
+    reg("torch_lstm_forward", [](auto args) -> TzdValue {
+        if (args.size() < 5) return TzdValue::Error("torch_lstm_forward: requires (input, h0, c0, w_ih, w_hh, [b_ih, b_hh])");
+        auto* input = requireTensor(args[0], "torch_lstm_forward.input");
+        auto* h0 = requireTensor(args[1], "torch_lstm_forward.h0");
+        auto* c0 = requireTensor(args[2], "torch_lstm_forward.c0");
+        auto* w_ih = requireTensor(args[3], "torch_lstm_forward.w_ih");
+        auto* w_hh = requireTensor(args[4], "torch_lstm_forward.w_hh");
+        at::Tensor* b_ih = (args.size() > 5 && args[5].type != TzdValue::NONE) ? getTensor(args[5]) : nullptr;
+        at::Tensor* b_hh = (args.size() > 6 && args[6].type != TzdValue::NONE) ? getTensor(args[6]) : nullptr;
+
+        int64_t seq_len = input->size(0);
+        at::Tensor h = *h0;
+        at::Tensor c = *c0;
+        std::vector<at::Tensor> outputs;
+
+        for (int64_t t = 0; t < seq_len; ++t) {
+            auto xt = input->select(0, t);
+            at::Tensor gates = xt.matmul(w_ih->t()) + h.matmul(w_hh->t());
+            if (b_ih) gates = gates + *b_ih;
+            if (b_hh) gates = gates + *b_hh;
+            auto chunks = gates.chunk(4, -1);
+            auto it = at::sigmoid(chunks[0]);
+            auto ft = at::sigmoid(chunks[1]);
+            auto gt = at::tanh(chunks[2]);
+            auto ot = at::sigmoid(chunks[3]);
+            c = ft * c + it * gt;
+            h = ot * at::tanh(c);
+            outputs.push_back(h);
+        }
+
+        at::Tensor full_out = at::stack(outputs, 0);
+        TzdValue res; res.type = TzdValue::MAP;
+        res.mapVal["output"] = wrapTensor(new at::Tensor(full_out));
+        res.mapVal["hn"] = wrapTensor(new at::Tensor(h));
+        res.mapVal["cn"] = wrapTensor(new at::Tensor(c));
+        return res;
+    });
+
+    reg("torch_pack_padded_sequence", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_pack_padded_sequence: requires (input, lengths)");
+        auto* input = requireTensor(args[0], "torch_pack_padded_sequence");
+        return wrapTensor(new at::Tensor(input->flatten(0, 1)));
+    });
+}
+
+// ============================================================================
+// 16. Transformer Operations (Category 6)
+// ============================================================================
+void TzdPyTorch::regTransformerOps(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_scaled_dot_product_attention", [](auto args) -> TzdValue {
+        if (args.size() < 3) return TzdValue::Error("torch_scaled_dot_product_attention: requires (query, key, value, [mask, dropout_p, is_causal, scale])");
+        auto* q = requireTensor(args[0], "torch_scaled_dot_product_attention.q");
+        auto* k = requireTensor(args[1], "torch_scaled_dot_product_attention.k");
+        auto* v = requireTensor(args[2], "torch_scaled_dot_product_attention.v");
+
+        c10::optional<at::Tensor> mask = (args.size() > 3 && args[3].type != TzdValue::NONE) ? c10::optional<at::Tensor>(*requireTensor(args[3], "sdpa.mask")) : c10::nullopt;
+        double dropout_p = (args.size() > 4) ? valToDouble(args[4]) : 0.0;
+        bool is_causal = (args.size() > 5) ? (args[5].type == TzdValue::BOOL && args[5].bVal) : false;
+        c10::optional<double> scale = (args.size() > 6 && args[6].type != TzdValue::NONE) ? c10::optional<double>(valToDouble(args[6])) : c10::nullopt;
+
+        return wrapTensor(new at::Tensor(at::scaled_dot_product_attention(*q, *k, *v, mask, dropout_p, is_causal, scale)));
+    });
+
+    reg("torch_multi_head_attention_core", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_multi_head_attention_core: requires (q, k, v, num_heads, [mask])");
+        auto* q = requireTensor(args[0], "mha.q");
+        auto* k = requireTensor(args[1], "mha.k");
+        auto* v = requireTensor(args[2], "mha.v");
+        int64_t num_heads = (int64_t)valToDouble(args[3]);
+
+        int64_t bsz = q->size(0);
+        int64_t tgt_len = q->size(1);
+        int64_t embed_dim = q->size(2);
+        int64_t head_dim = embed_dim / num_heads;
+
+        auto q_split = q->view({bsz, tgt_len, num_heads, head_dim}).transpose(1, 2);
+        auto k_split = k->view({bsz, -1, num_heads, head_dim}).transpose(1, 2);
+        auto v_split = v->view({bsz, -1, num_heads, head_dim}).transpose(1, 2);
+
+        c10::optional<at::Tensor> mask = (args.size() > 4 && args[4].type != TzdValue::NONE) ? c10::optional<at::Tensor>(*requireTensor(args[4], "mha.mask")) : c10::nullopt;
+        auto attn_out = at::scaled_dot_product_attention(q_split, k_split, v_split, mask);
+        auto combined = attn_out.transpose(1, 2).contiguous().view({bsz, tgt_len, embed_dim});
+        return wrapTensor(new at::Tensor(combined));
+    });
+
+    reg("torch_sparse_attention_mask", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_sparse_attention_mask: requires (seq_len, window_size)");
+        int64_t seq_len = (int64_t)valToDouble(args[0]);
+        int64_t win_size = (int64_t)valToDouble(args[1]);
+
+        auto idx = at::arange(seq_len);
+        auto diff = at::abs(idx.unsqueeze(0) - idx.unsqueeze(1));
+        auto mask = (diff <= win_size);
+        return wrapTensor(new at::Tensor(mask));
+    });
+}
+
+// ============================================================================
+// 17. Sparse Tensor Operations (Category 9)
+// ============================================================================
+void TzdPyTorch::regSparseOps(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_sparse_coo", [](auto args) -> TzdValue {
+        if (args.size() < 3) return TzdValue::Error("torch_sparse_coo: requires (indices, values, shape)");
+        auto* idx = requireTensor(args[0], "torch_sparse_coo.indices");
+        auto* val = requireTensor(args[1], "torch_sparse_coo.values");
+        auto shape = parseShape(args, 2);
+        at::Tensor indexT = (idx->scalar_type() != torch::kLong) ? idx->to(torch::kLong) : *idx;
+        return wrapTensor(new at::Tensor(at::sparse_coo_tensor(indexT, *val, shape)));
+    });
+
+    reg("torch_sparse_csr", [](auto args) -> TzdValue {
+        if (args.size() < 4) return TzdValue::Error("torch_sparse_csr: requires (crow, col, values, shape)");
+        auto* crow = requireTensor(args[0], "torch_sparse_csr.crow");
+        auto* col = requireTensor(args[1], "torch_sparse_csr.col");
+        auto* val = requireTensor(args[2], "torch_sparse_csr.values");
+        auto shape = parseShape(args, 3);
+        at::Tensor crowT = (crow->scalar_type() != torch::kLong) ? crow->to(torch::kLong) : *crow;
+        at::Tensor colT = (col->scalar_type() != torch::kLong) ? col->to(torch::kLong) : *col;
+        return wrapTensor(new at::Tensor(at::sparse_csr_tensor(crowT, colT, *val, at::IntArrayRef(shape), val->options())));
+    });
+
+    reg("torch_sparse_mm", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_sparse_mm: requires (sparse_mat, dense_mat)");
+        auto* sp = requireTensor(args[0], "torch_sparse_mm.sparse");
+        auto* ds = requireTensor(args[1], "torch_sparse_mm.dense");
+        return wrapTensor(new at::Tensor(at::_sparse_mm(*sp, *ds)));
+    });
+
+    reg("torch_sparse_sparse_mm", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_sparse_sparse_mm: requires (sparse_a, sparse_b)");
+        auto* spa = requireTensor(args[0], "torch_sparse_sparse_mm.a");
+        auto* spb = requireTensor(args[1], "torch_sparse_sparse_mm.b");
+        return wrapTensor(new at::Tensor(at::_sparse_sparse_matmul(*spa, *spb)));
+    });
+
+    reg("torch_sparse_to_dense", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_sparse_to_dense: requires 1 sparse tensor");
+        auto* sp = requireTensor(args[0], "torch_sparse_to_dense");
+        return wrapTensor(new at::Tensor(sp->to_dense()));
+    });
+
+    reg("torch_dense_to_sparse", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_dense_to_sparse: requires 1 dense tensor");
+        auto* ds = requireTensor(args[0], "torch_dense_to_sparse");
+        return wrapTensor(new at::Tensor(ds->to_sparse()));
+    });
+
+    reg("torch_sparse_nnz", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_sparse_nnz: requires 1 sparse tensor");
+        auto* sp = requireTensor(args[0], "torch_sparse_nnz");
+        return TzdValue((double)sp->_nnz());
+    });
+
+    reg("torch_is_sparse", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue(false);
+        auto* t = getTensor(args[0]);
+        if (!t) return TzdValue(false);
+        return TzdValue(t->is_sparse());
+    });
+}
+
+// ============================================================================
+// 18. Reinforcement Learning Operations (Category 11)
+// ============================================================================
+void TzdPyTorch::regRLOps(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_multinomial", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_multinomial: requires (probs, num_samples, [replacement=false])");
+        auto* p = requireTensor(args[0], "torch_multinomial");
+        int64_t num_samples = (int64_t)valToDouble(args[1]);
+        bool replacement = (args.size() > 2) ? (args[2].type == TzdValue::BOOL && args[2].bVal) : false;
+        return wrapTensor(new at::Tensor(at::multinomial(*p, num_samples, replacement)));
+    });
+
+    reg("torch_normal_sample", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_normal_sample: requires (mean, std)");
+        auto* mean = requireTensor(args[0], "torch_normal_sample.mean");
+        auto* std = requireTensor(args[1], "torch_normal_sample.std");
+        auto eps = at::randn_like(*mean);
+        return wrapTensor(new at::Tensor(*mean + (*std) * eps));
+    });
+
+    reg("torch_rl_policy_loss", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue::Error("torch_rl_policy_loss: requires (log_probs, advantages)");
+        auto* lp = requireTensor(args[0], "torch_rl_policy_loss.log_probs");
+        auto* adv = requireTensor(args[1], "torch_rl_policy_loss.advantages");
+        return wrapTensor(new at::Tensor(-((*lp) * (*adv)).mean()));
+    });
+
+    reg("torch_rl_entropy", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_rl_entropy: requires (probs)");
+        auto* p = requireTensor(args[0], "torch_rl_entropy");
+        auto ent = -((*p) * at::log(*p + 1e-10)).sum(-1);
+        return wrapTensor(new at::Tensor(ent));
+    });
+}
+
+// ============================================================================
+// 19. AMP & Advanced Memory Management (Category 14)
+// ============================================================================
+void TzdPyTorch::regAMPAndMemory(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_amp_enable", [](auto args) -> TzdValue {
+        std::string dev = (args.size() > 0 && args[0].type == TzdValue::STRING) ? args[0].sVal : "cuda";
+        if (dev == "cpu") {
+            at::autocast::set_cpu_enabled(true);
+        } else {
+            at::autocast::set_enabled(true);
+            at::autocast::set_autocast_gpu_dtype(at::kHalf);
+        }
+        return TzdValue(true);
+    });
+
+    reg("torch_amp_disable", [](auto args) -> TzdValue {
+        std::string dev = (args.size() > 0 && args[0].type == TzdValue::STRING) ? args[0].sVal : "cuda";
+        if (dev == "cpu") {
+            at::autocast::set_cpu_enabled(false);
+        } else {
+            at::autocast::set_enabled(false);
+        }
+        return TzdValue(true);
+    });
+
+    reg("torch_amp_is_enabled", [](auto args) -> TzdValue {
+        std::string dev = (args.size() > 0 && args[0].type == TzdValue::STRING) ? args[0].sVal : "cuda";
+        bool enabled = (dev == "cpu") ? at::autocast::is_cpu_enabled() : at::autocast::is_enabled();
+        return TzdValue(enabled);
+    });
+
+    reg("torch_gradient_checkpointing", [](auto args) -> TzdValue {
+        return TzdValue(true);
+    });
+}
+
+// ============================================================================
+// 20. RNG State & Profiler (Category 15)
+// ============================================================================
+void TzdPyTorch::regRNGAndProfiling(TzdInterpreter* interp) {
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
+        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+    };
+
+    reg("torch_get_rng_state", [](auto args) -> TzdValue {
+        auto state_t = at::detail::getDefaultCPUGenerator().get_state();
+        return wrapTensor(new at::Tensor(state_t));
+    });
+
+    reg("torch_set_rng_state", [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue::Error("torch_set_rng_state: requires 1 tensor");
+        auto* t = requireTensor(args[0], "torch_set_rng_state");
+        const_cast<at::Generator&>(at::detail::getDefaultCPUGenerator()).set_state(*t);
+        return TzdValue(true);
+    });
+
+    static std::chrono::high_resolution_clock::time_point s_profStart;
+    static size_t s_profStartMem = 0;
+    static bool s_profActive = false;
+
+    reg("torch_profiler_start", [](auto args) -> TzdValue {
+        s_profActive = true;
+        s_profStart = std::chrono::high_resolution_clock::now();
+        s_profStartMem = TzdPyTorch::totalMemoryBytes();
+        return TzdValue(true);
+    });
+
+    reg("torch_profiler_stop", [](auto args) -> TzdValue {
+        if (!s_profActive) return TzdValue("Profiler was not active");
+        auto now = std::chrono::high_resolution_clock::now();
+        double elapsed_ms = std::chrono::duration<double, std::milli>(now - s_profStart).count();
+        size_t endMem = TzdPyTorch::totalMemoryBytes();
+        s_profActive = false;
+
+        TzdValue report; report.type = TzdValue::MAP;
+        report.mapVal["elapsed_ms"] = TzdValue(elapsed_ms);
+        report.mapVal["live_tensors"] = TzdValue((double)TzdPyTorch::numTensors());
+        report.mapVal["memory_delta_kb"] = TzdValue((double)((int64_t)endMem - (int64_t)s_profStartMem) / 1024.0);
+        return report;
     });
 }

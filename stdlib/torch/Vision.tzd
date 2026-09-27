@@ -1,0 +1,71 @@
+// ============================================================================
+// Vision.tzd - Advanced Vision Operators (Category 4)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+fun nms(boxes, scores, iou_threshold) {
+    var thresh = 0.5;
+    if (iou_threshold != null) { thresh = iou_threshold; }
+    return torch_vision_nms(boxes, scores, thresh);
+}
+
+fun affineGrid(theta, size) {
+    return torch_vision_affine_grid(theta, size);
+}
+
+fun gridSample(input, grid, mode, padding_mode) {
+    var m = "bilinear";
+    var pm = "zeros";
+    if (mode != null) { m = mode; }
+    if (padding_mode != null) { pm = padding_mode; }
+    return torch_vision_grid_sample(input, grid, m, pm);
+}
+
+fun roiPool(features, rois, out_h, out_w, spatial_scale) {
+    var scale = 1.0;
+    if (spatial_scale != null) { scale = spatial_scale; }
+    return torch_vision_roi_pool(features, rois, out_h, out_w, scale);
+}
+
+fun roiAlign(features, rois, out_h, out_w, spatial_scale) {
+    var scale = 1.0;
+    if (spatial_scale != null) { scale = spatial_scale; }
+    return torch_vision_roi_align(features, rois, out_h, out_w, scale);
+}
+
+class RoIPool extends Module {
+    var int out_h;
+    var int out_w;
+    var int spatial_scale;
+
+    RoIPool(out_h, out_w, spatial_scale) {
+        super("RoIPool");
+        this.out_h = out_h;
+        this.out_w = out_w;
+        this.spatial_scale = 1.0;
+        if (spatial_scale != null) { this.spatial_scale = spatial_scale; }
+    }
+
+    fun forward(features, rois) {
+        return roiPool(features, rois, this.out_h, this.out_w, this.spatial_scale);
+    }
+}
+
+class RoIAlign extends Module {
+    var int out_h;
+    var int out_w;
+    var int spatial_scale;
+
+    RoIAlign(out_h, out_w, spatial_scale) {
+        super("RoIAlign");
+        this.out_h = out_h;
+        this.out_w = out_w;
+        this.spatial_scale = 1.0;
+        if (spatial_scale != null) { this.spatial_scale = spatial_scale; }
+    }
+
+    fun forward(features, rois) {
+        return roiAlign(features, rois, this.out_h, this.out_w, this.spatial_scale);
+    }
+}

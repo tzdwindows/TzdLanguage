@@ -1,0 +1,119 @@
+// ============================================================================
+// GNN.tzd - Graph Neural Networks & Message Passing (Category 10)
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Init.tzd";
+
+class MessagePassing extends Module {
+    var string aggr;
+
+    MessagePassing(aggr) {
+        super("MessagePassing");
+        this.aggr = "add";
+        if (aggr != null) { this.aggr = aggr; }
+    }
+
+    fun message(x_j) {
+        return x_j;
+    }
+
+    fun aggregate(inputs, index, dim_size) {
+        return inputs;
+    }
+
+    fun update(aggr_out) {
+        return aggr_out;
+    }
+}
+
+class GCNConv extends Module {
+    var int in_channels;
+    var int out_channels;
+
+    GCNConv(in_channels, out_channels) {
+        super("GCNConv");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+
+        var w = torch_zeros(out_channels, in_channels);
+        var b = torch_zeros(out_channels);
+        initXavier(w);
+        initZeros(b);
+
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x, adj_norm) {
+        var h = torch_linear(x, this._params["weight"], null);
+        var res = null;
+        if (torch_is_sparse(adj_norm)) {
+            res = torch_sparse_mm(adj_norm, h);
+        } else {
+            res = torch_matmul(adj_norm, h);
+        }
+        return torch_add(res, this._params["bias"]);
+    }
+}
+
+class GATConv extends Module {
+    var int in_channels;
+    var int out_channels;
+    var int heads;
+
+    GATConv(in_channels, out_channels, heads) {
+        super("GATConv");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+        this.heads = 1;
+        if (heads != null) { this.heads = heads; }
+
+        var w = torch_zeros(out_channels * this.heads, in_channels);
+        var a_src = torch_zeros(this.heads, out_channels);
+        var a_dst = torch_zeros(this.heads, out_channels);
+        initXavier(w);
+        initXavier(a_src);
+        initXavier(a_dst);
+
+        this.registerParameter("weight", w);
+        this.registerParameter("att_src", a_src);
+        this.registerParameter("att_dst", a_dst);
+    }
+
+    fun forward(x, adj) {
+        var h = torch_linear(x, this._params["weight"], null);
+        var score = torch_matmul(h, torch_transpose(h, 0, 1));
+        var alpha = torch_softmax(torch_leaky_relu(score, 0.2), -1);
+        if (adj != null) {
+            alpha = torch_mul(alpha, adj);
+        }
+        return torch_matmul(alpha, h);
+    }
+}
+
+class GraphSAGE extends Module {
+    var int in_channels;
+    var int out_channels;
+
+    GraphSAGE(in_channels, out_channels) {
+        super("GraphSAGE");
+        this.in_channels = in_channels;
+        this.out_channels = out_channels;
+
+        var w_self = torch_zeros(out_channels, in_channels);
+        var w_neigh = torch_zeros(out_channels, in_channels);
+        initXavier(w_self);
+        initXavier(w_neigh);
+
+        this.registerParameter("weight_self", w_self);
+        this.registerParameter("weight_neigh", w_neigh);
+    }
+
+    fun forward(x, adj_norm) {
+        var neigh_aggr = torch_matmul(adj_norm, x);
+        var h_self = torch_linear(x, this._params["weight_self"], null);
+        var h_neigh = torch_linear(neigh_aggr, this._params["weight_neigh"], null);
+        return torch_relu(torch_add(h_self, h_neigh));
+    }
+}

@@ -1,0 +1,79 @@
+// ============================================================================
+// RL.tzd - Reinforcement Learning Distributions & Losses (Category 11)
+// ============================================================================
+
+fun multinomial(probs, num_samples, replacement) {
+    var rep = false;
+    if (replacement != null) { rep = replacement; }
+    return torch_multinomial(probs, num_samples, rep);
+}
+
+fun normalSample(mean, std) {
+    return torch_normal_sample(mean, std);
+}
+
+fun policyLoss(log_probs, advantages) {
+    return torch_rl_policy_loss(log_probs, advantages);
+}
+
+fun policyEntropy(probs) {
+    return torch_rl_entropy(probs);
+}
+
+class CategoricalDistribution {
+    var ptr probs;
+    var ptr logits;
+
+    CategoricalDistribution(probs, logits) {
+        if (probs != null) {
+            this.probs = probs;
+        } else {
+            this.logits = logits;
+            this.probs = torch_softmax(logits, -1);
+        }
+    }
+
+    fun sample(num_samples) {
+        var n = 1;
+        if (num_samples != null) { n = num_samples; }
+        return torch_multinomial(this.probs, n, false);
+    }
+
+    fun entropy() {
+        return torch_rl_entropy(this.probs);
+    }
+}
+
+class NormalDistribution {
+    var ptr mean;
+    var ptr std;
+
+    NormalDistribution(mean, std) {
+        this.mean = mean;
+        this.std = std;
+    }
+
+    fun sample() {
+        return torch_normal_sample(this.mean, this.std);
+    }
+
+    fun logProb(value) {
+        var var_t = torch_pow(this.std, 2.0);
+        var diff = torch_sub(value, this.mean);
+        var log_scale = torch_log(this.std);
+        var term = torch_add(torch_div(torch_pow(diff, 2.0), var_t), torch_mul(log_scale, 2.0));
+        var log_2pi = 1.837877;
+        return torch_mul(torch_add(term, log_2pi), -0.5);
+    }
+}
+
+fun ppoClipLoss(new_log_probs, old_log_probs, advantages, clip_eps) {
+    var eps = 0.2;
+    if (clip_eps != null) { eps = clip_eps; }
+    var ratio = torch_exp(torch_sub(new_log_probs, old_log_probs));
+    var surr1 = torch_mul(ratio, advantages);
+    var clamped_ratio = torch_clamp(ratio, 1.0 - eps, 1.0 + eps);
+    var surr2 = torch_mul(clamped_ratio, advantages);
+    var loss = torch_mul(torch_minimum(surr1, surr2), -1.0);
+    return torch_mean(loss);
+}

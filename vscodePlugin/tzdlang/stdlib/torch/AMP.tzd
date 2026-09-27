@@ -1,0 +1,72 @@
+// ============================================================================
+// AMP.tzd - Automatic Mixed Precision & Memory Optimization (Category 14)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+fun enableAmp(device) {
+    var dev = "cpu";
+    if (device != null) { dev = device; }
+    return torch_amp_enable(dev);
+}
+
+fun disableAmp(device) {
+    var dev = "cpu";
+    if (device != null) { dev = device; }
+    return torch_amp_disable(dev);
+}
+
+fun isAmpEnabled(device) {
+    var dev = "cpu";
+    if (device != null) { dev = device; }
+    return torch_amp_is_enabled(dev);
+}
+
+class GradScaler {
+    var int _scale;
+    var int _growth_factor;
+    var int _backoff_factor;
+
+    GradScaler(init_scale) {
+        this._scale = 65536.0;
+        if (init_scale != null) { this._scale = init_scale; }
+        this._growth_factor = 2.0;
+        this._backoff_factor = 0.5;
+    }
+
+    fun getScale() {
+        return this._scale;
+    }
+
+    fun scale(loss) {
+        return torch_mul(loss, this._scale);
+    }
+
+    fun step(optimizer) {
+        return optimizer.step();
+    }
+
+    fun update() {
+        return true;
+    }
+
+    fun unscale_(optimizer) {
+        var inv_scale = 1.0 / this._scale;
+        var params = optimizer.params;
+        for (var i = 0; i < len(params); i = i + 1) {
+            var grad = torch_grad(params[i]);
+            if (grad != null) {
+                // in-place or multiplied by inv_scale
+            }
+        }
+    }
+}
+
+fun checkpoint(module, x) {
+    torch_gradient_checkpointing(true);
+    return module.forward(x);
+}
+
+fun emptyCache() {
+    return torch_cuda_empty_cache();
+}

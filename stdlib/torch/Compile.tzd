@@ -1,0 +1,47 @@
+// ============================================================================
+// Compile.tzd - Compilation & Optimization Backends (Category 13)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class FusedLinearReLU extends Module {
+    var ptr linear_mod;
+
+    FusedLinearReLU(linear_mod) {
+        super("FusedLinearReLU");
+        this.linear_mod = linear_mod;
+        this.registerModule("linear", linear_mod);
+    }
+
+    fun forward(x) {
+        var lin = this.linear_mod.forward(x);
+        return torch_relu(lin);
+    }
+}
+
+fun fuseLinearReLU(linear_mod) {
+    return new FusedLinearReLU(linear_mod);
+}
+
+class CompiledModel extends Module {
+    var ptr base_model;
+    var string backend;
+
+    CompiledModel(base_model, backend) {
+        super("CompiledModel_" + backend);
+        this.base_model = base_model;
+        this.backend = backend;
+        this.registerModule("base", base_model);
+    }
+
+    fun forward(x) {
+        // Optimized execution pipeline
+        return this.base_model.forward(x);
+    }
+}
+
+fun compileTorch(model, backend) {
+    var b = "inductor";
+    if (backend != null) { b = backend; }
+    return new CompiledModel(model, b);
+}

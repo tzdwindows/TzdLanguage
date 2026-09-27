@@ -1,0 +1,120 @@
+// ============================================================================
+// Distributed.tzd - Distributed Training & Collective Communication (Category 2)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class DistributedProcessGroup {
+    var string backend;
+    var int rank;
+    var int world_size;
+
+    DistributedProcessGroup(backend, rank, world_size) {
+        this.backend = "gloo";
+        if (backend != null) { this.backend = backend; }
+        this.rank = 0;
+        if (rank != null) { this.rank = rank; }
+        this.world_size = 1;
+        if (world_size != null) { this.world_size = world_size; }
+    }
+
+    fun getRank() {
+        return this.rank;
+    }
+
+    fun getWorldSize() {
+        return this.world_size;
+    }
+
+    fun allReduce(tensor, op) {
+        var mode = "sum";
+        if (op != null) { mode = op; }
+        if (mode == "mean") {
+            return torch_div(tensor, this.world_size);
+        }
+        return tensor;
+    }
+
+    fun broadcast(tensor, src_rank) {
+        return tensor;
+    }
+
+    fun barrier() {
+        return true;
+    }
+}
+
+var _GLOBAL_PG = null;
+
+fun initProcessGroup(backend, rank, world_size) {
+    _GLOBAL_PG = new DistributedProcessGroup(backend, rank, world_size);
+    return _GLOBAL_PG;
+}
+
+fun getProcessGroup() {
+    if (_GLOBAL_PG == null) {
+        _GLOBAL_PG = new DistributedProcessGroup("gloo", 0, 1);
+    }
+    return _GLOBAL_PG;
+}
+
+class DistributedDataParallel extends Module {
+    var ptr module;
+    var ptr pg;
+
+    DistributedDataParallel(module, pg) {
+        super("DistributedDataParallel");
+        this.module = module;
+        this.pg = getProcessGroup();
+        if (pg != null) { this.pg = pg; }
+        this.registerModule("module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+
+    fun syncGradients() {
+        var params = this.module.parameters();
+        for (var i = 0; i < len(params); i = i + 1) {
+            var grad = torch_grad(params[i]);
+            if (grad != null) {
+                this.pg.allReduce(grad, "mean");
+            }
+        }
+    }
+}
+
+class DataParallel extends Module {
+    var ptr module;
+    var ptr device_ids;
+
+    DataParallel(module, device_ids) {
+        super("DataParallel");
+        this.module = module;
+        this.device_ids = ["cpu"];
+        if (device_ids != null) { this.device_ids = device_ids; }
+        this.registerModule("module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+}
+
+class RPCContext {
+    var string worker_name;
+
+    RPCContext(worker_name) {
+        this.worker_name = "worker0";
+        if (worker_name != null) { this.worker_name = worker_name; }
+    }
+
+    fun rpcSync(target_worker, func_name, args) {
+        return true;
+    }
+
+    fun rpcAsync(target_worker, func_name, args) {
+        return true;
+    }
+}

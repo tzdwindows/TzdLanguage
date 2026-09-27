@@ -1,0 +1,86 @@
+// ============================================================================
+// Transformer.tzd - Transformer Operators & Attention (Category 6)
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Init.tzd";
+
+fun scaledDotProductAttention(query, key, value, mask, dropout_p, is_causal, scale) {
+    var p = 0.0;
+    if (dropout_p != null) { p = dropout_p; }
+    var causal = false;
+    if (is_causal != null) { causal = is_causal; }
+    return torch_scaled_dot_product_attention(query, key, value, mask, p, causal, scale);
+}
+
+fun multiHeadAttentionCore(q, k, v, num_heads, mask) {
+    return torch_multi_head_attention_core(q, k, v, num_heads, mask);
+}
+
+fun sparseAttentionMask(seq_len, window_size) {
+    return torch_sparse_attention_mask(seq_len, window_size);
+}
+
+class MultiheadAttention extends Module {
+    var int embed_dim;
+    var int num_heads;
+    var int head_dim;
+    var int dropout_p;
+
+    MultiheadAttention(embed_dim, num_heads, dropout_p) {
+        super("MultiheadAttention");
+        this.embed_dim = embed_dim;
+        this.num_heads = num_heads;
+        this.head_dim = embed_dim / num_heads;
+        this.dropout_p = 0.0;
+        if (dropout_p != null) { this.dropout_p = dropout_p; }
+
+        var q_w = torch_zeros(embed_dim, embed_dim);
+        var k_w = torch_zeros(embed_dim, embed_dim);
+        var v_w = torch_zeros(embed_dim, embed_dim);
+        var out_w = torch_zeros(embed_dim, embed_dim);
+        var out_b = torch_zeros(embed_dim);
+
+        initXavier(q_w);
+        initXavier(k_w);
+        initXavier(v_w);
+        initXavier(out_w);
+        initZeros(out_b);
+
+        this.registerParameter("q_weight", q_w);
+        this.registerParameter("k_weight", k_w);
+        this.registerParameter("v_weight", v_w);
+        this.registerParameter("out_weight", out_w);
+        this.registerParameter("out_bias", out_b);
+    }
+
+    fun forward(query, key, value, key_padding_mask) {
+        var k = query;
+        if (key != null) { k = key; }
+        var v = query;
+        if (value != null) { v = value; }
+
+        // Linear projections
+        var q_proj = torch_linear(query, this._params["q_weight"], null);
+        var k_proj = torch_linear(k, this._params["k_weight"], null);
+        var v_proj = torch_linear(v, this._params["v_weight"], null);
+
+        // Core multi-head scaled dot-product attention
+        var attn_out = torch_multi_head_attention_core(q_proj, k_proj, v_proj, this.num_heads, key_padding_mask);
+
+        // Output projection
+        return torch_linear(attn_out, this._params["out_weight"], this._params["out_bias"]);
+    }
+}
+
+class FlashAttention extends Module {
+    FlashAttention() {
+        super("FlashAttention");
+    }
+
+    fun forward(q, k, v, mask, is_causal) {
+        var causal = false;
+        if (is_causal != null) { causal = is_causal; }
+        return torch_scaled_dot_product_attention(q, k, v, mask, 0.0, causal, null);
+    }
+}

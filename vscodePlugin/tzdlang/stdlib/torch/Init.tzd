@@ -55,3 +55,30 @@ fun initConv(weight, bias) {
         initZeros(bias);
     }
 }
+
+// Helper for tensor size and shape querying
+fun torch_size(tensor, dim) {
+    var s = torch_shape(tensor);
+    if (dim != null) {
+        return s[dim];
+    }
+    return s;
+}
+
+fun size(tensor, dim) {
+    return torch_size(tensor, dim);
+}
+
+fun torch_min(tensor, dim) {
+    if (dim != null) {
+        return torch_min_t(tensor, dim);
+    }
+    return torch_min_t(tensor);
+}
+
+fun torch_max(tensor, dim) {
+    if (dim != null) {
+        return torch_max_t(tensor, dim);
+    }
+    return torch_max_t(tensor);
+}

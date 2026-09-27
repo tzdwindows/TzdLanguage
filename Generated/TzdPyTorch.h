@@ -65,4 +65,12 @@ private:
     static void regSerialization(TzdInterpreter* interp);
     static void regConversion(TzdInterpreter* interp);
     static void regExtendedOps(TzdInterpreter* interp);
+    static void regSignalAndFFT(TzdInterpreter* interp);
+    static void regVisionOps(TzdInterpreter* interp);
+    static void regRNNOps(TzdInterpreter* interp);
+    static void regTransformerOps(TzdInterpreter* interp);
+    static void regSparseOps(TzdInterpreter* interp);
+    static void regRLOps(TzdInterpreter* interp);
+    static void regAMPAndMemory(TzdInterpreter* interp);
+    static void regRNGAndProfiling(TzdInterpreter* interp);
 };

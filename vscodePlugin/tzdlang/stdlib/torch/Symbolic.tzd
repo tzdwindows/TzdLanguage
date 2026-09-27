@@ -1,0 +1,96 @@
+// ============================================================================
+// Symbolic.tzd - Dynamic Shapes & Symbolic FX Execution (Category 8)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class SymDim {
+    var string name;
+    var int min_val;
+    var int max_val;
+
+    SymDim(name, min_val, max_val) {
+        this.name = name;
+        this.min_val = 1;
+        if (min_val != null) { this.min_val = min_val; }
+        this.max_val = 4096;
+        if (max_val != null) { this.max_val = max_val; }
+    }
+
+    fun isDynamic() {
+        return true;
+    }
+}
+
+class SymShape {
+    var ptr dims;
+
+    SymShape(dims) {
+        this.dims = dims;
+    }
+
+    fun rank() {
+        return len(this.dims);
+    }
+}
+
+class FXNode {
+    var string op;
+    var string target;
+    var ptr args;
+    var string name;
+
+    FXNode(op, target, args, name) {
+        this.op = op;
+        this.target = target;
+        this.args = args;
+        this.name = name;
+    }
+}
+
+class FXGraph {
+    var ptr nodes;
+
+    FXGraph() {
+        this.nodes = range(0, 0, 1);
+    }
+
+    fun createNode(op, target, args, name) {
+        var node = new FXNode(op, target, args, name);
+        this.nodes = push(this.nodes, node);
+        return node;
+    }
+
+    fun numNodes() {
+        return len(this.nodes);
+    }
+}
+
+class GraphModule extends Module {
+    var ptr graph;
+
+    GraphModule(graph) {
+        super("GraphModule");
+        this.graph = graph;
+    }
+
+    fun forward(x) {
+        var res = x;
+        for (var i = 0; i < this.graph.numNodes(); i = i + 1) {
+            var node = this.graph.nodes[i];
+            if (node.op == "call_function" && node.target == "relu") {
+                res = torch_relu(res);
+            }
+        }
+        return res;
+    }
+}
+
+fun fxTrace(model) {
+    var g = new FXGraph();
+    var empty_args = range(0, 0, 1);
+    g.createNode("placeholder", "x", empty_args, "x");
+    g.createNode("call_module", "forward", ["x"], "output");
+    g.createNode("output", "output", ["output"], "final_out");
+    return new GraphModule(g);
+}

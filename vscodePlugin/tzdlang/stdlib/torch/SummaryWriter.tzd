@@ -1,0 +1,40 @@
+// ============================================================================
+// SummaryWriter.tzd - TensorBoard Logging Integration (Category 15)
+// ============================================================================
+
+class SummaryWriter {
+    var string log_dir;
+    var ptr records;
+
+    SummaryWriter(log_dir) {
+        this.log_dir = "./runs";
+        if (log_dir != null) { this.log_dir = log_dir; }
+        this.records = range(0, 0, 1);
+    }
+
+    fun addScalar(tag, scalar_value, global_step) {
+        var rec = jsonParse("{}");
+        rec["tag"] = tag;
+        rec["value"] = scalar_value;
+        rec["step"] = 0;
+        if (global_step != null) { rec["step"] = global_step; }
+        this.records = push(this.records, rec);
+        return true;
+    }
+
+    fun addHistogram(tag, values, global_step) {
+        var rec = jsonParse("{}");
+        rec["tag"] = tag;
+        rec["step"] = 0;
+        if (global_step != null) { rec["step"] = global_step; }
+        rec["min"] = torch_item(torch_min_t(values));
+        rec["max"] = torch_item(torch_max_t(values));
+        rec["mean"] = torch_item(torch_mean(values));
+        this.records = push(this.records, rec);
+        return true;
+    }
+
+    fun close() {
+        return true;
+    }
+}

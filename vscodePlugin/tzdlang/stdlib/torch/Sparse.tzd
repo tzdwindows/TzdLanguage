@@ -1,0 +1,58 @@
+// ============================================================================
+// Sparse.tzd - Sparse Tensors & Operations (Category 9)
+// ============================================================================
+
+fun sparseCooTensor(indices, values, shape) {
+    return torch_sparse_coo(indices, values, shape);
+}
+
+fun sparseCsrTensor(crow, col, values, shape) {
+    return torch_sparse_csr(crow, col, values, shape);
+}
+
+fun sparseMm(sparse_mat, dense_mat) {
+    return torch_sparse_mm(sparse_mat, dense_mat);
+}
+
+fun sparseSparseMm(sparse_a, sparse_b) {
+    return torch_sparse_sparse_mm(sparse_a, sparse_b);
+}
+
+fun sparseToDense(sparse_tensor) {
+    return torch_sparse_to_dense(sparse_tensor);
+}
+
+fun denseToSparse(dense_tensor) {
+    return torch_dense_to_sparse(dense_tensor);
+}
+
+fun sparseNnz(sparse_tensor) {
+    return torch_sparse_nnz(sparse_tensor);
+}
+
+class SparseTensor {
+    var ptr _tensor;
+    var string _format;
+
+    SparseTensor(raw_tensor, format) {
+        this._tensor = raw_tensor;
+        this._format = "coo";
+        if (format != null) { this._format = format; }
+    }
+
+    fun toDense() {
+        return sparseToDense(this._tensor);
+    }
+
+    fun nnz() {
+        return sparseNnz(this._tensor);
+    }
+
+    fun mm(dense_mat) {
+        return sparseMm(this._tensor, dense_mat);
+    }
+
+    fun smm(sparse_mat) {
+        return sparseSparseMm(this._tensor, sparse_mat);
+    }
+}
