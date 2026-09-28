@@ -286,10 +286,16 @@ struct JitValuePool {
         return p >= storage.data() && p < storage.data() + storage.size();
     }
 
-    void reset() { cursor = 0; }
+    void reset() {
+        for (auto& item : storage) {
+            tzdPoolSlotReleaseInstance(&item);
+            item.type = TzdValue::NONE;
+        }
+        cursor = 0;
+    }
 
     ~JitValuePool() {
-        for (auto& item : storage) item.instanceVal = nullptr;
+        reset();
     }
 };
 

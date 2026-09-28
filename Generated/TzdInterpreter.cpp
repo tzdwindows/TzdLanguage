@@ -3134,7 +3134,7 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string& name,
         this->m_argPtrStack.pop_back();
         this->m_argFrameStack.pop_back();
 
-        if (scopes.size() <= 1) clearJitMemory();
+        if (this->m_callFrameStack.empty()) clearJitMemory();
         return result;
     }
 
@@ -4222,8 +4222,10 @@ std::any TzdInterpreter::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
             throw;
         }
         if (ctx->step) visit(ctx->step);
+        if (m_jitGarbage.size() >= 16) clearJitMemory();
     }
     scopes.pop_back();
+    clearJitMemory();
     return TzdValue();
 }
 

@@ -85,7 +85,7 @@ class LSTMCell extends Module {
     fun forward(input, hx) {
         var h = null;
         var c = null;
-        if (hx != null && len(hx) == 2) {
+        if (hx != null && len(hx) >= 2) {
             h = hx[0];
             c = hx[1];
         } else {
@@ -94,7 +94,10 @@ class LSTMCell extends Module {
             c = torch_zeros(batch_size, this.hidden_size);
         }
         var next_hc = torch_lstm_cell(input, h, c, this._params["weight_ih"], this._params["weight_hh"], this._params["bias_ih"], this._params["bias_hh"]);
-        return next_hc;
+        var res = range(0, 0, 1);
+        res = push(res, next_hc["h"]);
+        res = push(res, next_hc["c"]);
+        return res;
     }
 }
 

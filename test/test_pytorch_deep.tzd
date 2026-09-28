@@ -33,7 +33,7 @@ fun assertClose(name, actual, expected, tol) {
 }
 
 fun assertTensorShape(name, t, expectedShape) {
-    var s = torch_shape(t);
+    var s = torch_shape_str(t);
     if (s == expectedShape) {
         passCount = passCount + 1;
     } else {

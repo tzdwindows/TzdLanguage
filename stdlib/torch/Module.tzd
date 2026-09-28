@@ -79,6 +79,10 @@ class Module {
         for (var i = 0; i < len(keys); i = i + 1) {
             this._params[keys[i]] = torch_to_device(this._params[keys[i]], device);
         }
+        var bufKeys = mapKeys(this._buffers);
+        for (var bi = 0; bi < len(bufKeys); bi = bi + 1) {
+            this._buffers[bufKeys[bi]] = torch_to_device(this._buffers[bufKeys[bi]], device);
+        }
         var modKeys = mapKeys(this._modules);
         for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
             var subMod = this._modules[modKeys[mi]];

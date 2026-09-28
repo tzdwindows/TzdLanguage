@@ -47,9 +47,7 @@ class MSELoss extends _LossBase {
     MSELoss() { super("MSELoss"); }
     MSELoss(reduction) { super("MSELoss", reduction); }
     fun forward(input, target) {
-        var diff = torch_sub(input, target);
-        var loss = torch_mul(diff, diff);
-        return this.applyReduction(loss);
+        return torch_mse_loss(input, target);
     }
 }
 
@@ -57,8 +55,7 @@ class L1Loss extends _LossBase {
     L1Loss() { super("L1Loss"); }
     L1Loss(reduction) { super("L1Loss", reduction); }
     fun forward(input, target) {
-        var loss = torch_abs(torch_sub(input, target));
-        return this.applyReduction(loss);
+        return torch_l1_loss(input, target);
     }
 }
 

@@ -1,4 +1,4 @@
-﻿// Prevent Windows min/max macros from breaking libtorch headers
+// Prevent Windows min/max macros from breaking libtorch headers
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -3011,8 +3011,12 @@ void TzdPyTorch::regReductionOps(TzdInterpreter* interp) {
     };
 
     reg("torch_sum", [](auto args) -> TzdValue {
-        if (args.empty()) return TzdValue::Error("torch_sum: requires (tensor, [dim])");
+        if (args.empty()) return TzdValue::Error("torch_sum: requires (tensor, [dim, keepdim])");
         auto* a = requireTensor(args[0], "torch_sum");
+        if (args.size() > 2) {
+            bool kd = args[2].bVal || (valToDouble(args[2]) != 0.0);
+            return wrapTensor(new at::Tensor(a->sum((int64_t)valToDouble(args[1]), kd)));
+        }
         if (args.size() > 1) {
             return wrapTensor(new at::Tensor(a->sum((int64_t)valToDouble(args[1]))));
         }
@@ -4679,7 +4683,9 @@ void TzdPyTorch::regExtendedOps(TzdInterpreter* interp) {
 #endif
         return TzdValue();
     });
-    reg("torch_gc", [](auto args) -> TzdValue {
+    reg("torch_gc", [interp](auto args) -> TzdValue {
+        g_JitPool.reset();
+        if (interp) interp->clearJitMemory();
 #ifdef WITH_CUDA
         if (TzdPyTorch::isCudaAvailable()) {
             torch::cuda::empty_cache();

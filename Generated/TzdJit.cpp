@@ -710,9 +710,11 @@ extern "C" {
     }
 
     void rt_destruct_values(void* ptr, int count) {
+        if (!ptr || count <= 0) return;
         TzdValue* arr = (TzdValue*)ptr;
         for (int i = 0; i < count; ++i) {
             arr[i].~TzdValue();
+            new (&arr[i]) TzdValue();
         }
     }
 
@@ -4940,7 +4942,11 @@ std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
         }
     }
 
-    return (Value*)m_builder.CreateCall(getRtFunc("rt_create_inst_args"), { name, m_builder.getInt32(argCount), argsArray });
+    Value* instRes = (Value*)m_builder.CreateCall(getRtFunc("rt_create_inst_args"), { name, m_builder.getInt32(argCount), argsArray });
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+    }
+    return instRes;
 }
 
 // 编译期内联 selector：成员名 -> 常量 TzdSelector（i32）写进 IR，
@@ -5934,6 +5940,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             TzdSelector sel = internSelectorConstant(funcName);
             Value* resPtr = m_builder.CreateCall(getRtFunc("rt_tzd_call_method"),
                 { thisVal, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
+            if (argCount > 0) {
+                m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+            }
             return std::any((Value*)resPtr);
         }
     }
@@ -6002,6 +6011,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
         Value* dummyResSlot = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
         Value* interp = currentFunc->getArg(0);
         Value* nativeDoubleResult = m_builder.CreateCall(s_currentWorkerFunc, { interp, dummyResSlot, argsArray });
+        if (argCount > 0) {
+            m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+        }
         return std::any((Value*)nativeDoubleResult);
     }
 
@@ -6076,11 +6088,17 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             Value* objPtr = (obj && obj->getType()->isDoubleTy()) ? boxToTzdValue(obj) : obj;
             Value* resPtr = m_builder.CreateCall(getRtFunc("rt_tzd_call_method"),
                 { objPtr, m_builder.getInt32((int32_t)sel), nameStr, m_builder.getInt32(argCount), argsArray });
+            if (argCount > 0) {
+                m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+            }
             return std::any((Value*)resPtr);
         }
         Value* callee = castAnyToValue(visit(ctx->atom()), "visitCallExpr.callee");
         Value* calleePtr = (callee && callee->getType()->isDoubleTy()) ? boxToTzdValue(callee) : callee;
         Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { calleePtr, m_builder.getInt32(argCount), argsArray });
+        if (argCount > 0) {
+            m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+        }
         return std::any((Value*)resPtr);
     }
 
@@ -6089,6 +6107,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     if (m_namedValues.count(funcName)) {
         Value* callee = m_builder.CreateLoad(m_ptrTy, m_namedValues[funcName], funcName + "_callee");
         Value* resPtr = m_builder.CreateCall(getRtFunc("rt_call_value_fast"), { callee, m_builder.getInt32(argCount), argsArray });
+        if (argCount > 0) {
+            m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+        }
         return std::any((Value*)resPtr);
     }
 
@@ -6134,6 +6155,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             m_builder.CreateCall(getRtFunc("rt_write_fast_ret"), { m_currentRetPtr, stable });
         }
         Value* slowRes = inlineToDoubleFast(slowResPtr);
+        if (argCount > 0) {
+            m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+        }
         if (currentFunc->arg_size() > 0) {
             m_builder.CreateCall(getRtFunc("rt_pop_call_depth"), { currentFunc->getArg(0) });
         }
@@ -6176,6 +6200,9 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     m_builder.CreateBr(mergeBB);
 
     m_builder.SetInsertPoint(mergeBB);
+    if (argCount > 0) {
+        m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
+    }
     Value* finalRes = m_builder.CreateLoad(m_ptrTy, resPtrSlot, "call_res");
     return std::any((Value*)finalRes);
 }
