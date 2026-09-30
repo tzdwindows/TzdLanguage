@@ -471,6 +471,13 @@ static std::string getNewExprClassName(antlr4::tree::ParseTree* tree) {
 }
 
 static std::string build_jit_frame_string(const char* name) {
+    if (!name) return "";
+    thread_local std::unordered_map<std::string, std::string> s_jitFrameCache;
+    auto it = s_jitFrameCache.find(name);
+    if (it != s_jitFrameCache.end()) {
+        return it->second;
+    }
+
     std::string fileLoc = "memory";
     int line = 0;
     std::string frameName = std::string(name);
@@ -530,14 +537,34 @@ static std::string build_jit_frame_string(const char* name) {
                 fileLoc = formatSourcePath(func.sourceFile);
                 line = func.line;
                 frameName = func.name.empty() ? name : func.name;
+                found = true;
             }
         }
         catch (...) {}
+
+        if (!found) {
+            std::string rawName(name);
+            size_t vPos = rawName.rfind("_v");
+            if (vPos != std::string::npos && vPos + 2 < rawName.size() && std::isdigit(rawName[vPos + 2])) {
+                std::string base = rawName.substr(0, vPos);
+                try {
+                    TzdValue func = g_CurrentInterpreter->getVariable(base, nullptr);
+                    if (func.type == TzdValue::FUNCTION || func.type == TzdValue::NATIVE_FUNCTION) {
+                        fileLoc = formatSourcePath(func.sourceFile);
+                        line = func.line;
+                        frameName = func.name.empty() ? base : func.name;
+                        found = true;
+                    }
+                }
+                catch (...) {}
+            }
+        }
     }
 
     std::string formattedFrame = frameName + " (" + fileLoc;
     if (line > 0) formattedFrame += ":" + std::to_string(line);
     formattedFrame += ") (JIT Compiled)";
+    s_jitFrameCache[name] = formattedFrame;
     return formattedFrame;
 }
 
@@ -1773,13 +1800,25 @@ extern "C" {
 
         if (funcObj->type == TzdValue::FUNCTION && funcObj->jittedPtr && !hasBp) {
             TzdValue* result = g_JitPool.next();
+            std::string fileLoc = formatSourcePath(funcObj->sourceFile);
+            int line = funcObj->line;
+            std::string frameName = funcObj->name.empty() ? "<anonymous>" : funcObj->name;
+            if (funcObj->instanceVal && funcObj->instanceVal->definition) {
+                frameName = funcObj->instanceVal->definition->fullName + "." + frameName;
+            }
+            frameName += " (" + fileLoc;
+            if (line > 0) frameName += ":" + std::to_string(line);
+            frameName += ") (JIT Compiled)";
+
             if (!TzdDebugger::g_DebugActive) {
                 if (!funcObj->instanceVal) {
                     // Fast path: no bound `this`, reuse caller-provided arg array directly.
+                    g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
                     g_CurrentInterpreter->m_argPtrStack.push_back(args);
                     ++g_CurrentInterpreter->m_callDepth;
                     funcObj->jittedPtr(g_CurrentInterpreter, result);
                     if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
+                    g_CurrentInterpreter->m_callStackFrames.pop_back();
                     g_CurrentInterpreter->m_argPtrStack.pop_back();
                     return result;
                 }
@@ -1790,10 +1829,12 @@ extern "C" {
                     TzdValue frameInline[kInlineArgs];
                     frameInline[0] = TzdValue(funcObj->instanceVal);
                     for (int i = 0; i < argCount; ++i) frameInline[i + 1] = args[i];
+                    g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
                     g_CurrentInterpreter->m_argPtrStack.push_back(frameInline);
                     ++g_CurrentInterpreter->m_callDepth;
                     funcObj->jittedPtr(g_CurrentInterpreter, result);
                     if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
+                    g_CurrentInterpreter->m_callStackFrames.pop_back();
                     g_CurrentInterpreter->m_argPtrStack.pop_back();
                     return result;
                 }
@@ -1802,10 +1843,12 @@ extern "C" {
                 frame.reserve((size_t)argCount + 1);
                 frame.push_back(TzdValue(funcObj->instanceVal));
                 for (int i = 0; i < argCount; ++i) frame.push_back(args[i]);
+                g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
                 g_CurrentInterpreter->m_argPtrStack.push_back(frame.data());
                 ++g_CurrentInterpreter->m_callDepth;
                 funcObj->jittedPtr(g_CurrentInterpreter, result);
                 if (g_CurrentInterpreter->m_callDepth > 0) --g_CurrentInterpreter->m_callDepth;
+                g_CurrentInterpreter->m_callStackFrames.pop_back();
                 g_CurrentInterpreter->m_argPtrStack.pop_back();
                 return result;
             }
@@ -1815,16 +1858,6 @@ extern "C" {
             if (funcObj->instanceVal) frame.push_back(TzdValue(funcObj->instanceVal));
             for (int i = 0; i < argCount; ++i) frame.push_back(args[i]);
             g_CurrentInterpreter->m_argPtrStack.push_back(frame.data());
-
-            std::string fileLoc = formatSourcePath(funcObj->sourceFile);
-            int line = funcObj->line;
-            std::string frameName = funcObj->name.empty() ? "<anonymous>" : funcObj->name;
-            if (funcObj->instanceVal && funcObj->instanceVal->definition) {
-                frameName = funcObj->instanceVal->definition->fullName + "." + frameName;
-            }
-            frameName += " (" + fileLoc;
-            if (line > 0) frameName += ":" + std::to_string(line);
-            frameName += ") (JIT Compiled)";
 
             g_CurrentInterpreter->m_callStackFrames.push_back(frameName);
             ++g_CurrentInterpreter->m_callDepth;
@@ -4685,6 +4718,12 @@ std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx)
     return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_op_sub"), { boxedL, boxedR }));
 }
 std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext* ctx) {
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
 
     // ---- [新增] 复合赋值展开：+= -= *= /= ----
     // 检查是否有复合赋值运算符，展开为 lhs = lhs OP rhs
@@ -4970,7 +5009,12 @@ std::any TzdCompiler::visitPrintFunExpr(TzdLangParser::PrintFunExprContext* ctx)
 }
 
 std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext* ctx) {
-    // F4: Skip rt_set_location for performance — only needed for error reporting
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
     std::string className = ctx->qualifiedName()->getText();
     Value* name = m_builder.CreateGlobalStringPtr(className);
 
@@ -5010,6 +5054,12 @@ TzdSelector TzdCompiler::internSelectorConstant(const std::string& name) {
 }
 
 std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprContext* ctx) {
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
     std::string objName = ctx->atom()->getText();
     Value* obj = nullptr;
     if (m_namedValues.count(objName)) {
@@ -5258,6 +5308,12 @@ std::any TzdCompiler::visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext* 
     return mapVal;
 }
 std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext* ctx) {
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
     std::string containerName = ctx->expression(0)->getText();
     Value* container = nullptr;
     if (m_namedValues.count(containerName)) {
@@ -5890,6 +5946,12 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
 }
 
 std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
     std::string funcName = ctx->atom()->getText();
     auto exprs = ctx->exprList() ? ctx->exprList()->expression()
         : std::vector<TzdLangParser::ExpressionContext*>();
@@ -6194,13 +6256,18 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
     m_builder.SetInsertPoint(fastCallBB);
 
-    // Direct worker call — no JIT frame push/pop (eliminates string formatting overhead)
+    // Direct worker call — push JIT frame
+    m_builder.CreateCall(getRtFunc("rt_push_jit_frame"), { funcNameStr });
+
     std::vector<Type*> workerSignature = { m_ptrTy, m_ptrTy, m_ptrTy };
     FunctionType* workerFTy = FunctionType::get(m_doubleTy, workerSignature, false);
     Value* interp = currentFunc->arg_size() > 0 ? (Value*)currentFunc->getArg(0) : (Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
     Value* resSlotFast = m_builder.CreateCall(getRtFunc("rt_create_null"), {});
     m_builder.CreateCall(workerFTy, workerPtr, { interp, resSlotFast, argsArray });
     m_builder.CreateStore(resSlotFast, resPtrSlot);
+
+    // Pop JIT frame after worker returns
+    m_builder.CreateCall(getRtFunc("rt_pop_jit_frame"), {});
 
     m_builder.CreateBr(mergeBB);
 
@@ -6303,7 +6370,15 @@ std::any TzdCompiler::visitTryCatchStmt(TzdLangParser::TryCatchStmtContext* ctx)
 std::any TzdCompiler::visitNullExpr(TzdLangParser::NullExprContext* ctx) {
     return (Value*)m_builder.CreateCall(getRtFunc("rt_create_null"));
 }
-std::any TzdCompiler::visitExprStmt(TzdLangParser::ExprStmtContext* ctx) { return visit(ctx->expression()); }
+std::any TzdCompiler::visitExprStmt(TzdLangParser::ExprStmtContext* ctx) {
+    if (ctx->getStart()) {
+        m_builder.CreateCall(getRtFunc("rt_set_location"), {
+            m_builder.getInt32(ctx->getStart()->getLine()),
+            m_builder.getInt32(ctx->getStart()->getCharPositionInLine())
+        });
+    }
+    return visit(ctx->expression());
+}
 std::any TzdCompiler::visitFunDeclStmt(TzdLangParser::FunDeclStmtContext* ctx) {
     // Must save/restore JIT compilation context — just like visitLambdaExpr.
     // Without this, compileNamedFunction for the nested function clobbers

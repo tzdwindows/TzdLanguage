@@ -306,16 +306,8 @@ public:
     size_t line;
     size_t column;
     std::vector<std::string> stackTrace;
-    TzdRuntimeException(const std::string& msg, antlr4::Token* token, std::vector<std::string> trace = {})
-        : std::runtime_error(msg),
-        line(token ? token->getLine() : 0),
-        column(token ? token->getCharPositionInLine() : 0),
-        stackTrace(std::move(trace)) {}
-    TzdRuntimeException(const std::string& msg, size_t line = 0, size_t column = 0, std::vector<std::string> trace = {})
-        : std::runtime_error(msg),
-        line(line),
-        column(column),
-        stackTrace(std::move(trace)) {}
+    TzdRuntimeException(const std::string& msg, antlr4::Token* token, std::vector<std::string> trace = {});
+    TzdRuntimeException(const std::string& msg, size_t line = 0, size_t column = 0, std::vector<std::string> trace = {});
 };
 
 class TzdReturnException : public std::exception {
@@ -331,8 +323,7 @@ class TzdThrowException : public std::exception {
 public:
     TzdValue value;
     std::vector<std::string> stackTrace;
-    explicit TzdThrowException(TzdValue v, std::vector<std::string> trace = {})
-        : value(std::move(v)), stackTrace(std::move(trace)) {}
+    explicit TzdThrowException(TzdValue v, std::vector<std::string> trace = {});
 };
 class TzdErrorListener : public antlr4::BaseErrorListener {
 public:
@@ -637,6 +628,40 @@ private:
 };
 
 extern TzdInterpreter* g_CurrentInterpreter;
+
+inline TzdRuntimeException::TzdRuntimeException(const std::string& msg, antlr4::Token* token, std::vector<std::string> trace)
+    : std::runtime_error(msg),
+    line(token ? token->getLine() : 0),
+    column(token ? token->getCharPositionInLine() : 0)
+{
+    if (trace.empty() && g_CurrentInterpreter) {
+        stackTrace = g_CurrentInterpreter->m_callStackFrames;
+    } else {
+        stackTrace = std::move(trace);
+    }
+}
+
+inline TzdRuntimeException::TzdRuntimeException(const std::string& msg, size_t line, size_t column, std::vector<std::string> trace)
+    : std::runtime_error(msg),
+    line(line),
+    column(column)
+{
+    if (trace.empty() && g_CurrentInterpreter) {
+        stackTrace = g_CurrentInterpreter->m_callStackFrames;
+    } else {
+        stackTrace = std::move(trace);
+    }
+}
+
+inline TzdThrowException::TzdThrowException(TzdValue v, std::vector<std::string> trace)
+    : value(std::move(v))
+{
+    if (trace.empty() && g_CurrentInterpreter) {
+        stackTrace = g_CurrentInterpreter->m_callStackFrames;
+    } else {
+        stackTrace = std::move(trace);
+    }
+}
 
 // ============================================================================
 // Tensor lifecycle management hooks (implemented in TzdPyTorch.cpp)

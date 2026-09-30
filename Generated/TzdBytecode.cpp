@@ -1639,10 +1639,12 @@ TzdValue TzdBytecodeVM::execute(const BytecodeModule& module) {
     try {
         return runBytecodeFunc(module, 0, {});
     } catch (const TzdThrowException& e) {
+        if (m_interp) throw;
         std::cerr << "Exception in thread \"main\" Tzd: " << bcValueToString(e.value)
                   << std::endl;
         return TzdValue();
     } catch (const std::exception& e) {
+        if (m_interp) throw;
         std::cerr << "Exception in thread \"main\" Tzd: " << e.what() << std::endl;
         return TzdValue();
     }
@@ -1667,10 +1669,12 @@ TzdValue TzdBytecodeVM::callFunction(const BytecodeModule& module,
     try {
         return runBytecodeFunc(module, it->second, args);
     } catch (const TzdThrowException& e) {
+        if (m_interp) throw;
         std::cerr << "Exception in thread \"main\" Tzd: " << bcValueToString(e.value)
                   << std::endl;
         return TzdValue();
     } catch (const std::exception& e) {
+        if (m_interp) throw;
         std::cerr << "Exception in thread \"main\" Tzd: " << e.what() << std::endl;
         return TzdValue();
     }
@@ -2756,7 +2760,18 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             }
             case OpCode::THROW: {
                 TzdValue v; pop(v);
-                throw TzdThrowException(std::move(v));
+                std::vector<std::string> trace;
+                if (m_interp) trace = m_interp->m_callStackFrames;
+                for (const auto& f : callFrames) {
+                    if (f.funcIndex < module.functions.size()) {
+                        trace.push_back(module.functions[f.funcIndex].name + " (Bytecode)");
+                    }
+                }
+                if (currentFuncIdx < module.functions.size()) {
+                    trace.push_back(module.functions[currentFuncIdx].name + " (Bytecode)");
+                }
+                trace.push_back("<throw>");
+                throw TzdThrowException(std::move(v), trace);
             }
             case OpCode::SCOPE_PUSH: case OpCode::SCOPE_POP: {
                 ++ip; break;
@@ -3016,6 +3031,33 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
             throw;
         }
         continue;
+    }
+    catch (const std::exception& ex) {
+        std::vector<std::string> trace;
+        if (m_interp) trace = m_interp->m_callStackFrames;
+        for (const auto& f : callFrames) {
+            if (f.funcIndex < module.functions.size()) {
+                trace.push_back(module.functions[f.funcIndex].name + " (Bytecode)");
+            }
+        }
+        if (currentFuncIdx < module.functions.size()) {
+            trace.push_back(module.functions[currentFuncIdx].name + " (Bytecode)");
+        }
+        while (!callFrames.empty()) {
+            const VMCallFrame& prev = callFrames.back();
+            localBase = prev.localBase;
+            stackBase = prev.stackBase;
+            handlerBase = prev.handlerBase;
+            callFrames.pop_back();
+        }
+        for (size_t i = initialLocalBase; i < m_localTop; ++i) {
+            releaseResourceIfNeeded(m_locals[i]);
+            m_locals[i].type = TzdValue::NONE;
+        }
+        m_localTop = initialLocalBase;
+        m_sp = initialStackBase;
+        m_handlers.resize(initialHandlerBase);
+        throw TzdRuntimeException(ex.what(), 0, 0, trace);
     }
     catch (...) {
         while (!callFrames.empty()) {
