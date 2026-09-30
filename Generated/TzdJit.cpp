@@ -62,9 +62,9 @@ static thread_local bool s_inTailPosition = false;
 static thread_local llvm::Function* s_currentWorkerFunc = nullptr;
 static thread_local llvm::Function* s_currentNativeWorkerFunc = nullptr;
 static thread_local bool s_compilingNativeWorker = false;
-// Compile-time map: function base name → worker Function* for direct call optimization
-static std::unordered_map<std::string, llvm::Function*> s_compiledWorkers;
-static std::unordered_map<std::string, llvm::Function*> s_compiledNativeWorkers;
+static thread_local std::string s_currentCompilingFuncName;
+// Note: Cross-module direct LLVM Function* calls are invalid in LLVM due to per-module LLVMContext isolation.
+// Dynamic cross-module calls use runtime function pointers via s_workerPointers and rt_get_worker_ptr.
 static std::unordered_map<std::string, void*> s_workerPointers;
 static std::shared_mutex s_workerPointersMutex;
 static thread_local std::vector<std::tuple<llvm::Value*, llvm::Value*, int>> s_tryJmpBufStack;
@@ -340,6 +340,9 @@ static bool isExprNonDouble(antlr4::tree::ParseTree* tree, antlr4::tree::ParseTr
     if (auto atomExpr = dynamic_cast<TzdLangParser::AtomExprContext*>(tree)) {
         return isExprNonDouble(atomExpr->atom(), block);
     }
+    if (tree->children.size() == 1) {
+        return isExprNonDouble(tree->children[0], block);
+    }
 
     if (dynamic_cast<TzdLangParser::StringExprContext*>(tree)) return true;
     if (dynamic_cast<TzdLangParser::BoolTrueExprContext*>(tree)) return true;
@@ -367,9 +370,13 @@ static bool isExprNonDouble(antlr4::tree::ParseTree* tree, antlr4::tree::ParseTr
             "sqrt", "cbrt", "ceil", "floor", "round", "trunc", "abs",
             "pow", "fmod", "hypot"
         };
-        if (mathFuncs.find(callee) == mathFuncs.end()) {
-            return true;
+        if (mathFuncs.find(callee) != mathFuncs.end()) {
+            return false;
         }
+        if (!s_currentCompilingFuncName.empty() && callee == s_currentCompilingFuncName) {
+            return false; // 递归自调用纯数值函数视为 double 返回
+        }
+        return true;
     }
 
     if (block && !text.empty()) {
@@ -2448,6 +2455,7 @@ extern "C" {
 
     // 直接写原生 double，无装箱开销
     void rt_store_index_native_d(void* arr, int idx, double val) {
+        if (!arr) return;
         TzdValue* vArr = (TzdValue*)arr;
         if (vArr->isNativeDoubleArr && idx >= 0 && idx < (int)vArr->nativeArr.size()) {
             vArr->nativeArr[idx] = val;
@@ -2552,6 +2560,19 @@ void* TzdJitEngine::lookupSymbolAsPtr(const std::string& name) {
 }
 
 void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext* ctx, const std::string& internalName) {
+    std::string savedCompilingFunc = s_currentCompilingFuncName;
+    std::string baseInternal = internalName;
+    size_t uPos = baseInternal.find_last_of('_');
+    if (uPos != std::string::npos && uPos + 1 < baseInternal.size() && baseInternal[uPos + 1] == 'v') {
+        baseInternal = baseInternal.substr(0, uPos);
+    }
+    s_currentCompilingFuncName = baseInternal;
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
+
     int argCount = ctx->paramList() ? ctx->paramList()->param().size() : 0;
 
     // 1. Worker 内部函数返回类型为 m_doubleTy
@@ -2591,15 +2612,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
-    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
-    {
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledWorkers[base] = workerFunc;
-        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
-    }
     s_currentNativeWorkerFunc = nativeWorkerFunc;
 
     // 2. Entry 依然返回 void
@@ -2751,8 +2763,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
     }
 
     s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
     s_tailRecurseBB = nullptr;
+    s_currentFuncParamNames.clear();
     m_currentRetPtr = nullptr;
+    s_inTailPosition = false;
+    s_currentCompilingFuncName = savedCompilingFunc;
 }
 
 
@@ -2788,13 +2804,6 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
         );
         nativeWorkerFunc->addFnAttr(llvm::Attribute::AlwaysInline);
         nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
-
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledNativeWorkers[base] = nativeWorkerFunc;
-        s_compiledNativeWorkers[className + "_" + methodName] = nativeWorkerFunc;
 
         BasicBlock* nativeEntryBB = BasicBlock::Create(m_context, "entry", nativeWorkerFunc);
         BasicBlock* nativeBodyBB = BasicBlock::Create(m_context, "body", nativeWorkerFunc);
@@ -2931,6 +2940,10 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext* cla
     }
     s_currentFuncParamNames.clear();
     m_currentRetPtr = nullptr;
+    s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
 }
 
 void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::ConstructorDeclContext* ctorCtx, const std::string& internalName) {
@@ -3008,6 +3021,19 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext* cla
 }
 
 void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName) {
+    std::string savedCompilingFunc = s_currentCompilingFuncName;
+    std::string baseInternal = internalName;
+    size_t uPos = baseInternal.find_last_of('_');
+    if (uPos != std::string::npos && uPos + 1 < baseInternal.size() && baseInternal[uPos + 1] == 'v') {
+        baseInternal = baseInternal.substr(0, uPos);
+    }
+    s_currentCompilingFuncName = baseInternal;
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
+
     int argCount = params ? params->param().size() : 0;
 
     // 1. Worker 内部函数返回类型为 m_doubleTy
@@ -3047,15 +3073,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
         nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
-    // Register worker for direct call optimization (bypasses rt_call_sub_fast)
-    {
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledWorkers[base] = workerFunc;
-        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
-    }
     s_currentNativeWorkerFunc = nativeWorkerFunc;
 
     // 2. Entry 依然返回 void 供外部 C++ 解释器调用
@@ -3210,8 +3227,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
     }
 
     s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
     s_tailRecurseBB = nullptr;
+    s_currentFuncParamNames.clear();
     m_currentRetPtr = nullptr;
+    s_inTailPosition = false;
+    s_currentCompilingFuncName = savedCompilingFunc;
 }
 
 // Overload for bytecode JIT bridge: takes param names as a vector<string>
@@ -3219,6 +3240,19 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block, TzdLa
 void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
                                        const std::vector<std::string>& paramNames,
                                        const std::string& internalName) {
+    std::string savedCompilingFunc = s_currentCompilingFuncName;
+    std::string baseInternal = internalName;
+    size_t uPos = baseInternal.find_last_of('_');
+    if (uPos != std::string::npos && uPos + 1 < baseInternal.size() && baseInternal[uPos + 1] == 'v') {
+        baseInternal = baseInternal.substr(0, uPos);
+    }
+    s_currentCompilingFuncName = baseInternal;
+
+    s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
+    s_tailRecurseBB = nullptr;
+    s_inTailPosition = false;
+
     int argCount = (int)paramNames.size();
 
     // 1. Worker 内部函数返回类型为 m_doubleTy
@@ -3253,15 +3287,6 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
         nativeWorkerFunc->setCallingConv(llvm::CallingConv::Fast);
     }
 
-    // Register worker for direct call optimization
-    {
-        std::string base = internalName;
-        size_t us = base.find_last_of('_');
-        if (us != std::string::npos && us + 1 < base.size() && base[us + 1] == 'v')
-            base = base.substr(0, us);
-        s_compiledWorkers[base] = workerFunc;
-        if (nativeWorkerFunc) s_compiledNativeWorkers[base] = nativeWorkerFunc;
-    }
     s_currentNativeWorkerFunc = nativeWorkerFunc;
 
     // 2. Entry returns void for external C++ interpreter calls
@@ -3405,8 +3430,12 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext* block,
     }
 
     s_currentNativeWorkerFunc = nullptr;
+    s_currentWorkerFunc = nullptr;
     s_tailRecurseBB = nullptr;
+    s_currentFuncParamNames.clear();
     m_currentRetPtr = nullptr;
+    s_inTailPosition = false;
+    s_currentCompilingFuncName = savedCompilingFunc;
 }
 
 
@@ -3983,6 +4012,12 @@ TzdCompiler::TzdCompiler(TzdJitEngine& jit, const std::string& modName)
     s_tailRecurseBB = nullptr;
     s_inTailPosition = false;
     s_currentWorkerFunc = nullptr;
+    s_currentNativeWorkerFunc = nullptr;
+    s_compilingNativeWorker = false;
+    s_currentCompilingFuncName.clear();
+    s_inlineReturnStack.clear();
+    s_inlinedFunctionsInStack.clear();
+    s_currentInlineDepth = 0;
     s_tryJmpBufStack.clear();
     s_loopLevel = 0;
 
@@ -4057,7 +4092,17 @@ llvm::orc::ThreadSafeModule TzdCompiler::extractThreadSafeModule() {
     m_nativeDoubleLocals.clear();
     m_currentRetPtr = nullptr;
     s_currentWorkerFunc = nullptr;
+    s_currentNativeWorkerFunc = nullptr;
+    s_compilingNativeWorker = false;
     s_tailRecurseBB = nullptr;
+    s_currentFuncParamNames.clear();
+    s_currentCompilingFuncName.clear();
+    s_inTailPosition = false;
+    s_inlineReturnStack.clear();
+    s_inlinedFunctionsInStack.clear();
+    s_currentInlineDepth = 0;
+    s_tryJmpBufStack.clear();
+    s_loopLevel = 0;
 
     return llvm::orc::ThreadSafeModule(std::move(moduleForJIT), m_tsc);
 }
@@ -4200,6 +4245,8 @@ std::any TzdCompiler::visitLambdaExpr(TzdLangParser::LambdaExprContext* ctx) {
     auto savedParamNames = s_currentFuncParamNames;
     auto* savedTailBB = s_tailRecurseBB;
     auto* savedWorkerFunc = s_currentWorkerFunc;
+    auto* savedNativeWorkerFunc = s_currentNativeWorkerFunc;
+    bool savedCompilingNative = s_compilingNativeWorker;
     auto* savedRetPtr = m_currentRetPtr;
 
     static int s_lambdaCount = 0;
@@ -4217,6 +4264,8 @@ std::any TzdCompiler::visitLambdaExpr(TzdLangParser::LambdaExprContext* ctx) {
     s_currentFuncParamNames = savedParamNames;
     s_tailRecurseBB = savedTailBB;
     s_currentWorkerFunc = savedWorkerFunc;
+    s_currentNativeWorkerFunc = savedNativeWorkerFunc;
+    s_compilingNativeWorker = savedCompilingNative;
     m_currentRetPtr = savedRetPtr;
 
     Value* nameStr = m_builder.CreateGlobalStringPtr(lambdaInternalName);
@@ -4628,7 +4677,7 @@ std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx)
         }
         Value* boxedL = boxToTzdValue(L);
         Value* boxedR = boxToTzdValue(R);
-        return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_str_concat"), { boxedL, boxedR }));
+        return std::any((Value*)m_builder.CreateCall(getRtFunc("rt_op_add"), { boxedL, boxedR }));
     }
 
     Value* boxedL = boxToTzdValue(L);
@@ -4981,7 +5030,7 @@ std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprConte
 std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
     Value* retValRaw = nullptr;
     if (ctx->expression()) {
-        bool isCall = (getAsCallExpr(ctx->expression()) != nullptr);
+        bool isCall = (getAsCallExpr(ctx->expression()) != nullptr) && s_inlineReturnStack.empty();
         bool oldTailState = s_inTailPosition;
         s_inTailPosition = isCall;
 
@@ -5019,9 +5068,13 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {
         if (retValRaw) {
             if (retValRaw->getType()->isDoubleTy()) {
                 m_builder.CreateStore(retValRaw, frame.retNativeDouble);
+                Value* boxed = boxToTzdValue(retValRaw);
+                m_builder.CreateStore(boxed, frame.retBoxed);
             } else {
                 Value* boxed = boxToTzdValue(retValRaw);
                 m_builder.CreateStore(boxed, frame.retBoxed);
+                Value* dVal = inlineToDoubleFast(boxed);
+                m_builder.CreateStore(dVal, frame.retNativeDouble);
             }
         }
         m_builder.CreateBr(frame.returnBB);
@@ -5634,8 +5687,20 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
 
     Function* currentFunc = m_builder.GetInsertBlock()->getParent();
     std::string currentName = currentFunc->getName().str();
+    std::string curBaseName = currentName;
+    if (curBaseName.size() > 14 && curBaseName.substr(curBaseName.size() - 14) == "_worker_native") {
+        curBaseName = curBaseName.substr(0, curBaseName.size() - 14);
+    } else if (curBaseName.size() > 7 && curBaseName.substr(curBaseName.size() - 7) == "_worker") {
+        curBaseName = curBaseName.substr(0, curBaseName.size() - 7);
+    }
+    size_t lastUnderscore = curBaseName.find_last_of('_');
+    if (lastUnderscore != std::string::npos && lastUnderscore + 1 < curBaseName.size() && curBaseName[lastUnderscore + 1] == 'v') {
+        curBaseName = curBaseName.substr(0, lastUnderscore);
+    }
+
     std::string calleeNativeName = (!explicitClassName.empty()) ? (explicitClassName + "_" + funcName) : funcName;
-    if (currentName == calleeNativeName ||
+    if (curBaseName == funcName || curBaseName == calleeNativeName ||
+        currentName == calleeNativeName ||
         currentName == calleeNativeName + "_worker" ||
         currentName == calleeNativeName + "_worker_native" ||
         currentName == funcName ||
@@ -5786,8 +5851,19 @@ bool TzdCompiler::tryInlineFunction(const std::string& funcName,
 
     s_inlineReturnStack.push_back({ inlineRetBB, retNativeDouble, retBoxed });
 
+    bool savedTail = s_inTailPosition;
+    s_inTailPosition = false; // 被内联函数体绝不继承调用方的尾调用状态！
+    auto* savedTailBB = s_tailRecurseBB;
+    s_tailRecurseBB = nullptr;
+    auto* savedNativeWorker = s_currentNativeWorkerFunc;
+    s_currentNativeWorkerFunc = nullptr; // 被内联函数体不能误调用外层函数的 native worker 自递归！
+
     // 5. 遍历并生成被内联函数体 IR
     visit(calleeVal.funcBody);
+
+    s_inTailPosition = savedTail;
+    s_tailRecurseBB = savedTailBB;
+    s_currentNativeWorkerFunc = savedNativeWorker;
 
     // 6. 如果未显式 return 导致自然执行到底部，分支到汇合块
     if (m_builder.GetInsertBlock() && !m_builder.GetInsertBlock()->getTerminator()) {
@@ -5859,28 +5935,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
                 return std::any((Value*)inlinedRes);
             }
 
-            // 2. Direct Native Worker call
-            std::string workerKey = targetClass + "_" + memberName;
-            if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
-                Function* nativeWorker = nativeIt->second;
-                Function* curFunc = m_builder.GetInsertBlock()->getParent();
-                Value* interp = curFunc->getArg(0);
-                std::vector<Value*> callArgs;
-                callArgs.push_back(interp);
-                if (nativeWorker->getFunctionType()->getNumParams() == (unsigned)(2 + argCount)) {
-                    callArgs.push_back(receiverVal ? boxToTzdValue(receiverVal) : ConstantPointerNull::get(cast<PointerType>(m_ptrTy)));
-                }
-                for (int i = 0; i < argCount; ++i) {
-                    bool oldTail = s_inTailPosition;
-                    s_inTailPosition = false;
-                    Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
-                    s_inTailPosition = oldTail;
-                    callArgs.push_back(castToNativeDouble(argRaw));
-                }
-                CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
-                result->setCallingConv(llvm::CallingConv::Fast);
-                return std::any((Value*)result);
-            }
+
         }
     }
 
@@ -5896,28 +5951,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
                 return std::any((Value*)inlinedRes);
             }
 
-            // 2. Direct Native Worker call
-            std::string workerKey = className + "_" + funcName;
-            if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
-                Function* nativeWorker = nativeIt->second;
-                Function* curFunc = m_builder.GetInsertBlock()->getParent();
-                Value* interp = curFunc->getArg(0);
-                std::vector<Value*> callArgs;
-                callArgs.push_back(interp);
-                if (nativeWorker->getFunctionType()->getNumParams() == (unsigned)(2 + argCount)) {
-                    callArgs.push_back(thisVal);
-                }
-                for (int i = 0; i < argCount; ++i) {
-                    bool oldTail = s_inTailPosition;
-                    s_inTailPosition = false;
-                    Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
-                    s_inTailPosition = oldTail;
-                    callArgs.push_back(castToNativeDouble(argRaw));
-                }
-                CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
-                result->setCallingConv(llvm::CallingConv::Fast);
-                return std::any((Value*)result);
-            }
+
 
             // 3. Dispatch through rt_tzd_call_method
             Value* argsArray = CreateEntryBlockAlloca(m_tzdValueTy, m_builder.getInt32(argCount > 0 ? argCount : 1), "this_call_args");
@@ -5974,7 +6008,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     // ==============================================================
     if (funcName == baseName && s_currentNativeWorkerFunc) {
         // Phase B: Call native worker with double args directly — no arg array!
-        Value* interp = currentFunc->getArg(0);
+        Value* interp = currentFunc->arg_size() > 0 ? (Value*)currentFunc->getArg(0) : (Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
         std::vector<Value*> callArgs;
         callArgs.push_back(interp);
         for (int i = 0; i < argCount; ++i) {
@@ -6009,7 +6043,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
             }
         }
         Value* dummyResSlot = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
-        Value* interp = currentFunc->getArg(0);
+        Value* interp = currentFunc->arg_size() > 0 ? (Value*)currentFunc->getArg(0) : (Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
         Value* nativeDoubleResult = m_builder.CreateCall(s_currentWorkerFunc, { interp, dummyResSlot, argsArray });
         if (argCount > 0) {
             m_builder.CreateCall(getRtFunc("rt_destruct_values"), { argsArray, m_builder.getInt32(argCount) });
@@ -6020,29 +6054,6 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     // ==============================================================
     // 3. 动态函数调用 / 间接相互递归 / 原生函数系统调用
     // ==============================================================
-
-    // Phase D: Direct native worker call for known JIT-compiled functions.
-    // Bypasses args array, rt_init_tzd_value, inlineStoreNativeToPtr, rt_create_num.
-    // This makes non-recursive function calls as fast as C function calls.
-    std::string workerKey = funcName;
-    size_t dotPos = workerKey.find('.');
-    if (dotPos != std::string::npos) workerKey[dotPos] = '_';
-    if (auto nativeIt = s_compiledNativeWorkers.find(workerKey); nativeIt != s_compiledNativeWorkers.end()) {
-        Function* nativeWorker = nativeIt->second;
-        Value* interp = currentFunc->getArg(0);
-        std::vector<Value*> callArgs;
-        callArgs.push_back(interp);
-        for (int i = 0; i < argCount; ++i) {
-            bool oldTail = s_inTailPosition;
-            s_inTailPosition = false;
-            Value* argRaw = std::any_cast<Value*>(visit(exprs[i]));
-            s_inTailPosition = oldTail;
-            callArgs.push_back(castToNativeDouble(argRaw));
-        }
-        CallInst* result = m_builder.CreateCall(nativeWorker, callArgs);
-        result->setCallingConv(llvm::CallingConv::Fast);
-        return std::any((Value*)result);
-    }
 
     Value* argsArray = nullptr;
 
@@ -6123,7 +6134,8 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     BasicBlock* fastCallBB = BasicBlock::Create(m_context, "fast_worker_call", currentFunc);
     BasicBlock* slowCallBB = BasicBlock::Create(m_context, "slow_interp_call", currentFunc);
 
-    if (s_inTailPosition) {
+    bool canTailCall = s_inTailPosition && s_inlineReturnStack.empty();
+    if (canTailCall) {
         m_builder.CreateCondBr(isWorkerValid, fastCallBB, slowCallBB);
 
         // -- Fast Path: 跨函数的纯 LLVM 尾调用 --
@@ -6134,7 +6146,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
         std::vector<Type*> workerSignature = { m_ptrTy, m_ptrTy, m_ptrTy };
         FunctionType* workerFTy = FunctionType::get(m_doubleTy, workerSignature, false);
-        Value* interp = currentFunc->getArg(0);
+        Value* interp = currentFunc->arg_size() > 0 ? (Value*)currentFunc->getArg(0) : (Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
 
         CallInst* fastRes = m_builder.CreateCall(workerFTy, workerPtr, { interp, m_currentRetPtr, argsArray });
         fastRes->setTailCallKind(CallInst::TCK_Tail);  // Use Tail (not MustTail) for safety
@@ -6169,7 +6181,6 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
 
         BasicBlock* deadBB = BasicBlock::Create(m_context, "tail_call_unreachable", currentFunc);
         m_builder.SetInsertPoint(deadBB);
-        m_builder.CreateUnreachable();
 
         return std::any((Value*)ConstantFP::get(m_doubleTy, 0.0));
     }
@@ -6186,7 +6197,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext* ctx) {
     // Direct worker call — no JIT frame push/pop (eliminates string formatting overhead)
     std::vector<Type*> workerSignature = { m_ptrTy, m_ptrTy, m_ptrTy };
     FunctionType* workerFTy = FunctionType::get(m_doubleTy, workerSignature, false);
-    Value* interp = currentFunc->getArg(0);
+    Value* interp = currentFunc->arg_size() > 0 ? (Value*)currentFunc->getArg(0) : (Value*)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
     Value* resSlotFast = m_builder.CreateCall(getRtFunc("rt_create_null"), {});
     m_builder.CreateCall(workerFTy, workerPtr, { interp, resSlotFast, argsArray });
     m_builder.CreateStore(resSlotFast, resPtrSlot);
@@ -6304,6 +6315,8 @@ std::any TzdCompiler::visitFunDeclStmt(TzdLangParser::FunDeclStmtContext* ctx) {
     auto savedParamNames = s_currentFuncParamNames;
     auto* savedTailBB = s_tailRecurseBB;
     auto* savedWorkerFunc = s_currentWorkerFunc;
+    auto* savedNativeWorkerFunc = s_currentNativeWorkerFunc;
+    bool savedCompilingNative = s_compilingNativeWorker;
     auto* savedRetPtr = m_currentRetPtr;
     bool savedTailState = s_inTailPosition;
 
@@ -6322,6 +6335,8 @@ std::any TzdCompiler::visitFunDeclStmt(TzdLangParser::FunDeclStmtContext* ctx) {
     s_currentFuncParamNames = savedParamNames;
     s_tailRecurseBB = savedTailBB;
     s_currentWorkerFunc = savedWorkerFunc;
+    s_currentNativeWorkerFunc = savedNativeWorkerFunc;
+    s_compilingNativeWorker = savedCompilingNative;
     m_currentRetPtr = savedRetPtr;
     s_inTailPosition = savedTailState;
 
@@ -6368,6 +6383,8 @@ void TzdCompiler::inlineStoreNativeToPtr(Value* dest, Value* nativeDouble) {
 // Full inlining (GEP+Load dVal) is unsafe for non-DOUBLE types (INT stores in lVal).
 // Phase B (native worker specialization) will eliminate this call entirely for self-recursion.
 Value* TzdCompiler::inlineToDoubleFast(Value* src) {
+    if (!src) return ConstantFP::get(m_doubleTy, 0.0);
+    if (src->getType()->isDoubleTy()) return src;
     return m_builder.CreateCall(getRtFunc("rt_to_double_fast"), { src }, "to_double");
 }
 

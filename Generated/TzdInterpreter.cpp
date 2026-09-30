@@ -1580,6 +1580,38 @@ TzdInterpreter::TzdInterpreter() {
     m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "main_module");
     scopes.push_back({});
     initNativeFunctions();
+
+    // 默认查找路径初始化：包含可执行文件所在目录及其 stdlib 目录、环境变量配置
+#ifdef _WIN32
+    wchar_t exePathBuf[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePathBuf, MAX_PATH)) {
+        fs::path exeDir = fs::path(exePathBuf).parent_path();
+        fs::path stdlibDir = exeDir / "stdlib";
+        if (fs::exists(stdlibDir)) {
+            m_includePaths.push_back(fs::weakly_canonical(stdlibDir).string());
+        }
+        fs::path parentStdlib = exeDir.parent_path() / "stdlib";
+        if (fs::exists(parentStdlib)) {
+            m_includePaths.push_back(fs::weakly_canonical(parentStdlib).string());
+        }
+        fs::path grandParentStdlib = exeDir.parent_path().parent_path() / "stdlib";
+        if (fs::exists(grandParentStdlib)) {
+            m_includePaths.push_back(fs::weakly_canonical(grandParentStdlib).string());
+        }
+        m_includePaths.push_back(fs::weakly_canonical(exeDir).string());
+    }
+#endif
+    if (const char* env = std::getenv("TZD_STDLIB")) {
+        try {
+            if (fs::exists(env)) m_includePaths.push_back(fs::weakly_canonical(fs::path(env)).string());
+        } catch (...) {}
+    }
+    if (const char* env = std::getenv("TZD_HOME")) {
+        try {
+            fs::path p = fs::path(env) / "stdlib";
+            if (fs::exists(p)) m_includePaths.push_back(fs::weakly_canonical(p).string());
+        } catch (...) {}
+    }
 }
 
 TzdInterpreter::~TzdInterpreter() {
@@ -2647,33 +2679,173 @@ void TzdInterpreter::loadScriptFromFile(const std::string& filePath) {
     m_scriptPathStack.pop_back();
 }
 
+static std::string normalizeCanonicalPath(const fs::path& p) {
+    std::string s;
+    try {
+        s = fs::weakly_canonical(p).string();
+    } catch (...) {
+        s = p.string();
+    }
+    std::replace(s.begin(), s.end(), '\\', '/');
+    if (s.size() >= 2 && s[1] == ':') {
+        s[0] = (char)tolower((unsigned char)s[0]);
+    }
+    return s;
+}
+
 std::string TzdInterpreter::resolveImportPath(const std::string& inputPath) {
-    fs::path target;
+    if (inputPath.empty()) return "";
 
-    // 1. 处理点号表示法: xxx.yyy -> xxx/yyy.tzd
-    std::string processedPath = inputPath;
-    if (inputPath.find('/') == std::string::npos && inputPath.find('\\') == std::string::npos && inputPath.find('.') != std::string::npos) {
-        std::replace(processedPath.begin(), processedPath.end(), '.', '/');
-        processedPath += ".tzd";
+    // 0. 清理首尾空格与引号
+    std::string clean = inputPath;
+    while (!clean.empty() && (clean.front() == ' ' || clean.front() == '\t' || clean.front() == '\r' || clean.front() == '\n' || clean.front() == '"' || clean.front() == '\'')) {
+        clean.erase(clean.begin());
+    }
+    while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t' || clean.back() == '\r' || clean.back() == '\n' || clean.back() == '"' || clean.back() == '\'')) {
+        clean.pop_back();
+    }
+    if (clean.empty()) return "";
+
+    // 1. 点号表示法: xxx.yyy -> xxx/yyy.tzd
+    // 只有当没有 / 且没有 \ 时，如果存在 . 且不以 .tzd 结尾，才将 . 替换为 / 并追加 .tzd
+    std::string processedPath = clean;
+    if (clean.find('/') == std::string::npos && clean.find('\\') == std::string::npos) {
+        if (clean.size() >= 4 && clean.substr(clean.size() - 4) == ".tzd") {
+            // 已有 .tzd 后缀，例如 "DateTime.tzd"
+        } else if (clean.find('.') != std::string::npos) {
+            std::replace(processedPath.begin(), processedPath.end(), '.', '/');
+            processedPath += ".tzd";
+        }
     }
 
-    // 2. 尝试相对于当前脚本的路径
+    // 统一转换为正斜杠便于跨平台路径拼接
+    std::string normalizedPath = processedPath;
+    std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+
+    // 候选文件名列表：优先原名，若未以 .tzd 结尾则尝试追加 .tzd
+    std::vector<std::string> pathCandidates;
+    pathCandidates.push_back(normalizedPath);
+    if (normalizedPath.size() < 4 || normalizedPath.substr(normalizedPath.size() - 4) != ".tzd") {
+        pathCandidates.push_back(normalizedPath + ".tzd");
+    }
+
+    // 收集所有候选查找根目录
+    std::vector<fs::path> candidateRoots;
+
+    // A. 尝试相对于当前脚本的路径
     if (!m_scriptPathStack.empty()) {
-        fs::path currentDir = m_scriptPathStack.back().parent_path();
-        target = currentDir / processedPath;
-        // 【修改】：使用 weakly_canonical 确保路径规范化（消除 .. 和斜杠差异）
-        if (fs::exists(target)) return fs::weakly_canonical(fs::absolute(target)).string();
+        try {
+            candidateRoots.push_back(m_scriptPathStack.back().parent_path());
+        } catch (...) {}
     }
 
-    // 3. 遍历用户定义的包含路径
+    // B. 遍历已注册的标准库包含路径 (m_includePaths)
     for (const auto& includeDir : m_includePaths) {
-        target = fs::path(includeDir) / processedPath;
-        if (fs::exists(target)) return fs::weakly_canonical(fs::absolute(target)).string();
+        if (!includeDir.empty()) {
+            candidateRoots.push_back(fs::path(includeDir));
+        }
     }
 
-    // 4. 尝试作为绝对路径或直接相对路径
-    target = fs::path(processedPath);
-    if (fs::exists(target)) return fs::weakly_canonical(fs::absolute(target)).string();
+    // C. 当前工作目录
+    try {
+        candidateRoots.push_back(fs::current_path());
+    } catch (...) {}
+
+    // D. 可执行文件所在目录及其 stdlib 子目录（确保在他人机器上随处可运行）
+#ifdef _WIN32
+    wchar_t exePathBuf[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePathBuf, MAX_PATH)) {
+        fs::path exeDir = fs::path(exePathBuf).parent_path();
+        candidateRoots.push_back(exeDir / "stdlib");
+        candidateRoots.push_back(exeDir / "stdlib" / "stdlib");
+        candidateRoots.push_back(exeDir.parent_path() / "stdlib");
+        candidateRoots.push_back(exeDir.parent_path().parent_path() / "stdlib");
+        candidateRoots.push_back(exeDir);
+    }
+#endif
+
+    // E. 环境变量 TZD_STDLIB, TZD_HOME
+    if (const char* env = std::getenv("TZD_STDLIB")) {
+        try { candidateRoots.push_back(fs::path(env)); } catch (...) {}
+    }
+    if (const char* env = std::getenv("TZD_HOME")) {
+        try {
+            candidateRoots.push_back(fs::path(env) / "stdlib");
+            candidateRoots.push_back(fs::path(env));
+        } catch (...) {}
+    }
+
+    // 2. 先测试直接绝对路径 / 直接相对路径
+    for (const auto& cand : pathCandidates) {
+        try {
+            fs::path p(cand);
+            if (fs::exists(p) && !fs::is_directory(p)) {
+                return normalizeCanonicalPath(p);
+            }
+        } catch (...) {}
+    }
+
+    // 3. 遍历所有根目录与候选路径的组合
+    for (const auto& root : candidateRoots) {
+        for (const auto& cand : pathCandidates) {
+            try {
+                fs::path target = root / cand;
+                if (fs::exists(target) && !fs::is_directory(target)) {
+                    return normalizeCanonicalPath(target);
+                }
+            } catch (...) {}
+        }
+    }
+
+    // 4. 递归查找兜底：若用户直接写了模块文件名（如 "DateTime.tzd" 或 "DateTime"），
+    // 优先在标准库目录 (m_includePaths) 中递归查找，且严格跳过 dist / bin / x64 等构建目录！
+    std::string leafName = normalizedPath;
+    size_t lastSlash = leafName.find_last_of('/');
+    if (lastSlash != std::string::npos) {
+        leafName = leafName.substr(lastSlash + 1);
+    }
+    std::vector<std::string> leafCandidates;
+    leafCandidates.push_back(leafName);
+    if (leafName.size() < 4 || leafName.substr(leafName.size() - 4) != ".tzd") {
+        leafCandidates.push_back(leafName + ".tzd");
+    }
+
+    // 优先搜标准库目录
+    std::vector<fs::path> recursiveRoots;
+    for (const auto& includeDir : m_includePaths) {
+        if (!includeDir.empty()) recursiveRoots.push_back(fs::path(includeDir));
+    }
+    for (const auto& r : candidateRoots) {
+        recursiveRoots.push_back(r);
+    }
+
+    for (const auto& root : recursiveRoots) {
+        try {
+            if (fs::exists(root) && fs::is_directory(root)) {
+                for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied);
+                     it != fs::recursive_directory_iterator(); ++it) {
+                    if (it->is_directory()) {
+                        std::string dirName = it->path().filename().string();
+                        // 忽略编译构建产物与临时目录，防止命中 dist/TzdTools/stdlib 中的拷贝副本
+                        if (dirName == "dist" || dirName == "bin" || dirName == "x64" ||
+                            dirName == "Debug" || dirName == "Release" || dirName == "build" ||
+                            dirName == ".git" || dirName == ".vs" || dirName == "node_modules") {
+                            it.disable_recursion_pending();
+                            continue;
+                        }
+                    }
+                    if (it->is_regular_file()) {
+                        std::string fname = it->path().filename().string();
+                        for (const auto& leafCand : leafCandidates) {
+                            if (_stricmp(fname.c_str(), leafCand.c_str()) == 0) {
+                                return normalizeCanonicalPath(it->path());
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {}
+    }
 
     return ""; // 未找到
 }
