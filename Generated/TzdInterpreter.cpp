@@ -4146,7 +4146,8 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     // --- 分支 C: JIT 机器码执行 (如果已生成机器码且未被禁用，最高优先级直接执行) ---
     // Note: m_noJit blocks EAGER compilation, but if jittedPtr is already set
     // (by tryJitCompile/bytecode JIT bridge), we should use it regardless.
-    bool hasDebugActivity = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasAnyBreakpoints());
+    int funcEndLine = (func.funcBody && func.funcBody->getStop()) ? (int)func.funcBody->getStop()->getLine() : -1;
+    bool hasDebugActivity = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(func.sourceFile, func.line, funcEndLine));
     if (func.jittedPtr && (!TzdDebugger::g_DebugActive || (TzdJitEngine::isJitDebugEnabled() && !hasDebugActivity)))
     {
         return callScriptFunction(func.name, func.params, func.paramTypes,
@@ -4301,7 +4302,7 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string &name,
 
     // --- 分支 A: JIT 机器码执行 (调试器激活时回退到解释执行，除非启用JIT调试且该函数内无断点且未处于单步状态) ---
     int endLine = (funcBody && funcBody->getStop()) ? (int)funcBody->getStop()->getLine() : -1;
-    bool hasBpInFunc = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasAnyBreakpoints() || TzdDebugger::hasBreakpointsInFunction(sourceFile, line, endLine));
+    bool hasBpInFunc = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(sourceFile, line, endLine));
 
     if (jittedPtr && (!TzdDebugger::g_DebugActive || (TzdJitEngine::isJitDebugEnabled() && !hasBpInFunc)))
     {

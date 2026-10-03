@@ -103,22 +103,24 @@ bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLin
     std::transform(normFile.begin(), normFile.end(), normFile.begin(), ::tolower);
 
     for (const auto& bp : g_DebugState.breakpoints) {
-        bool fileMatch = bp.file.empty() || normFile.empty() || normFile == "memory";
-        if (!fileMatch) {
-            std::string bpNorm = bp.file;
-            std::replace(bpNorm.begin(), bpNorm.end(), '\\', '/');
-            std::transform(bpNorm.begin(), bpNorm.end(), bpNorm.begin(), ::tolower);
-            if (normFile.find(bpNorm) != std::string::npos || bpNorm.find(normFile) != std::string::npos) {
-                fileMatch = true;
-            } else {
-                try {
-                    std::string fn1 = fs::path(normFile).filename().string();
-                    std::string fn2 = fs::path(bpNorm).filename().string();
-                    if (!fn1.empty() && fn1 == fn2) {
-                        fileMatch = true;
-                    }
-                } catch (...) {}
-            }
+        if (bp.file.empty()) continue;
+        std::string bpNorm = bp.file;
+        std::replace(bpNorm.begin(), bpNorm.end(), '\\', '/');
+        std::transform(bpNorm.begin(), bpNorm.end(), bpNorm.begin(), ::tolower);
+
+        bool fileMatch = false;
+        if (normFile == "memory") {
+            fileMatch = (bpNorm == "memory");
+        } else if (normFile == bpNorm || normFile.find(bpNorm) != std::string::npos || bpNorm.find(normFile) != std::string::npos) {
+            fileMatch = true;
+        } else {
+            try {
+                std::string fn1 = fs::path(normFile).filename().string();
+                std::string fn2 = fs::path(bpNorm).filename().string();
+                if (!fn1.empty() && fn1 == fn2) {
+                    fileMatch = true;
+                }
+            } catch (...) {}
         }
         if (fileMatch) {
             if (endLine > 0) {
