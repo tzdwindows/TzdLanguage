@@ -12,8 +12,8 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-TAG = "v0.2.9"
-RELEASE_NAME = "TzdTools v0.2.9 - PyTorch 真实深度模型训练自检、单卡与多卡 DataParallel 训练推理闭环及 JIT 零泄漏优化"
+TAG = "v0.2.10"
+RELEASE_NAME = "TzdTools v0.2.10 - VSCode 插件全面升级、内置 94+ 本地函数注解、精准定义跳转与全局默认 JIT 极速引擎"
 REPO_OWNER = "tzdwindows"
 REPO_NAME = "TzdLanguage"
 PROXY = "http://127.0.0.1:7897"
@@ -65,42 +65,34 @@ except urllib.error.HTTPError as e:
     if e.code == 404:
         print(f"  -> Release {TAG} does not exist yet. Creating...")
         create_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
-        body_text = """## 🚀 TzdTools v0.2.9 发布说明
+        body_text = """## 🚀 TzdTools v0.2.10 发布说明
 
-### 💎 核心亮点与突破性进展
+### 💎 核心亮点与重大更新
 
-1. **JIT 编译引擎与解释器训练循环内存泄漏彻底根除 (Zero Memory Leaks)**：
-   - 彻底修复 JIT 方法调用与函数调用中未对参数插槽执行析构释放的内存泄漏问题（引入就地析构与就地构造初始化）。
-   - 修复函数栈退出时全局 JIT 内存及垃圾收集器未被清理的问题，并在 `torch_gc()` 中深度挂接内存清空。
-   - 100 次完整反向传播训练循环张量驻留数从数百个暴增彻底稳定为 **绝对零泄漏**（初始 4 张量 -> 100 轮后垃圾回收仍为精确 4 张量）。
+1. **VS Code 官方扩展 `tzdlang` (v0.2.19) 体验飞跃**：
+   - **内置 94+ 本地原生函数完整中文注解与签名文档**：在编辑器中悬停（Hover）或自动补全任何内置本地方法（如 `toString`, `print`, `input`, `len`, `range`, `abs`, `sqrt`, `time_now_sec` 等）时，自动呈现包含详细用途描述、完整类型签名、参数说明、返回值与可运行代码示例的丰富 Markdown 文档。
+   - **修复本地函数跳转定义误入类方法**：修复在导入 `import "time/DateTime.tzd"` 等模块后，自由调用的原生函数 `toString` 被误跳转到类方法 `fun toString()` 的问题。在 LSP 作用域解析中增加了大括号层级隔离 (`braceDepth === 0`)，禁止将类内方法收录为全局函数，并在跳转前校验本地内置函数。
+   - **全量关键字自动补全与代码块片段**：修复输入 `i` 无法补全 `if` 的缺陷，全面补全 `if`, `else`, `while`, `for`, `try`, `catch`, `throw`, `switch` 等关键字及带光标占位符的语句模板片段。
+   - **全面修复默认 JIT 极速模式**：修复此前 VS Code 调试适配器因启动参数判定缺陷在未配置 `launch.json` 时误退化为 `--noJit` 纯树解释模式的严重性能问题，保证 F5 调试与普通运行均默认以 JIT 极速执行。
 
-2. **完整 7 大真实深度模型预飞行自检测试套件 (Pre-Flight Self-Check Suite)**：
-   - 包含 Autograd 梯度精度、Deep MLP (XOR 非线性逼近收敛)、CNN 视觉管线 (Conv2d + BatchNorm + Pooling)、时序循环网络 LSTM (多步 BPTT 反向传播)、Transformer 多头自注意力 MultiheadAttention、模型检查点 StateDict 保存/恢复 100% 位精确一致性、100 次迭代张量生命周期稳定性自检。全部 100% 通过。
+2. **REPL 控制台与底层控制台模式修复**：
+   - 修复在交互终端输入 `import` 语句或调用 `input()` 时的无响应与阻塞问题。
+   - 支持 Windows 控制台 Unicode 与中文输入法正常录入。
+   - 调试器 DAP 协议支持端口冲突智能自动重试与多进程会话隔离。
 
-3. **单卡 (cuda:0, NVIDIA P106-090) 真实模型训练到底与推理验证**：
-   - 全硬件探测与 CUDA 显存状态监控。
-   - 深度网络完整参数与缓存自动迁移至 GPU (`.to("cuda:0")`)。
-   - 真实非线性回归任务在 GPU 上训练 70 轮，Loss 从 3.738 收敛至 0.0087（收敛精度达到 0.01 级别），GPU 推理预测与目标值精准吻合。
-
-4. **多卡 / 分布式 DataParallel 训练与跨卡高吞吐并行推理 (Parallel Inference)**：
-   - `DataParallel` 支持多设备分片切分 (`scatter`)、多路前向计算与聚合输出 (`gather`)。
-   - 集合通信 `AllReduce` (mean / sum) 与分布式数据并行 `DistributedDataParallel` (DDP) 跨设备梯度同步与训练收敛。
-   - 提供 `parallelInference(model, input, devices)` 接口，跨多卡/多设备高吞吐并行推理，批处理自动按设备切分还原。
-
-5. **全套标准库与 VSCode 插件同步升级**：
-   - 同步升级官方 VSCode 插件 `tzdlang` 至 **v0.2.18**。
-   - 发布完整的 GPU 版与 CPU 版 Windows 安装程序。
+3. **第二轮高抗优化基准（Round-2 Kernels）全线通过**：
+   - 覆盖数值模拟循环（Monte Carlo）、字符串增长、哈希表、对象分配与 Lomuto 内存重排快排等抗优化场景，JIT 全套在 113ms 内急速通过。
 
 ---
 
 ### 📦 资产列表 (Release Assets)
-- **TzdTools_Setup_v0.2.9.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 官方 GPU 完整安装包 (1.33 GB)
-- **TzdTools_Setup_v0.2.9_CPU.exe**：轻量级 CPU 原生运行时安装包 (56 MB)
-- **tzdlang-0.2.18.vsix**：VSCode 官方语言、语法高亮、LSP 与 DAP 交互断点调试插件
+- **TzdTools_Setup_v0.2.10.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 官方完整安装包
+- **TzdTools_Setup_v0.2.10_CPU.exe**：轻量级 CPU 原生运行时安装包
+- **tzdlang-0.2.19.vsix**：升级版 VS Code 官方语言、语法高亮、LSP 与 DAP 交互断点调试插件
 """
         payload = json.dumps({
             "tag_name": TAG,
-            "target_commitish": "main",
+            "target_commitish": "master",
             "name": RELEASE_NAME,
             "body": body_text,
             "draft": False,
@@ -120,18 +112,18 @@ existing_assets = {a["name"]: a["id"] for a in release.get("assets", [])}
 
 assets = [
     {
-        "name": "tzdlang-0.2.18.vsix",
-        "path": os.path.join(REPO_ROOT, "vscodePlugin", "tzdlang", "tzdlang-0.2.18.vsix"),
+        "name": "tzdlang-0.2.19.vsix",
+        "path": os.path.join(REPO_ROOT, "dist", "tzdlang-0.2.19.vsix"),
         "type": "application/octet-stream"
     },
     {
-        "name": "TzdTools_Setup_v0.2.9_CPU.exe",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.9_CPU.exe"),
+        "name": "TzdTools_Setup_v0.2.10_CPU.exe",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.10_CPU.exe"),
         "type": "application/vnd.microsoft.portable-executable"
     },
     {
-        "name": "TzdTools_Setup_v0.2.9.exe",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.9.exe"),
+        "name": "TzdTools_Setup_v0.2.10.exe",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.10.exe"),
         "type": "application/vnd.microsoft.portable-executable"
     }
 ]

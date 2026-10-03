@@ -545,5 +545,1394 @@
     "writeLines",
     "zeros",
     "zip"
-  ]
+  ],
+  "docs": {
+    "print": {
+      "signature": "print(...args: any) -> void",
+      "summary": "向标准输出（控制台）打印一个或多个参数，不自动追加换行。",
+      "params": [
+        {
+          "name": "args",
+          "type": "...any",
+          "desc": "要输出的变量、数值或表达式"
+        }
+      ],
+      "returns": "void",
+      "example": "print(\"Hello, \");\nprint(\"World!\\n\");"
+    },
+    "println": {
+      "signature": "println(...args: any) -> void",
+      "summary": "向标准输出（控制台）打印一个或多个参数，并在末尾追加换行符。",
+      "params": [
+        {
+          "name": "args",
+          "type": "...any",
+          "desc": "要输出的变量、数值或表达式"
+        }
+      ],
+      "returns": "void",
+      "example": "println(\"Current count: \" + toString(count));"
+    },
+    "input": {
+      "signature": "input(prompt?: string) -> string",
+      "summary": "在控制台输出可选的提示文本，并阻塞等待用户从键盘输入一行字符串（支持 Unicode/中文输入）。",
+      "params": [
+        {
+          "name": "prompt",
+          "type": "string?",
+          "desc": "可选的交互提示信息文本"
+        }
+      ],
+      "returns": "string 包含用户键入内容的一整行文本（去除尾部换行）",
+      "example": "var name = input(\"请输入你的名字: \");\nprint(\"你好, \" + name + \"\\n\");"
+    },
+    "len": {
+      "signature": "len(target: string | array | map) -> int",
+      "summary": "计算并返回目标对象的长度（字符串字符数、数组元素总数、或字典键值对总数）。",
+      "params": [
+        {
+          "name": "target",
+          "type": "string | array | map",
+          "desc": "目标容器或字符串"
+        }
+      ],
+      "returns": "int 元素数量或字符长度",
+      "example": "var arr = [1, 2, 3, 4];\nprint(len(arr)); // 4\nprint(len(\"hello\")); // 5"
+    },
+    "range": {
+      "signature": "range(start: int, stop: int, step: int = 1) -> array",
+      "summary": "生成一个从 start 到 stop 步长为 step 的连续数值数组。JIT 针对此函数内置了 AVX2 内存流式直写和内存池零拷贝极致加速。",
+      "params": [
+        {
+          "name": "start",
+          "type": "int",
+          "desc": "序列起始数值（包含）"
+        },
+        {
+          "name": "stop",
+          "type": "int",
+          "desc": "序列终止边界数值（不包含）"
+        },
+        {
+          "name": "step",
+          "type": "int?",
+          "desc": "序列增长步长，默认为 1，可为负数"
+        }
+      ],
+      "returns": "array 数值数组",
+      "example": "var r = range(0, 10, 2); // [0, 2, 4, 6, 8]\nvar primes = range(0, 1000000, 1);"
+    },
+    "type": {
+      "signature": "type(val: any) -> string",
+      "summary": "返回传入变量或表达式在运行时的底层类型名称字符串。",
+      "params": [
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待检查的值"
+        }
+      ],
+      "returns": "string 类型名称，如 \"int\", \"float\", \"string\", \"bool\", \"array\", \"map\", \"null\", \"class\" 等",
+      "example": "print(type(42)); // \"int\"\nprint(type([1, 2])); // \"array\""
+    },
+    "assert": {
+      "signature": "assert(condition: bool, message?: string) -> void",
+      "summary": "断言传入的条件为真。如果条件为假，立即中断程序并抛出携带提示信息的断言异常。",
+      "params": [
+        {
+          "name": "condition",
+          "type": "bool",
+          "desc": "必须满足的布尔条件"
+        },
+        {
+          "name": "message",
+          "type": "string?",
+          "desc": "断言失败时输出的提示文本"
+        }
+      ],
+      "returns": "void",
+      "example": "assert(len(arr) > 0, \"数组不能为空！\");"
+    },
+    "assert_t": {
+      "signature": "assert_t(condition: bool, message?: string) -> void",
+      "summary": "断言测试辅助函数。条件为假时抛出运行时断言失败异常。",
+      "params": [
+        {
+          "name": "condition",
+          "type": "bool",
+          "desc": "测试条件"
+        },
+        {
+          "name": "message",
+          "type": "string?",
+          "desc": "失败信息"
+        }
+      ],
+      "returns": "void",
+      "example": "assert_t(x == 100, \"x 必须等于 100\");"
+    },
+    "clock": {
+      "signature": "clock() -> float",
+      "summary": "返回当前高精度硬件单调时钟时间戳（毫秒），常用于微基准性能测试与算法耗时统计。",
+      "params": [],
+      "returns": "float 毫秒级浮点时间戳",
+      "example": "var t0 = clock();\n// 执行计算...\nprint(\"耗时: \" + toString(clock() - t0) + \" ms\");"
+    },
+    "sleep": {
+      "signature": "sleep(ms: int) -> void",
+      "summary": "阻塞挂起当前执行线程指定的毫秒数。",
+      "params": [
+        {
+          "name": "ms",
+          "type": "int",
+          "desc": "休眠的毫秒时间"
+        }
+      ],
+      "returns": "void",
+      "example": "sleep(1000); // 暂停 1 秒"
+    },
+    "exit": {
+      "signature": "exit(code: int = 0) -> void",
+      "summary": "终止当前进程运行并向操作系统返回退出码。",
+      "params": [
+        {
+          "name": "code",
+          "type": "int?",
+          "desc": "进程退出码，默认为 0（成功）"
+        }
+      ],
+      "returns": "void",
+      "example": "if (hasError) exit(1);"
+    },
+    "toString": {
+      "signature": "toString(val: any) -> string",
+      "summary": "将任意类型的值（整数、浮点数、布尔值、数组、字典或面向对象类实例）转换为字符串表示形式。",
+      "params": [
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待转换的目标值"
+        }
+      ],
+      "returns": "string 转换得到的字符串",
+      "example": "var s = toString(3.14159);\nprint(\"PI=\" + s);"
+    },
+    "toInt": {
+      "signature": "toInt(val: any) -> int",
+      "summary": "将字符串、布尔值或浮点数转换为 64 位整型（浮点数直接截断小数部分）。",
+      "params": [
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待转换的值"
+        }
+      ],
+      "returns": "int 整数值",
+      "example": "var i = toInt(\"12345\"); // 12345\nvar f = toInt(9.99); // 9"
+    },
+    "toFloat": {
+      "signature": "toFloat(val: any) -> float",
+      "summary": "将整型、布尔值或字符串转换为 64 位双精度浮点数 (double)。",
+      "params": [
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待转换的值"
+        }
+      ],
+      "returns": "float 浮点数值",
+      "example": "var d = toFloat(\"3.14\");"
+    },
+    "toBool": {
+      "signature": "toBool(val: any) -> bool",
+      "summary": "将值转换为布尔类型 (true / false)。",
+      "params": [
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待转换的值"
+        }
+      ],
+      "returns": "bool 布尔值",
+      "example": "var b = toBool(1); // true"
+    },
+    "toBinary": {
+      "signature": "toBinary(num: int) -> string",
+      "summary": "将整数转换为二进制表示的字符串。",
+      "params": [
+        {
+          "name": "num",
+          "type": "int",
+          "desc": "目标整数"
+        }
+      ],
+      "returns": "string 二进制文本 (例如 \"1010\")",
+      "example": "print(toBinary(10)); // \"1010\""
+    },
+    "toHex": {
+      "signature": "toHex(num: int) -> string",
+      "summary": "将整数转换为十六进制大写/小写字符串。",
+      "params": [
+        {
+          "name": "num",
+          "type": "int",
+          "desc": "目标整数"
+        }
+      ],
+      "returns": "string 十六进制文本 (例如 \"ff\")",
+      "example": "print(toHex(255)); // \"ff\""
+    },
+    "push": {
+      "signature": "push(arr: array, val: any) -> void",
+      "summary": "向数组末尾压入一个新元素。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        },
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待添加的元素"
+        }
+      ],
+      "returns": "void",
+      "example": "var arr = [];\npush(arr, \"apple\");\npush(arr, \"banana\");"
+    },
+    "pop": {
+      "signature": "pop(arr: array) -> any",
+      "summary": "弹出并移除数组尾部的最后一个元素并返回该元素。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        }
+      ],
+      "returns": "any 被弹出的末尾元素",
+      "example": "var last = pop(arr);"
+    },
+    "shift": {
+      "signature": "shift(arr: array) -> any",
+      "summary": "移除并返回数组的第一个元素，其后所有元素向前移动一位。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        }
+      ],
+      "returns": "any 被移除的首部元素",
+      "example": "var first = shift(arr);"
+    },
+    "unshift": {
+      "signature": "unshift(arr: array, val: any) -> void",
+      "summary": "向数组最前面插入一个新元素。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        },
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待插入的元素"
+        }
+      ],
+      "returns": "void",
+      "example": "unshift(arr, 0);"
+    },
+    "slice": {
+      "signature": "slice(arr: array, start: int, end?: int) -> array",
+      "summary": "截取数组在指定索引范围 [start, end) 内的浅拷贝新数组切片。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "源数组"
+        },
+        {
+          "name": "start",
+          "type": "int",
+          "desc": "起始索引（包含）"
+        },
+        {
+          "name": "end",
+          "type": "int?",
+          "desc": "结束索引（不包含，留空则截取到末尾）"
+        }
+      ],
+      "returns": "array 新切片数组",
+      "example": "var sub = slice([10, 20, 30, 40], 1, 3); // [20, 30]"
+    },
+    "concat": {
+      "signature": "concat(arr1: array, arr2: array) -> array",
+      "summary": "拼接连接两个数组并返回组合后的新数组。",
+      "params": [
+        {
+          "name": "arr1",
+          "type": "array",
+          "desc": "第一个数组"
+        },
+        {
+          "name": "arr2",
+          "type": "array",
+          "desc": "第二个数组"
+        }
+      ],
+      "returns": "array 拼接后的新数组",
+      "example": "var full = concat([1, 2], [3, 4]); // [1, 2, 3, 4]"
+    },
+    "sort": {
+      "signature": "sort(arr: array, comparator?: function) -> array",
+      "summary": "对数组进行排序。可传入自定义比较函数 `fun(a, b)`。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "待排序的数组"
+        },
+        {
+          "name": "comparator",
+          "type": "function?",
+          "desc": "可选的自定义比较函数，返回负数/零/正数"
+        }
+      ],
+      "returns": "array 排序后的数组",
+      "example": "sort(arr);"
+    },
+    "reverse": {
+      "signature": "reverse(arr: array) -> array",
+      "summary": "就地翻转数组元素的排列顺序。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        }
+      ],
+      "returns": "array 翻转后的数组",
+      "example": "reverse(arr);"
+    },
+    "indexOf": {
+      "signature": "indexOf(target: array | string, val: any) -> int",
+      "summary": "查找元素或子串在目标容器中首次出现的索引位置，若未找到则返回 -1。",
+      "params": [
+        {
+          "name": "target",
+          "type": "array | string",
+          "desc": "目标数组或字符串"
+        },
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "查找的目标元素或子串"
+        }
+      ],
+      "returns": "int 找到的下标索引或 -1",
+      "example": "var idx = indexOf([\"a\", \"b\", \"c\"], \"b\"); // 1"
+    },
+    "contains": {
+      "signature": "contains(target: array | map | string, val: any) -> bool",
+      "summary": "检查目标容器（数组、字典、字符串）是否包含指定的元素、键或子串。",
+      "params": [
+        {
+          "name": "target",
+          "type": "array | map | string",
+          "desc": "目标容器"
+        },
+        {
+          "name": "val",
+          "type": "any",
+          "desc": "待检索的目标项"
+        }
+      ],
+      "returns": "bool 存在则返回 true，否则返回 false",
+      "example": "if (contains(arr, 42)) print(\"Found!\");"
+    },
+    "join": {
+      "signature": "join(arr: array, separator: string = \",\") -> string",
+      "summary": "将数组中的所有元素转换为字符串并用指定的分隔符连接为单个字符串。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "目标数组"
+        },
+        {
+          "name": "separator",
+          "type": "string?",
+          "desc": "分隔符字符串，默认为逗号"
+        }
+      ],
+      "returns": "string 连接后的字符串",
+      "example": "var s = join([\"A\", \"B\", \"C\"], \" -> \"); // \"A -> B -> C\""
+    },
+    "sum": {
+      "signature": "sum(arr: array) -> float",
+      "summary": "计算并返回数值数组中所有元素的代数累加和。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "包含数值的数组"
+        }
+      ],
+      "returns": "float 总和",
+      "example": "var total = sum([1, 2, 3, 4, 5]); // 15"
+    },
+    "avg": {
+      "signature": "avg(arr: array) -> float",
+      "summary": "计算并返回数值数组中所有元素的算术平均值。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array",
+          "desc": "包含数值的数组"
+        }
+      ],
+      "returns": "float 平均值",
+      "example": "var m = avg([10, 20, 30]); // 20.0"
+    },
+    "min": {
+      "signature": "min(arr: array | ...numbers) -> float",
+      "summary": "计算并返回数组或传入参数序列中的最小值。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array | ...numbers",
+          "desc": "数组或数值列表"
+        }
+      ],
+      "returns": "float 最小值",
+      "example": "var v = min(10, 20, 5); // 5"
+    },
+    "max": {
+      "signature": "max(arr: array | ...numbers) -> float",
+      "summary": "计算并返回数组或传入参数序列中的最大值。",
+      "params": [
+        {
+          "name": "arr",
+          "type": "array | ...numbers",
+          "desc": "数组或数值列表"
+        }
+      ],
+      "returns": "float 最大值",
+      "example": "var v = max(10, 20, 5); // 20"
+    },
+    "mapKeys": {
+      "signature": "mapKeys(m: map) -> array",
+      "summary": "获取字典对象包含的所有键并以数组形式返回。",
+      "params": [
+        {
+          "name": "m",
+          "type": "map",
+          "desc": "目标字典"
+        }
+      ],
+      "returns": "array 键列表字符串数组",
+      "example": "var keys = mapKeys({\"a\": 1, \"b\": 2}); // [\"a\", \"b\"]"
+    },
+    "mapValues": {
+      "signature": "mapValues(m: map) -> array",
+      "summary": "获取字典对象包含的所有值并以数组形式返回。",
+      "params": [
+        {
+          "name": "m",
+          "type": "map",
+          "desc": "目标字典"
+        }
+      ],
+      "returns": "array 值列表数组",
+      "example": "var vals = mapValues({\"a\": 1, \"b\": 2}); // [1, 2]"
+    },
+    "mapEntries": {
+      "signature": "mapEntries(m: map) -> array",
+      "summary": "获取字典的所有键值对条目，以 [[key, val], ...] 数组形式返回。",
+      "params": [
+        {
+          "name": "m",
+          "type": "map",
+          "desc": "目标字典"
+        }
+      ],
+      "returns": "array 键值对数组",
+      "example": "for (entry in mapEntries(dict)) { ... }"
+    },
+    "mapHas": {
+      "signature": "mapHas(m: map, key: string) -> bool",
+      "summary": "判断字典中是否存在指定的键。",
+      "params": [
+        {
+          "name": "m",
+          "type": "map",
+          "desc": "目标字典"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "desc": "待检查的键名"
+        }
+      ],
+      "returns": "bool 存在返回 true，否则返回 false",
+      "example": "if (mapHas(m, \"id\")) { ... }"
+    },
+    "mapGet": {
+      "signature": "mapGet(m: map, key: string, defaultValue?: any) -> any",
+      "summary": "安全获取字典中指定键的值。若键不存在则返回设定的默认值（不会抛出越界异常）。",
+      "params": [
+        {
+          "name": "m",
+          "type": "map",
+          "desc": "目标字典"
+        },
+        {
+          "name": "key",
+          "type": "string",
+          "desc": "要查找的键名"
+        },
+        {
+          "name": "defaultValue",
+          "type": "any?",
+          "desc": "不存在时的默认返回值"
+        }
+      ],
+      "returns": "any 键对应的值或默认值",
+      "example": "var port = mapGet(config, \"port\", 8080);"
+    },
+    "mapMerge": {
+      "signature": "mapMerge(m1: map, m2: map) -> map",
+      "summary": "将 m2 的所有键值对合并到 m1 中并返回新字典（相同键覆盖）。",
+      "params": [
+        {
+          "name": "m1",
+          "type": "map",
+          "desc": "基础字典"
+        },
+        {
+          "name": "m2",
+          "type": "map",
+          "desc": "覆盖字典"
+        }
+      ],
+      "returns": "map 合并后的新字典",
+      "example": "var merged = mapMerge(baseCfg, customCfg);"
+    },
+    "abs": {
+      "signature": "abs(x: number) -> number",
+      "summary": "计算并返回数值的绝对值。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "输入实数"
+        }
+      ],
+      "returns": "number 绝对值",
+      "example": "var a = abs(-42); // 42"
+    },
+    "sqrt": {
+      "signature": "sqrt(x: number) -> float",
+      "summary": "计算非负实数的算术平方根。在 JIT 编译模式下自动内联展开为 CPU 原生 `sqrtsd` 指令，零调用开销。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "非负实数"
+        }
+      ],
+      "returns": "float 平方根",
+      "example": "var hypot = sqrt(dx * dx + dy * dy);"
+    },
+    "cbrt": {
+      "signature": "cbrt(x: number) -> float",
+      "summary": "计算实数的立方根。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "输入实数"
+        }
+      ],
+      "returns": "float 立方根",
+      "example": "var c = cbrt(27); // 3.0"
+    },
+    "pow": {
+      "signature": "pow(base: number, exp: number) -> float",
+      "summary": "计算 base 的 exp 次幂（base^exp）。",
+      "params": [
+        {
+          "name": "base",
+          "type": "number",
+          "desc": "底数"
+        },
+        {
+          "name": "exp",
+          "type": "number",
+          "desc": "指数"
+        }
+      ],
+      "returns": "float 幂运算结果",
+      "example": "var p = pow(2, 10); // 1024.0"
+    },
+    "floor": {
+      "signature": "floor(x: number) -> int",
+      "summary": "向下取整，返回小于或等于给定数值的最大整数。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "浮点数"
+        }
+      ],
+      "returns": "int 整数结果",
+      "example": "var f = floor(3.9); // 3"
+    },
+    "ceil": {
+      "signature": "ceil(x: number) -> int",
+      "summary": "向上取整，返回大于或等于给定数值的最小整数。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "浮点数"
+        }
+      ],
+      "returns": "int 整数结果",
+      "example": "var c = ceil(3.1); // 4"
+    },
+    "round": {
+      "signature": "round(x: number) -> int",
+      "summary": "四舍五入到最接近的整数。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "浮点数"
+        }
+      ],
+      "returns": "int 整数结果",
+      "example": "var r = round(3.5); // 4"
+    },
+    "clamp": {
+      "signature": "clamp(val: number, minVal: number, maxVal: number) -> number",
+      "summary": "将数值限制在指定的区间范围 [minVal, maxVal] 内。",
+      "params": [
+        {
+          "name": "val",
+          "type": "number",
+          "desc": "待截断的数值"
+        },
+        {
+          "name": "minVal",
+          "type": "number",
+          "desc": "区间下界"
+        },
+        {
+          "name": "maxVal",
+          "type": "number",
+          "desc": "区间上界"
+        }
+      ],
+      "returns": "number 截断后的数值",
+      "example": "var clamped = clamp(speed, 0, 100);"
+    },
+    "lerp": {
+      "signature": "lerp(a: number, b: number, t: float) -> float",
+      "summary": "在两个数值 a 和 b 之间进行线性插值运算 (a + (b - a) * t)。",
+      "params": [
+        {
+          "name": "a",
+          "type": "number",
+          "desc": "起始值"
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "desc": "目标值"
+        },
+        {
+          "name": "t",
+          "type": "float",
+          "desc": "插值因子 [0.0, 1.0]"
+        }
+      ],
+      "returns": "float 插值结果",
+      "example": "var cur = lerp(0.0, 100.0, 0.5); // 50.0"
+    },
+    "sin": {
+      "signature": "sin(x: number) -> float",
+      "summary": "计算实数 x 的正弦函数值（弧度制）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "弧度数值"
+        }
+      ],
+      "returns": "float 正弦值",
+      "example": "var s = sin(PI / 2); // 1.0"
+    },
+    "cos": {
+      "signature": "cos(x: number) -> float",
+      "summary": "计算实数 x 的余弦函数值（弧度制）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "弧度数值"
+        }
+      ],
+      "returns": "float 余弦值",
+      "example": "var c = cos(0); // 1.0"
+    },
+    "tan": {
+      "signature": "tan(x: number) -> float",
+      "summary": "计算实数 x 的正切函数值（弧度制）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "弧度数值"
+        }
+      ],
+      "returns": "float 正切值",
+      "example": "var t = tan(PI / 4); // 1.0"
+    },
+    "asin": {
+      "signature": "asin(x: number) -> float",
+      "summary": "计算反正弦值（结果为弧度）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "输入范围 [-1, 1]"
+        }
+      ],
+      "returns": "float 弧度值",
+      "example": "var rad = asin(1.0);"
+    },
+    "acos": {
+      "signature": "acos(x: number) -> float",
+      "summary": "计算反余弦值（结果为弧度）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "输入范围 [-1, 1]"
+        }
+      ],
+      "returns": "float 弧度值",
+      "example": "var rad = acos(0.0);"
+    },
+    "atan": {
+      "signature": "atan(x: number) -> float",
+      "summary": "计算反正切值（结果为弧度）。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "实数输入"
+        }
+      ],
+      "returns": "float 弧度值",
+      "example": "var rad = atan(1.0);"
+    },
+    "atan2": {
+      "signature": "atan2(y: number, x: number) -> float",
+      "summary": "计算平面点 (x, y) 对应的极角弧度。",
+      "params": [
+        {
+          "name": "y",
+          "type": "number",
+          "desc": "纵坐标"
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "横坐标"
+        }
+      ],
+      "returns": "float 极角弧度 [-PI, PI]",
+      "example": "var angle = atan2(dy, dx);"
+    },
+    "log": {
+      "signature": "log(x: number) -> float",
+      "summary": "计算实数 x 的自然对数 (ln x)。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "正实数"
+        }
+      ],
+      "returns": "float 自然对数值",
+      "example": "var l = log(E); // 1.0"
+    },
+    "log10": {
+      "signature": "log10(x: number) -> float",
+      "summary": "计算以 10 为底的对数值。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "正实数"
+        }
+      ],
+      "returns": "float 对数值",
+      "example": "var l = log10(100); // 2.0"
+    },
+    "log2": {
+      "signature": "log2(x: number) -> float",
+      "summary": "计算以 2 为底的对数值。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "正实数"
+        }
+      ],
+      "returns": "float 对数值",
+      "example": "var l = log2(1024); // 10.0"
+    },
+    "exp": {
+      "signature": "exp(x: number) -> float",
+      "summary": "计算自然常数 e 的 x 次幂 (e^x)。",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "desc": "指数"
+        }
+      ],
+      "returns": "float 指数值",
+      "example": "var val = exp(1.0); // 2.71828..."
+    },
+    "random": {
+      "signature": "random() -> float",
+      "summary": "生成 [0.0, 1.0) 范围内的均匀伪随机浮点数。",
+      "params": [],
+      "returns": "float 伪随机浮点数",
+      "example": "var r = random();"
+    },
+    "randomInt": {
+      "signature": "randomInt(minVal: int, maxVal: int) -> int",
+      "summary": "生成 [minVal, maxVal] 闭区间范围内的均匀伪随机整数。",
+      "params": [
+        {
+          "name": "minVal",
+          "type": "int",
+          "desc": "随机数下界（包含）"
+        },
+        {
+          "name": "maxVal",
+          "type": "int",
+          "desc": "随机数上界（包含）"
+        }
+      ],
+      "returns": "int 伪随机整数",
+      "example": "var dice = randomInt(1, 6);"
+    },
+    "gcd": {
+      "signature": "gcd(a: int, b: int) -> int",
+      "summary": "计算两个整数的最大公约数 (Greatest Common Divisor)。",
+      "params": [
+        {
+          "name": "a",
+          "type": "int",
+          "desc": "第一个整数"
+        },
+        {
+          "name": "b",
+          "type": "int",
+          "desc": "第二个整数"
+        }
+      ],
+      "returns": "int 最大公约数",
+      "example": "var g = gcd(48, 18); // 6"
+    },
+    "lcm": {
+      "signature": "lcm(a: int, b: int) -> int",
+      "summary": "计算两个整数的最小公倍数 (Least Common Multiple)。",
+      "params": [
+        {
+          "name": "a",
+          "type": "int",
+          "desc": "第一个整数"
+        },
+        {
+          "name": "b",
+          "type": "int",
+          "desc": "第二个整数"
+        }
+      ],
+      "returns": "int 最小公倍数",
+      "example": "var l = lcm(12, 18); // 36"
+    },
+    "factorial": {
+      "signature": "factorial(n: int) -> int",
+      "summary": "计算非负整数 n 的阶乘 n!。",
+      "params": [
+        {
+          "name": "n",
+          "type": "int",
+          "desc": "非负整数"
+        }
+      ],
+      "returns": "int 阶乘结果",
+      "example": "var f = factorial(5); // 120"
+    },
+    "substring": {
+      "signature": "substring(str: string, start: int, length?: int) -> string",
+      "summary": "从指定起始索引处截取指定长度的子字符串。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源字符串"
+        },
+        {
+          "name": "start",
+          "type": "int",
+          "desc": "起始索引"
+        },
+        {
+          "name": "length",
+          "type": "int?",
+          "desc": "截取的字符长度（留空则截取到末尾）"
+        }
+      ],
+      "returns": "string 截取到的子字符串",
+      "example": "var sub = substring(\"Hello World\", 0, 5); // \"Hello\""
+    },
+    "charAt": {
+      "signature": "charAt(str: string, index: int) -> string",
+      "summary": "获取字符串指定索引位置处的单个字符。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源字符串"
+        },
+        {
+          "name": "index",
+          "type": "int",
+          "desc": "字符位置索引"
+        }
+      ],
+      "returns": "string 单个字符",
+      "example": "var ch = charAt(\"TzdLang\", 0); // \"T\""
+    },
+    "charCode": {
+      "signature": "charCode(str: string, index: int = 0) -> int",
+      "summary": "获取字符串指定索引位置处字符的 Unicode 码点数值。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源字符串"
+        },
+        {
+          "name": "index",
+          "type": "int?",
+          "desc": "字符位置，默认为 0"
+        }
+      ],
+      "returns": "int Unicode 编码数值",
+      "example": "var code = charCode(\"A\"); // 65"
+    },
+    "fromCharCode": {
+      "signature": "fromCharCode(code: int) -> string",
+      "summary": "将 Unicode 整数码点转换为对应的单个字符。",
+      "params": [
+        {
+          "name": "code",
+          "type": "int",
+          "desc": "Unicode 码点"
+        }
+      ],
+      "returns": "string 字符",
+      "example": "var ch = fromCharCode(65); // \"A\""
+    },
+    "toLower": {
+      "signature": "toLower(str: string) -> string",
+      "summary": "将字符串中的所有英文字符转换为小写形式。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源文本"
+        }
+      ],
+      "returns": "string 小写字符串",
+      "example": "var low = toLower(\"HELLO\"); // \"hello\""
+    },
+    "toUpper": {
+      "signature": "toUpper(str: string) -> string",
+      "summary": "将字符串中的所有英文字符转换为大写形式。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源文本"
+        }
+      ],
+      "returns": "string 大写字符串",
+      "example": "var up = toUpper(\"world\"); // \"WORLD\""
+    },
+    "trim": {
+      "signature": "trim(str: string) -> string",
+      "summary": "去除字符串首尾的所有空白字符（空格、制表符、回车换行等）。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源文本"
+        }
+      ],
+      "returns": "string 修剪后的字符串",
+      "example": "var clean = trim(\"  hello  \\n\"); // \"hello\""
+    },
+    "split": {
+      "signature": "split(str: string, separator: string) -> array",
+      "summary": "使用指定的分隔符将字符串拆分为子字符串数组。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源文本"
+        },
+        {
+          "name": "separator",
+          "type": "string",
+          "desc": "分隔符"
+        }
+      ],
+      "returns": "array 字符串数组",
+      "example": "var parts = split(\"a,b,c\", \",\"); // [\"a\", \"b\", \"c\"]"
+    },
+    "replace": {
+      "signature": "replace(str: string, oldSub: string, newSub: string) -> string",
+      "summary": "将字符串中所有匹配的旧子串替换为新子串。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源文本"
+        },
+        {
+          "name": "oldSub",
+          "type": "string",
+          "desc": "被替换的子串"
+        },
+        {
+          "name": "newSub",
+          "type": "string",
+          "desc": "替换的新子串"
+        }
+      ],
+      "returns": "string 替换后的新字符串",
+      "example": "var r = replace(\"apple pie\", \"apple\", \"peach\");"
+    },
+    "startsWith": {
+      "signature": "startsWith(str: string, prefix: string) -> bool",
+      "summary": "判断字符串是否以指定的前缀子串开头。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源字符串"
+        },
+        {
+          "name": "prefix",
+          "type": "string",
+          "desc": "待检查的前缀"
+        }
+      ],
+      "returns": "bool 是则返回 true，否则返回 false",
+      "example": "if (startsWith(path, \"C:/\")) { ... }"
+    },
+    "endsWith": {
+      "signature": "endsWith(str: string, suffix: string) -> bool",
+      "summary": "判断字符串是否以指定的后缀子串结尾。",
+      "params": [
+        {
+          "name": "str",
+          "type": "string",
+          "desc": "源字符串"
+        },
+        {
+          "name": "suffix",
+          "type": "string",
+          "desc": "待检查的后缀"
+        }
+      ],
+      "returns": "bool 是则返回 true，否则返回 false",
+      "example": "if (endsWith(file, \".tzd\")) { ... }"
+    },
+    "readFile": {
+      "signature": "readFile(path: string) -> string",
+      "summary": "读取指定路径的文件完整内容并以 UTF-8 字符串形式返回。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "待读取的文件路径"
+        }
+      ],
+      "returns": "string 文件内容文本",
+      "example": "var content = readFile(\"data.txt\");"
+    },
+    "writeFile": {
+      "signature": "writeFile(path: string, content: string) -> bool",
+      "summary": "将字符串内容写入指定文件（若文件已存在则直接覆盖）。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "目标写入文件路径"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "desc": "写入的文本内容"
+        }
+      ],
+      "returns": "bool 成功返回 true，失败返回 false",
+      "example": "writeFile(\"output.txt\", \"Hello TzdLang!\");"
+    },
+    "appendFile": {
+      "signature": "appendFile(path: string, content: string) -> bool",
+      "summary": "将字符串内容追加到指定文件末尾（若文件不存在则自动创建）。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "目标文件路径"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "desc": "追加的文本内容"
+        }
+      ],
+      "returns": "bool 成功返回 true",
+      "example": "appendFile(\"log.txt\", \"New entry\\n\");"
+    },
+    "fileExists": {
+      "signature": "fileExists(path: string) -> bool",
+      "summary": "检查指定路径的文件是否存在。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "待检查的文件路径"
+        }
+      ],
+      "returns": "bool 文件存在返回 true，否则返回 false",
+      "example": "if (fileExists(\"config.json\")) { ... }"
+    },
+    "dirExists": {
+      "signature": "dirExists(path: string) -> bool",
+      "summary": "检查指定路径的目录是否存在。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "待检查的目录路径"
+        }
+      ],
+      "returns": "bool 目录存在返回 true",
+      "example": "if (!dirExists(\"build\")) makeDir(\"build\");"
+    },
+    "makeDir": {
+      "signature": "makeDir(path: string) -> bool",
+      "summary": "创建指定路径的目录（支持递归创建不存在的多级父目录）。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "创建的目录路径"
+        }
+      ],
+      "returns": "bool 成功返回 true",
+      "example": "makeDir(\"dist/logs\");"
+    },
+    "removeFile": {
+      "signature": "removeFile(path: string) -> bool",
+      "summary": "删除指定路径的文件。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "待删除的文件路径"
+        }
+      ],
+      "returns": "bool 成功返回 true",
+      "example": "removeFile(\"temp.bin\");"
+    },
+    "removeDir": {
+      "signature": "removeDir(path: string) -> bool",
+      "summary": "删除指定路径的目录。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "待删除的目录路径"
+        }
+      ],
+      "returns": "bool 成功返回 true",
+      "example": "removeDir(\"temp\");"
+    },
+    "listDir": {
+      "signature": "listDir(path: string) -> array",
+      "summary": "列出指定目录下的所有文件和子目录名称列表。",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "desc": "目标目录路径"
+        }
+      ],
+      "returns": "array 文件名与子目录名称字符串数组",
+      "example": "var files = listDir(\".\");"
+    },
+    "time_now_sec": {
+      "signature": "time_now_sec() -> float",
+      "summary": "返回当前系统时间戳（以秒为单位的双精度浮点数）。",
+      "params": [],
+      "returns": "float 当前 Unix 时间戳（秒）",
+      "example": "var ts = time_now_sec();"
+    },
+    "time_now_ms": {
+      "signature": "time_now_ms() -> float",
+      "summary": "返回当前 Unix 时间戳（以毫秒为单位的浮点数）。",
+      "params": [],
+      "returns": "float 毫秒时间戳",
+      "example": "var ms = time_now_ms();"
+    },
+    "time_now_ns": {
+      "signature": "time_now_ns() -> float",
+      "summary": "返回纳秒级超高精度单调硬件时钟时间（用于高精度 Stopwatch 基准测试）。",
+      "params": [],
+      "returns": "float 纳秒数值",
+      "example": "var ns = time_now_ns();"
+    },
+    "time_sleep": {
+      "signature": "time_sleep(ms: int) -> void",
+      "summary": "底层高精度挂起等待函数。",
+      "params": [
+        {
+          "name": "ms",
+          "type": "int",
+          "desc": "等待毫秒数"
+        }
+      ],
+      "returns": "void",
+      "example": "time_sleep(100);"
+    },
+    "time_format": {
+      "signature": "time_format(timestamp: float, pattern: string) -> string",
+      "summary": "使用标准 strftime 格式将时间戳格式化为可读字符串（如 \"%Y-%m-%d %H:%M:%S\"）。",
+      "params": [
+        {
+          "name": "timestamp",
+          "type": "float",
+          "desc": "Unix 秒级时间戳"
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "desc": "格式化模板字符串"
+        }
+      ],
+      "returns": "string 格式化后的时间字符串",
+      "example": "var s = time_format(time_now_sec(), \"%Y-%m-%d %H:%M:%S\");"
+    },
+    "time_date_parts": {
+      "signature": "time_date_parts(timestamp: float) -> map",
+      "summary": "将时间戳分解为年、月、日、时、分、秒等字段构成的字典对象。",
+      "params": [
+        {
+          "name": "timestamp",
+          "type": "float",
+          "desc": "秒级时间戳"
+        }
+      ],
+      "returns": "map 包含 year, month, day, hour, minute, second, dayOfWeek, dayOfYear 的字典",
+      "example": "var parts = time_date_parts(time_now_sec());\nprint(\"Year: \" + toString(parts[\"year\"]));"
+    },
+    "StackTrace": {
+      "signature": "StackTrace(pidOrName: int | string) -> void",
+      "summary": "目标进程调用栈跟踪分析工具。支持传入 PID 或不区分大小写的进程名。",
+      "params": [
+        {
+          "name": "pidOrName",
+          "type": "int | string",
+          "desc": "目标进程 PID 或可执行文件名（如 \"notepad.exe\"）"
+        }
+      ],
+      "returns": "void",
+      "example": "StackTrace(\"qq.exe\");"
+    },
+    "MemoryAsm": {
+      "signature": "MemoryAsm(pidOrName: int | string) -> void",
+      "summary": "扫描目标进程的所有可执行代码段并反汇编翻译为 x64/x86 汇编指令。",
+      "params": [
+        {
+          "name": "pidOrName",
+          "type": "int | string",
+          "desc": "目标进程标识符"
+        }
+      ],
+      "returns": "void",
+      "example": "MemoryAsm(1234);"
+    },
+    "ScanFunc": {
+      "signature": "ScanFunc(pidOrName: int | string, ...options: string) -> void",
+      "summary": "通过特征码定位目标进程中的函数并进行符号还原（支持 -m 模块、-p PDB 路径、-g GUI 界面）。",
+      "params": [
+        {
+          "name": "pidOrName",
+          "type": "int | string",
+          "desc": "目标进程"
+        },
+        {
+          "name": "options",
+          "type": "...string",
+          "desc": "可选标志参数，例如 \"-g\" 开启 DirectX 11 交互搜索界面"
+        }
+      ],
+      "returns": "void",
+      "example": "ScanFunc(\"game.exe\", \"-g\");"
+    },
+    "Demangle": {
+      "signature": "Demangle(mangledName: string) -> string",
+      "summary": "将 MSVC / Itanium 编译器的 C++ 修饰符号名转换为人类可读的标准函数签名。",
+      "params": [
+        {
+          "name": "mangledName",
+          "type": "string",
+          "desc": "修饰名字符串（例如 \"?init@System@@QAEXXZ\"）"
+        }
+      ],
+      "returns": "string 还原后的可读签名",
+      "example": "var readable = Demangle(\"?init@System@@QAEXXZ\");"
+    },
+    "PdbInfo": {
+      "signature": "PdbInfo(pdbPath: string) -> void",
+      "summary": "读取并分析 PDB 调试符号文件头信息，提取公开符号与模块信息。",
+      "params": [
+        {
+          "name": "pdbPath",
+          "type": "string",
+          "desc": "PDB 文件路径"
+        }
+      ],
+      "returns": "void",
+      "example": "PdbInfo(\"C:/Symbols/game.pdb\");"
+    }
+  }
 }

@@ -2,7 +2,7 @@
 # TzdTools Installer One-Click Build Script
 # ==============================================================================
 param(
-    [string]$Version = "0.2.9"
+    [string]$Version = "0.2.10"
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,16 +33,33 @@ if (-not (Test-Path (Join-Path $ReleaseDir "TzdTools.exe"))) {
     throw "TzdTools.exe not found in $ReleaseDir. Please build the Release configuration first."
 }
 
-# 2. Prepare Clean Staging Directory
-Write-Host "[1/5] Preparing staging directory..." -ForegroundColor Yellow
-if (Test-Path $StagingDir) {
-    Remove-Item -Recurse -Force $StagingDir
+function Sync-FileIncremental {
+    param(
+        [string]$src,
+        [string]$dest
+    )
+    if (-not (Test-Path $dest)) {
+        Copy-Item $src $dest -Force
+        return $true
+    }
+    $srcItem = Get-Item $src
+    $destItem = Get-Item $dest
+    if ($srcItem.Length -ne $destItem.Length -or $srcItem.LastWriteTime -gt $destItem.LastWriteTime) {
+        Copy-Item $src $dest -Force
+        return $true
+    }
+    return $false
 }
-New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
+
+# 2. Prepare Clean Staging Directory (增量同步保护磁盘)
+Write-Host "[1/5] Preparing staging directory (incremental sync)..." -ForegroundColor Yellow
+if (-not (Test-Path $StagingDir)) {
+    New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
+}
 
 # Copy binary & runtime header
-Copy-Item (Join-Path $ReleaseDir "TzdTools.exe") $StagingDir -Force
-Copy-Item (Join-Path $RepoRoot "TzdNativeRuntime.hpp") $StagingDir -Force
+Sync-FileIncremental (Join-Path $ReleaseDir "TzdTools.exe") (Join-Path $StagingDir "TzdTools.exe") | Out-Null
+Sync-FileIncremental (Join-Path $RepoRoot "TzdNativeRuntime.hpp") (Join-Path $StagingDir "TzdNativeRuntime.hpp") | Out-Null
 
 # Copy stdlib
 $StdlibDir = Join-Path $RepoRoot "stdlib"
@@ -50,9 +67,9 @@ if (Test-Path $StdlibDir) {
     Copy-Item $StdlibDir (Join-Path $StagingDir "stdlib") -Recurse -Force
 }
 
-# Copy all runtime DLLs from Release directory
+# 增量复制所有运行时 DLL，绝不无意义全量覆写
 Get-ChildItem -Path $ReleaseDir -Filter "*.dll" | ForEach-Object {
-    Copy-Item $_.FullName $StagingDir -Force
+    Sync-FileIncremental $_.FullName (Join-Path $StagingDir $_.Name) | Out-Null
 }
 
 # Ensure nvrtc-builtins64_126.dll is copied
@@ -78,12 +95,14 @@ Copy-Item (Join-Path $InstallerDir "setup_env.cmd") $StagingDir -Force -ErrorAct
 Copy-Item (Join-Path $InstallerDir "uninstall.cmd") $StagingDir -Force -ErrorAction SilentlyContinue
 
 # 3. Compress Payload with 7-Zip LZMA2
-Write-Host "[2/5] Compressing GPU payload with 7-Zip (LZMA2)..." -ForegroundColor Yellow
+# 3. Compress Payload with 7-Zip LZMA2 (使用增量更新模式避免磁盘 100% 卡死)
+Write-Host "[2/5] Compressing GPU payload with 7-Zip (incremental update)..." -ForegroundColor Yellow
 $PayloadFile = Join-Path $InstallerDir "payload.7z"
 if (Test-Path $PayloadFile) {
-    Remove-Item -Force $PayloadFile
+    & $SevenZip u -mx=5 $PayloadFile "$StagingDir\*" | Out-Null
+} else {
+    & $SevenZip a -mx=5 $PayloadFile "$StagingDir\*" | Out-Null
 }
-& $SevenZip a -mx=5 $PayloadFile "$StagingDir\*" | Out-Null
 $PayloadSize = (Get-Item $PayloadFile).Length / 1MB
 Write-Host "  -> GPU Payload compressed: $([Math]::Round($PayloadSize, 1)) MB" -ForegroundColor Green
 
@@ -102,17 +121,18 @@ if (Test-Path $SetupExe) {
 # 5. Build CPU Edition Installer if CPU staging directory exists
 if (Test-Path $CpuStagingDir) {
     Write-Host "[4/5] Preparing and compressing CPU Edition payload..." -ForegroundColor Yellow
-    Copy-Item (Join-Path $ReleaseDir "TzdTools.exe") $CpuStagingDir -Force
-    Copy-Item (Join-Path $RepoRoot "TzdNativeRuntime.hpp") $CpuStagingDir -Force
+    Sync-FileIncremental (Join-Path $ReleaseDir "TzdTools.exe") (Join-Path $CpuStagingDir "TzdTools.exe") | Out-Null
+    Sync-FileIncremental (Join-Path $RepoRoot "TzdNativeRuntime.hpp") (Join-Path $CpuStagingDir "TzdNativeRuntime.hpp") | Out-Null
     if (Test-Path $StdlibDir) {
         Copy-Item $StdlibDir (Join-Path $CpuStagingDir "stdlib") -Recurse -Force
     }
 
     $PayloadCpu = Join-Path $InstallerDir "payload_cpu.7z"
     if (Test-Path $PayloadCpu) {
-        Remove-Item -Force $PayloadCpu
+        & $SevenZip u -mx=5 $PayloadCpu "$CpuStagingDir\*" | Out-Null
+    } else {
+        & $SevenZip a -mx=5 $PayloadCpu "$CpuStagingDir\*" | Out-Null
     }
-    & $SevenZip a -mx=5 $PayloadCpu "$CpuStagingDir\*" | Out-Null
     $CpuPayloadSize = (Get-Item $PayloadCpu).Length / 1MB
     Write-Host "  -> CPU Payload compressed: $([Math]::Round($CpuPayloadSize, 1)) MB" -ForegroundColor Green
 

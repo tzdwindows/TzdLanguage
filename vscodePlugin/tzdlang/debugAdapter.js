@@ -241,9 +241,10 @@ class TzdDebugSession {
       }
     }
 
-    this.jitEnabled = args.jit === true;
+    // 默认开启 JIT (与 package.json 中 "jit": { "default": true } 保持一致，除非显式设为 false)
+    this.jitEnabled = args.jit !== false;
 
-    // 当用户在 launch.json 中显式指定 "jit": true 时开启 JIT 调试支持
+    // 当开启 JIT 时配置对应优化参数与 JIT 调试支持
     if (this.jitEnabled) {
       if (!cmdArgs.includes("--jit")) cmdArgs.push("--jit");
       if (!cmdArgs.includes("--jit-debug")) cmdArgs.push("--jit-debug");

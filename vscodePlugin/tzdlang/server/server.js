@@ -209,15 +209,54 @@ const classCache = new Map();
 const globalFunctionsCache = new Map(); // fnName -> [{ name, signature, argsCount, location, docComment }]
 const globalVariablesCache = new Map(); // varName -> { name, type, isConst, value, location }
 
-let defaultBuiltins = { classes: ["Runtime"], functions: [] };
+let defaultBuiltins = { classes: ["Runtime"], functions: [], docs: {} };
 try {
-  defaultBuiltins = require("./builtins.json");
-} catch (_) {}
+  const bPath = path.join(__dirname, "builtins.json");
+  if (fs.existsSync(bPath)) {
+    defaultBuiltins = JSON.parse(fs.readFileSync(bPath, "utf-8"));
+  }
+} catch (e) {
+  console.error("Failed to load builtins.json:", e);
+}
 
 const cachedRuntimeSymbols = {
   classes: Array.isArray(defaultBuiltins.classes) ? [...defaultBuiltins.classes] : ["Runtime"],
   functions: Array.isArray(defaultBuiltins.functions) ? [...defaultBuiltins.functions] : [],
+  docs: defaultBuiltins.docs || {},
 };
+
+function getBuiltinDocMarkdown(fnName) {
+  const d = cachedRuntimeSymbols.docs[fnName];
+  if (!d) {
+    if (cachedRuntimeSymbols.functions.includes(fnName)) {
+      return `### ⚡ 本地原生函数: \`${fnName}()\`\n\nTzdLang 运行时内置 Native C++ 函数。`;
+    }
+    return null;
+  }
+  let md = `### ⚡ 内置本地函数: \`${d.signature || fnName + "()"}\`\n\n${d.summary || ""}\n\n`;
+  if (d.params && d.params.length > 0) {
+    md += `**参数:**\n`;
+    for (const p of d.params) {
+      md += `- \`${p.name}\` (${p.type || "any"}): ${p.desc || ""}\n`;
+    }
+    md += `\n`;
+  }
+  if (d.returns) {
+    md += `**返回值:**\n- ${d.returns}\n\n`;
+  }
+  if (d.example) {
+    md += `**示例:**\n\`\`\`tzdlang\n${d.example}\n\`\`\`\n`;
+  }
+  return md;
+}
+
+function isBuiltinFunction(name) {
+  return (
+    cachedRuntimeSymbols.functions.includes(name) ||
+    Boolean(cachedRuntimeSymbols.docs[name])
+  );
+}
+
 
 const KEYWORDS = new Set([
   "var",
@@ -759,117 +798,158 @@ function extractImportStatements(text) {
 }
 
 /**
- * 提取文件中的顶层全局函数
+ * 提取文件中的顶层全局函数（严格限定在 braceDepth === 0 的全局作用域，类内方法不在此列）
  */
 function extractTopLevelFunctions(text, uri) {
   const funcs = [];
   if (!text) return funcs;
   const lines = text.split("\n");
   let inBlockComment = false;
+  let braceDepth = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
-    const cleanLine = rawLine.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    let cleanLine = rawLine.replace(/"(?:[^"\\]|\\.)*"/g, '""');
 
     if (inBlockComment) {
-      if (cleanLine.includes("*/")) inBlockComment = false;
-      continue;
+      if (cleanLine.includes("*/")) {
+        cleanLine = cleanLine.slice(cleanLine.indexOf("*/") + 2);
+        inBlockComment = false;
+      } else {
+        continue;
+      }
     }
     if (cleanLine.includes("/*")) {
-      if (!cleanLine.includes("*/")) inBlockComment = true;
-      continue;
+      const startIdx = cleanLine.indexOf("/*");
+      const endIdx = cleanLine.indexOf("*/", startIdx + 2);
+      if (endIdx !== -1) {
+        cleanLine = cleanLine.slice(0, startIdx) + cleanLine.slice(endIdx + 2);
+      } else {
+        cleanLine = cleanLine.slice(0, startIdx);
+        inBlockComment = true;
+      }
     }
-    if (cleanLine.trim().startsWith("//")) continue;
+    cleanLine = cleanLine.replace(/\/\/.*/, "");
+    if (!cleanLine.trim()) continue;
 
-    // 匹配顶层函数: fun name(params) 或 static fun, public fun 等修饰符
-    const m = cleanLine.match(
-      /^\s*(?:(?:public|private|protected|static|abstract|native)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/
-    );
-    if (m) {
-      const fnName = m[1];
-      const paramStr = m[2];
-      const col = rawLine.indexOf(fnName);
-      const args = paramStr
-        .split(",")
-        .map((x) => x.trim())
-        .filter((x) => x.length > 0);
-      const docComment = extractDocComment(text, i);
-      const fnDef = {
-        name: fnName,
-        signature: paramStr,
-        argsCount: args.length,
-        location: {
-          uri,
-          range: Range.create(i, col, i, col + fnName.length),
-        },
-        docComment,
-      };
-      funcs.push(fnDef);
+    // 只有处于顶层全局作用域 (braceDepth === 0) 时，声明的函数才是真正的全局函数
+    if (braceDepth === 0) {
+      const m = cleanLine.match(
+        /^\s*(?:(?:public|private|protected|static|abstract|native)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/
+      );
+      if (m) {
+        const fnName = m[1];
+        const paramStr = m[2];
+        const col = rawLine.indexOf(fnName);
+        const args = paramStr
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => x.length > 0);
+        const docComment = extractDocComment(text, i);
+        const fnDef = {
+          name: fnName,
+          signature: paramStr,
+          argsCount: args.length,
+          location: {
+            uri,
+            range: Range.create(i, col, i, col + fnName.length),
+          },
+          docComment,
+        };
+        funcs.push(fnDef);
 
-      if (!globalFunctionsCache.has(fnName)) {
-        globalFunctionsCache.set(fnName, []);
+        if (!globalFunctionsCache.has(fnName)) {
+          globalFunctionsCache.set(fnName, []);
+        }
+        const list = globalFunctionsCache.get(fnName);
+        if (
+          !list.some(
+            (existing) =>
+              existing.location.uri === uri &&
+              existing.location.range.start.line === i
+          )
+        ) {
+          list.push(fnDef);
+        }
       }
-      const list = globalFunctionsCache.get(fnName);
-      if (
-        !list.some(
-          (existing) =>
-            existing.location.uri === uri &&
-            existing.location.range.start.line === i
-        )
-      ) {
-        list.push(fnDef);
-      }
+    }
+
+    // 统计大括号深度
+    for (const ch of cleanLine) {
+      if (ch === "{") braceDepth++;
+      else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
     }
   }
   return funcs;
 }
 
 /**
- * 提取文件中的顶层常量与变量
+ * 提取文件中的顶层常量与变量（严格限定在 braceDepth === 0 的全局作用域）
  */
 function extractTopLevelVariables(text, uri) {
   const vars = [];
   if (!text) return vars;
   const lines = text.split("\n");
   let inBlockComment = false;
+  let braceDepth = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
-    const cleanLine = rawLine
+    let cleanLine = rawLine
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
       .replace(/\/\/.*/, "");
 
     if (inBlockComment) {
-      if (cleanLine.includes("*/")) inBlockComment = false;
-      continue;
+      if (cleanLine.includes("*/")) {
+        cleanLine = cleanLine.slice(cleanLine.indexOf("*/") + 2);
+        inBlockComment = false;
+      } else {
+        continue;
+      }
     }
     if (cleanLine.includes("/*")) {
-      if (!cleanLine.includes("*/")) inBlockComment = true;
-      continue;
+      const startIdx = cleanLine.indexOf("/*");
+      const endIdx = cleanLine.indexOf("*/", startIdx + 2);
+      if (endIdx !== -1) {
+        cleanLine = cleanLine.slice(0, startIdx) + cleanLine.slice(endIdx + 2);
+      } else {
+        cleanLine = cleanLine.slice(0, startIdx);
+        inBlockComment = true;
+      }
+    }
+    if (!cleanLine.trim()) continue;
+
+    // 仅在顶层全局作用域 (braceDepth === 0) 记录全局变量
+    if (braceDepth === 0) {
+      const m = cleanLine.match(
+        /^\s*(const|var|let)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)\s*(?:=\s*(.*?))?(?:;|$)/
+      );
+      if (m) {
+        const declKind = m[1];
+        const type = m[2] || null;
+        const name = m[3];
+        const initVal = m[4] ? m[4].trim() : "";
+        const isConst = declKind === "const";
+        const col = rawLine.indexOf(name);
+        const varDef = {
+          name,
+          type,
+          isConst,
+          value: initVal,
+          location: {
+            uri,
+            range: Range.create(i, col, i, col + name.length),
+          },
+        };
+        vars.push(varDef);
+        globalVariablesCache.set(name, varDef);
+      }
     }
 
-    const m = cleanLine.match(
-      /^\s*(const|var|let)\s+(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)\s*(?:=\s*(.*?))?(?:;|$)/
-    );
-    if (m) {
-      const declKind = m[1];
-      const type = m[2] || null;
-      const name = m[3];
-      const initVal = m[4] ? m[4].trim() : "";
-      const isConst = declKind === "const";
-      const col = rawLine.indexOf(name);
-      const varDef = {
-        name,
-        type,
-        isConst,
-        value: initVal,
-        location: {
-          uri,
-          range: Range.create(i, col, i, col + name.length),
-        },
-      };
-      vars.push(varDef);
-      globalVariablesCache.set(name, varDef);
+    // 统计大括号深度
+    for (const ch of cleanLine) {
+      if (ch === "{") braceDepth++;
+      else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
     }
   }
   return vars;
@@ -1486,13 +1566,34 @@ function refreshLocalClassCache(text, docUri) {
 // ──────────────────────────────────────────────────────────────────────────
 
 const KEYWORD_ITEMS = [
-  ["fun", "fun ${1:name}($0)", "函数声明"],
-  ["var", "var ${1:name} = $0;", "变量声明"],
-  ["class", "class ${1:Name} {\n\t$0\n}", "类声明"],
-  ["return", "return $0;", "返回值"],
-  ["import", 'import "$0";', "导入文件"],
-  ["this", "this", "当前实例"],
-  ["super", "super($0)", "父类调用"],
+  ["if", "if (${1:condition}) {\n\t$0\n}", "if 条件分支语句"],
+  ["else", "else {\n\t$0\n}", "else 分支语句"],
+  ["else if", "else if (${1:condition}) {\n\t$0\n}", "else if 备选分支"],
+  ["while", "while (${1:condition}) {\n\t$0\n}", "while 循环语句"],
+  ["for", "for (var ${1:i} = 0; ${1:i} < ${2:n}; ${1:i} = ${1:i} + 1) {\n\t$0\n}", "for 计数循环语句"],
+  ["fun", "fun ${1:name}($2) {\n\t$0\n}", "函数声明定义"],
+  ["var", "var ${1:name} = $0;", "变量声明语句"],
+  ["let", "let ${1:name} = $0;", "局部变量声明语句"],
+  ["const", "const ${1:name} = $0;", "只读常量声明语句"],
+  ["class", "class ${1:Name} {\n\t$0\n}", "类定义声明"],
+  ["return", "return $0;", "返回语句"],
+  ["import", 'import "$0";', "模块导入语句"],
+  ["try", "try {\n\t$1\n} catch (${2:e}) {\n\t$0\n}", "try-catch 异常捕获"],
+  ["catch", "catch (${1:e}) {\n\t$0\n}", "catch 异常处理分支"],
+  ["throw", "throw $0;", "异常抛出语句"],
+  ["switch", "switch (${1:expr}) {\n\tcase ${2:val}:\n\t\t$0\n\t\tbreak;\n\tdefault:\n\t\tbreak;\n}", "switch 多路分支"],
+  ["case", "case ${1:val}:\n\t$0\n\tbreak;", "case 分支标签"],
+  ["default", "default:\n\t$0\n\tbreak;", "default 默认分支"],
+  ["break", "break;", "跳出循环或分支"],
+  ["continue", "continue;", "跳过本次循环进入下一轮"],
+  ["new", "new ${1:Class}($0)", "实例化新对象"],
+  ["this", "this", "当前类实例引用"],
+  ["super", "super($0)", "父类方法/构造函数调用"],
+  ["true", "true", "布尔值真"],
+  ["false", "false", "布尔值假"],
+  ["null", "null", "空值对象引用"],
+  ["print", "print($0);", "标准输出打印"],
+  ["println", "println($0);", "标准输出换行打印"],
 ];
 
 function buildCompletions(text, line, col, docUri) {
@@ -1722,23 +1823,37 @@ function buildCompletions(text, line, col, docUri) {
     }
   }
 
-  //   e. 运行时内置函数
+  //   e. 运行时内置函数（带完整签名与中文注解文档）
   for (const f of cachedRuntimeSymbols.functions) {
-    items.push({ label: f, kind: 3 /*Function*/,
-      insertTextFormat: 2, insertText: `${f}($0)`,
-      detail: "Native C++ Function", sortText: "4" });
+    const docMd = getBuiltinDocMarkdown(f);
+    const d = cachedRuntimeSymbols.docs[f];
+    items.push({
+      label: f,
+      kind: 3 /*Function*/,
+      insertTextFormat: 2,
+      insertText: `${f}($0)`,
+      detail: d?.signature || "Native C++ Function",
+      documentation: docMd ? { kind: "markdown", value: docMd } : undefined,
+      sortText: "2",
+    });
   }
 
   //   f. 运行时内置类
   for (const c of cachedRuntimeSymbols.classes) {
-    items.push({ label: c, kind: 7 /*Class*/, detail: "Native C++ Class", sortText: "4" });
+    items.push({ label: c, kind: 7 /*Class*/, detail: "Native C++ Class", sortText: "3" });
   }
 
-  //   g. 关键字（最低优先）
+  //   g. 关键字与代码片段（控制语句优先级置前，支持快速补全 if、while 等）
   for (const [label, insert, doc] of KEYWORD_ITEMS) {
-    items.push({ label, kind: 14 /*Keyword*/,
-      insertText: insert, insertTextFormat: 2,
-      detail: doc, sortText: "5" });
+    const isControl = ["if", "else", "else if", "while", "for", "fun", "class", "return", "import", "try", "catch", "throw", "var", "let", "const"].includes(label);
+    items.push({
+      label,
+      kind: insert.includes("\n") || insert.includes("${") ? 15 /*Snippet*/ : 14 /*Keyword*/,
+      insertText: insert,
+      insertTextFormat: 2,
+      detail: doc,
+      sortText: isControl ? "1" : "3",
+    });
   }
 
   return filterItems(items);
@@ -1991,6 +2106,19 @@ connection.onHover((params) => {
     }
   }
 
+  // ⭐ 优先级 3.4：本地/运行时内置 Native C++ 函数（展示完整参数、返回值与示例注解）
+  if (!isMemberHover && isBuiltinFunction(word)) {
+    const docMd = getBuiltinDocMarkdown(word);
+    if (docMd) {
+      return {
+        contents: {
+          kind: MarkupKind.Markdown,
+          value: docMd,
+        },
+      };
+    }
+  }
+
   // ⭐ 优先级 3.5：跨文件导入的全局函数
   if (globalFunctionsCache.has(word)) {
     const fns = globalFunctionsCache.get(word);
@@ -2009,15 +2137,7 @@ connection.onHover((params) => {
     return { contents: { kind: MarkupKind.Markdown, value: md } };
   }
 
-  // ⭐ 优先级 4 (最后兜底)：Native C++ 系统函数或类
-  if (cachedRuntimeSymbols.functions.includes(word)) {
-    return {
-      contents: {
-        kind: MarkupKind.Markdown,
-        value: `\`\`\`cpp\nNative C++ Function: ${word}()\n\`\`\``,
-      },
-    };
-  }
+  // ⭐ 优先级 4 (最后兜底)：Native C++ 系统类
   if (cachedRuntimeSymbols.classes.includes(word)) {
     return {
       contents: {
@@ -2301,6 +2421,11 @@ function findDefinition(docUri, text, line, col) {
   const beforeCursor = currentLine.slice(0, start);
   const isNewCall = /\bnew\s*$/.test(beforeCursor);
   const isMemberAccess = /\.\s*$/.test(beforeCursor);
+
+  // ⭐ 0.5 核心修复：如果是内置本地函数（且非自由类对象的点号成员访问），绝不能误跳转到导入类中的同名方法（如 DateTime.tzd 的 fun toString()）！
+  if (!isMemberAccess && isBuiltinFunction(word)) {
+    return null;
+  }
 
   // 1. Super 构造函数跳转
   if (word === "super") {
