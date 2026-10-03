@@ -12,12 +12,16 @@
 #endif
 #include <coroutine>
 // Compatibility alias: map std::experimental::coroutine_handle to std::coroutine_handle
-namespace std { namespace experimental {
-    template <typename T = void>
-    using coroutine_handle = std::coroutine_handle<T>;
-    using suspend_always = std::suspend_always;
-    using suspend_never = std::suspend_never;
-}}
+namespace std
+{
+    namespace experimental
+    {
+        template <typename T = void>
+        using coroutine_handle = std::coroutine_handle<T>;
+        using suspend_always = std::suspend_always;
+        using suspend_never = std::suspend_never;
+    }
+}
 #endif
 
 #include "../Res/TzdStrings.h"
@@ -40,6 +44,7 @@ namespace std { namespace experimental {
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <immintrin.h>
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -64,28 +69,34 @@ namespace std { namespace experimental {
 
 namespace fs = std::filesystem;
 
-struct ThreadData {
-    TzdInterpreter* parentInterp = nullptr;
+struct ThreadData
+{
+    TzdInterpreter *parentInterp = nullptr;
     TzdValue target;
-    std::thread* sysThread = nullptr;
-    TzdInterpreter* childInterp = nullptr;
+    std::thread *sysThread = nullptr;
+    TzdInterpreter *childInterp = nullptr;
     std::mutex mutex;
     bool isDetached = false;
     bool threadFinished = false;
 
-    void cleanup() {
-        if (sysThread) delete sysThread;
-        if (childInterp) delete childInterp;
+    void cleanup()
+    {
+        if (sysThread)
+            delete sysThread;
+        if (childInterp)
+            delete childInterp;
         delete this;
     }
 };
 
-TzdValue sys_thread_start(const std::vector<TzdValue>& args) {
-    if (args.empty() || (args[0].type != TzdValue::FUNCTION && args[0].type != TzdValue::NATIVE_FUNCTION)) {
+TzdValue sys_thread_start(const std::vector<TzdValue> &args)
+{
+    if (args.empty() || (args[0].type != TzdValue::FUNCTION && args[0].type != TzdValue::NATIVE_FUNCTION))
+    {
         return TzdValue::Error("Thread start requires a function target.");
     }
 
-    ThreadData* data = new ThreadData();
+    ThreadData *data = new ThreadData();
     data->parentInterp = g_CurrentInterpreter;
     data->target = args[0];
 
@@ -93,11 +104,13 @@ TzdValue sys_thread_start(const std::vector<TzdValue>& args) {
     data->childInterp = new TzdInterpreter();
 
     // 复制父线程的全局作用域（包含已注册的类、全局变量和 JIT 函数指针）
-    if (g_CurrentInterpreter && !g_CurrentInterpreter->scopes.empty()) {
+    if (g_CurrentInterpreter && !g_CurrentInterpreter->scopes.empty())
+    {
         data->childInterp->scopes[0] = g_CurrentInterpreter->scopes[0];
     }
 
-    data->sysThread = new std::thread([data]() {
+    data->sysThread = new std::thread([data]()
+                                      {
         g_CurrentInterpreter = data->childInterp;
         try {
             data->childInterp->callFunction(data->target, {});
@@ -108,19 +121,21 @@ TzdValue sys_thread_start(const std::vector<TzdValue>& args) {
         data->threadFinished = true;
         if (data->isDetached) {
             data->cleanup();
-        }
-        });
+        } });
 
-    return TzdValue((void*)data);
+    return TzdValue((void *)data);
 }
 
-TzdValue sys_thread_join(const std::vector<TzdValue>& args) {
-    if (args.empty() || args[0].type != TzdValue::POINTER || !args[0].ptrVal) {
+TzdValue sys_thread_join(const std::vector<TzdValue> &args)
+{
+    if (args.empty() || args[0].type != TzdValue::POINTER || !args[0].ptrVal)
+    {
         return TzdValue(false);
     }
 
-    ThreadData* data = (ThreadData*)args[0].ptrVal;
-    if (data->sysThread && data->sysThread->joinable()) {
+    ThreadData *data = (ThreadData *)args[0].ptrVal;
+    if (data->sysThread && data->sysThread->joinable())
+    {
         data->sysThread->join();
     }
 
@@ -128,20 +143,24 @@ TzdValue sys_thread_join(const std::vector<TzdValue>& args) {
     return TzdValue(true);
 }
 
-TzdValue sys_thread_detach(const std::vector<TzdValue>& args) {
-    if (args.empty() || args[0].type != TzdValue::POINTER || !args[0].ptrVal) {
+TzdValue sys_thread_detach(const std::vector<TzdValue> &args)
+{
+    if (args.empty() || args[0].type != TzdValue::POINTER || !args[0].ptrVal)
+    {
         return TzdValue(false);
     }
 
-    ThreadData* data = (ThreadData*)args[0].ptrVal;
+    ThreadData *data = (ThreadData *)args[0].ptrVal;
     std::lock_guard<std::mutex> lock(data->mutex);
 
     data->isDetached = true;
-    if (data->sysThread) {
+    if (data->sysThread)
+    {
         data->sysThread->detach();
     }
 
-    if (data->threadFinished) {
+    if (data->threadFinished)
+    {
         // 如果在调用 detach 之前子线程已经运行完毕
         data->cleanup();
     }
@@ -149,14 +168,17 @@ TzdValue sys_thread_detach(const std::vector<TzdValue>& args) {
 }
 
 // --- ???????????? ---
-std::string TzdNativeModule::AnsiToUtf8(const std::string& str) {
+std::string TzdNativeModule::AnsiToUtf8(const std::string &str)
+{
 #ifdef _WIN32
     int nwLen = MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, NULL, 0);
-    if (nwLen <= 0) return str;
+    if (nwLen <= 0)
+        return str;
     std::wstring wstr(nwLen, 0);
     MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, &wstr[0], nwLen);
     int nLen = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, NULL, NULL);
-    if (nLen <= 0) return str;
+    if (nLen <= 0)
+        return str;
     std::string ret(nLen - 1, 0);
     WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &ret[0], nLen, NULL, NULL);
     return ret;
@@ -165,8 +187,10 @@ std::string TzdNativeModule::AnsiToUtf8(const std::string& str) {
 #endif
 }
 
-static double valToDouble(const TzdValue& v) {
-    switch (v.type) {
+static double valToDouble(const TzdValue &v)
+{
+    switch (v.type)
+    {
     case TzdValue::DOUBLE:
     case TzdValue::FLOAT:
         return v.dVal;
@@ -182,51 +206,75 @@ static double valToDouble(const TzdValue& v) {
     case TzdValue::BOOL:
         return v.bVal ? 1.0 : 0.0;
     case TzdValue::STRING:
-        try { return std::stod(v.sVal); }
-        catch (...) { return 0.0; }
+        try
+        {
+            return std::stod(v.sVal);
+        }
+        catch (...)
+        {
+            return 0.0;
+        }
     default:
         return 0.0;
     }
 }
 
 // ?????????????????????? double ??????????????? 0.33333 -> 1/3 ??????
-static std::string doubleToFractionStr(double val, double tolerance = 1e-5) {
-    if (std::isnan(val)) return "NaN";
-    if (std::isinf(val)) return "Infinity";
+static std::string doubleToFractionStr(double val, double tolerance = 1e-5)
+{
+    if (std::isnan(val))
+        return "NaN";
+    if (std::isinf(val))
+        return "Infinity";
 
     bool negative = val < 0;
-    if (negative) val = -val;
+    if (negative)
+        val = -val;
 
     long long h1 = 1, h2 = 0, k1 = 0, k2 = 1;
     double b = val;
 
-    for (int i = 0; i < 15; ++i) {
+    for (int i = 0; i < 15; ++i)
+    {
         long long a = (long long)std::floor(b);
-        long long aux_h = h1; h1 = a * h1 + h2; h2 = aux_h;
-        long long aux_k = k1; k1 = a * k1 + k2; k2 = aux_k;
+        long long aux_h = h1;
+        h1 = a * h1 + h2;
+        h2 = aux_h;
+        long long aux_k = k1;
+        k1 = a * k1 + k2;
+        k2 = aux_k;
 
-        if (k1 == 0) break;
-        if (std::abs(val - (double)h1 / k1) <= tolerance) break;
+        if (k1 == 0)
+            break;
+        if (std::abs(val - (double)h1 / k1) <= tolerance)
+            break;
 
         double diff = b - a;
-        if (std::abs(diff) < 1e-7) break;
+        if (std::abs(diff) < 1e-7)
+            break;
         b = 1.0 / diff;
     }
 
-    if (k1 == 0) return "0/1";
+    if (k1 == 0)
+        return "0/1";
     long long final_num = negative ? -h1 : h1;
-    if (k1 == 1) return std::to_string(final_num);
+    if (k1 == 1)
+        return std::to_string(final_num);
     return std::to_string(final_num) + "/" + std::to_string(k1);
 }
 
 // --- ?????Eigen ??? ---
-Eigen::MatrixXd TzdNativeModule::toEigen(const TzdValue& arr) {
-    if (arr.type != TzdValue::ARRAY || arr.arrVal.empty()) return Eigen::MatrixXd(0, 0);
+Eigen::MatrixXd TzdNativeModule::toEigen(const TzdValue &arr)
+{
+    if (arr.type != TzdValue::ARRAY || arr.arrVal.empty())
+        return Eigen::MatrixXd(0, 0);
     int rows = (int)arr.arrVal.size();
     int cols = (arr.arrVal[0].type == TzdValue::ARRAY) ? (int)arr.arrVal[0].arrVal.size() : 1;
     Eigen::MatrixXd mat(rows, cols);
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
+    for (int i = 0; i < rows; ++i)
+    {
+        for (int j = 0; j < cols; ++j)
+        {
             if (arr.arrVal[i].type == TzdValue::ARRAY)
                 mat(i, j) = (j < (int)arr.arrVal[i].arrVal.size()) ? valToDouble(arr.arrVal[i].arrVal[j]) : 0.0;
             else
@@ -236,18 +284,22 @@ Eigen::MatrixXd TzdNativeModule::toEigen(const TzdValue& arr) {
     return mat;
 }
 
-TzdValue TzdNativeModule::fromEigen(const Eigen::MatrixXd& mat) {
+TzdValue TzdNativeModule::fromEigen(const Eigen::MatrixXd &mat)
+{
     std::vector<TzdValue> resRows;
-    for (int i = 0; i < mat.rows(); ++i) {
+    for (int i = 0; i < mat.rows(); ++i)
+    {
         std::vector<TzdValue> rowElements;
-        for (int j = 0; j < mat.cols(); ++j) rowElements.push_back(TzdValue(mat(i, j)));
+        for (int j = 0; j < mat.cols(); ++j)
+            rowElements.push_back(TzdValue(mat(i, j)));
         resRows.push_back(TzdValue(rowElements));
     }
     return TzdValue(resRows);
 }
 
 // --- ????? ---
-void TzdNativeModule::init(TzdInterpreter* interp) {
+void TzdNativeModule::init(TzdInterpreter *interp)
+{
     regInterpreterState(interp);
     regMath(interp);
     regMatrix(interp);
@@ -273,61 +325,83 @@ void TzdNativeModule::init(TzdInterpreter* interp) {
     interp->addIncludePath("stdlib");
 }
 
-void TzdNativeModule::regMatrix(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
-    reg("identity", [](auto args) { return fromEigen(Eigen::MatrixXd::Identity(args.empty() ? 1 : (int)valToDouble(args[0]), args.empty() ? 1 : (int)valToDouble(args[0]))); });
-    reg("zeros", [](auto args) { return fromEigen(Eigen::MatrixXd::Zero((int)valToDouble(args[0]), args.size() > 1 ? (int)valToDouble(args[0]) : (int)valToDouble(args[0]))); });
-    reg("ones", [](auto args) { return fromEigen(Eigen::MatrixXd::Ones((int)valToDouble(args[0]), args.size() > 1 ? (int)valToDouble(args[0]) : (int)valToDouble(args[0]))); });
-    reg("matrixMul", [](auto args) { return (args.size() < 2) ? TzdValue("Error") : fromEigen(toEigen(args[0]) * toEigen(args[1])); });
-    reg("transpose", [](auto args) { return args.empty() ? TzdValue() : fromEigen(toEigen(args[0]).transpose()); });
-    reg("inverse", [](auto args) { auto m = toEigen(args[0]); return (m.rows() == m.cols()) ? fromEigen(m.inverse()) : TzdValue("Error: Not square"); });
-    reg("det", [](auto args) { return TzdValue(toEigen(args[0]).determinant()); });
-    reg("trace", [](auto args) { return TzdValue(toEigen(args[0]).trace()); });
-    reg("rank", [](auto args) { return TzdValue((double)toEigen(args[0]).fullPivLu().rank()); });
-    reg("solve", [](auto args) { return (args.size() < 2) ? TzdValue() : fromEigen(toEigen(args[0]).colPivHouseholderQr().solve(toEigen(args[1]))); });
-    reg("norm", [](auto args) { return TzdValue(toEigen(args[0]).norm()); });
-    reg("dot", [](auto args) { if (args.size() < 2) return TzdValue(0.0); return TzdValue(toEigen(args[0]).col(0).dot(toEigen(args[1]).col(0))); });
-    reg("reshape", [](auto args) {
+void TzdNativeModule::regMatrix(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
+    reg("identity", [](auto args)
+        { return fromEigen(Eigen::MatrixXd::Identity(args.empty() ? 1 : (int)valToDouble(args[0]), args.empty() ? 1 : (int)valToDouble(args[0]))); });
+    reg("zeros", [](auto args)
+        { return fromEigen(Eigen::MatrixXd::Zero((int)valToDouble(args[0]), args.size() > 1 ? (int)valToDouble(args[0]) : (int)valToDouble(args[0]))); });
+    reg("ones", [](auto args)
+        { return fromEigen(Eigen::MatrixXd::Ones((int)valToDouble(args[0]), args.size() > 1 ? (int)valToDouble(args[0]) : (int)valToDouble(args[0]))); });
+    reg("matrixMul", [](auto args)
+        { return (args.size() < 2) ? TzdValue("Error") : fromEigen(toEigen(args[0]) * toEigen(args[1])); });
+    reg("transpose", [](auto args)
+        { return args.empty() ? TzdValue() : fromEigen(toEigen(args[0]).transpose()); });
+    reg("inverse", [](auto args)
+        { auto m = toEigen(args[0]); return (m.rows() == m.cols()) ? fromEigen(m.inverse()) : TzdValue("Error: Not square"); });
+    reg("det", [](auto args)
+        { return TzdValue(toEigen(args[0]).determinant()); });
+    reg("trace", [](auto args)
+        { return TzdValue(toEigen(args[0]).trace()); });
+    reg("rank", [](auto args)
+        { return TzdValue((double)toEigen(args[0]).fullPivLu().rank()); });
+    reg("solve", [](auto args)
+        { return (args.size() < 2) ? TzdValue() : fromEigen(toEigen(args[0]).colPivHouseholderQr().solve(toEigen(args[1]))); });
+    reg("norm", [](auto args)
+        { return TzdValue(toEigen(args[0]).norm()); });
+    reg("dot", [](auto args)
+        { if (args.size() < 2) return TzdValue(0.0); return TzdValue(toEigen(args[0]).col(0).dot(toEigen(args[1]).col(0))); });
+    reg("reshape", [](auto args)
+        {
         if (args.size() < 3) return TzdValue("Error");
         Eigen::MatrixXd m = toEigen(args[0]);
         int r = (int)valToDouble(args[1]), c = (int)valToDouble(args[2]);
         if (r * c != m.size()) return TzdValue("Error: Size mismatch");
-        m.resize(r, c); return fromEigen(m);
-    });
+        m.resize(r, c); return fromEigen(m); });
 }
 
 // --- 1. ????????????????????? ---
-void TzdNativeModule::regInterpreterState(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
+void TzdNativeModule::regInterpreterState(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
 
-    reg("addIncludePath", [interp](auto args) {
+    reg("addIncludePath", [interp](auto args)
+        {
         if (!args.empty()) interp->addIncludePath(args[0].sVal);
-        return TzdValue();
-        });
+        return TzdValue(); });
 
-    reg("getScriptPath", [interp](auto args) {
+    reg("getScriptPath", [interp](auto args)
+        {
         if (interp->m_scriptPathStack.empty()) return TzdValue("memory");
-        return TzdValue(interp->m_scriptPathStack.back().string());
-        });
+        return TzdValue(interp->m_scriptPathStack.back().string()); });
 
-    reg("getScriptDir", [interp](auto args) {
+    reg("getScriptDir", [interp](auto args)
+        {
         if (interp->m_scriptPathStack.empty()) return TzdValue(".");
-        return TzdValue(interp->m_scriptPathStack.back().parent_path().string());
-        });
+        return TzdValue(interp->m_scriptPathStack.back().parent_path().string()); });
 }
 
-void TzdNativeModule::regRuntime(TzdInterpreter* interp) {
-    TzdClassDef* existing = TzdOopManager::getClass("Runtime");
-    if (existing) {
+void TzdNativeModule::regRuntime(TzdInterpreter *interp)
+{
+    TzdClassDef *existing = TzdOopManager::getClass("Runtime");
+    if (existing)
+    {
         interp->setGlobalVariable("Runtime", TzdValue(existing));
         return;
     }
 
-    TzdClassDef* runtimeCls = new TzdClassDef("Runtime");
+    TzdClassDef *runtimeCls = new TzdClassDef("Runtime");
     ClassMethod captureTrace;
     captureTrace.name = "captureStackTrace";
     captureTrace.isStatic = true;
@@ -335,92 +409,124 @@ void TzdNativeModule::regRuntime(TzdInterpreter* interp) {
     captureTrace.sourceFile = "native";
     captureTrace.line = 0;
 
-    captureTrace.nativeWrapper = [interp](const std::vector<TzdValue>& args) -> TzdValue {
+    captureTrace.nativeWrapper = [interp](const std::vector<TzdValue> &args) -> TzdValue
+    {
         (void)args;
         std::ostringstream oss;
         oss << "Stack trace:\n";
-        for (const auto& frame : interp->m_callStackFrames) {
+        for (const auto &frame : interp->m_callStackFrames)
+        {
             oss << "  at " << frame << "\n";
         }
-        if (interp->m_callStackFrames.empty()) {
+        if (interp->m_callStackFrames.empty())
+        {
             oss << "  at <entry>\n";
         }
         return TzdValue(oss.str());
-        };
+    };
     runtimeCls->methods["captureStackTrace"] = captureTrace;
     TzdOopManager::registerClass(runtimeCls);
     interp->setGlobalVariable("Runtime", TzdValue(runtimeCls));
 }
 
 // --- 2. ??????? ---
-void TzdNativeModule::regMath(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
+void TzdNativeModule::regMath(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
 
     // ??????????????
-    reg("abs", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::abs(valToDouble(args[0]))); });
-    reg("sqrt", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::sqrt(valToDouble(args[0]))); });
-    reg("sin", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::sin(valToDouble(args[0]))); });
-    reg("cos", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::cos(valToDouble(args[0]))); });
-    reg("tan", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::tan(valToDouble(args[0]))); });
-    reg("asin", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::asin(valToDouble(args[0]))); });
-    reg("acos", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::acos(valToDouble(args[0]))); });
-    reg("atan", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::atan(valToDouble(args[0]))); });
-    reg("log", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::log(valToDouble(args[0]))); });
-    reg("log10", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::log10(valToDouble(args[0]))); });
-    reg("exp", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::exp(valToDouble(args[0]))); });
+    reg("abs", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::abs(valToDouble(args[0]))); });
+    reg("sqrt", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::sqrt(valToDouble(args[0]))); });
+    reg("sin", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::sin(valToDouble(args[0]))); });
+    reg("cos", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::cos(valToDouble(args[0]))); });
+    reg("tan", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::tan(valToDouble(args[0]))); });
+    reg("asin", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::asin(valToDouble(args[0]))); });
+    reg("acos", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::acos(valToDouble(args[0]))); });
+    reg("atan", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::atan(valToDouble(args[0]))); });
+    reg("log", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::log(valToDouble(args[0]))); });
+    reg("log10", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::log10(valToDouble(args[0]))); });
+    reg("exp", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::exp(valToDouble(args[0]))); });
 
-    reg("pow", [](auto args) {
-        return TzdValue(args.size() < 2 ? 0.0 : std::pow(valToDouble(args[0]), valToDouble(args[1])));
-        });
+    reg("pow", [](auto args)
+        { return TzdValue(args.size() < 2 ? 0.0 : std::pow(valToDouble(args[0]), valToDouble(args[1]))); });
 
-    reg("ceil", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::ceil(valToDouble(args[0]))); });
-    reg("floor", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::floor(valToDouble(args[0]))); });
-    reg("round", [](auto args) { return TzdValue(args.empty() ? 0.0 : std::round(valToDouble(args[0]))); });
+    reg("ceil", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::ceil(valToDouble(args[0]))); });
+    reg("floor", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::floor(valToDouble(args[0]))); });
+    reg("round", [](auto args)
+        { return TzdValue(args.empty() ? 0.0 : std::round(valToDouble(args[0]))); });
 
-    reg("factorial", [](auto args) {
+    reg("factorial", [](auto args)
+        {
         int n = args.empty() ? 0 : (int)valToDouble(args[0]);
         double res = 1.0; for (int i = 2; i <= n; ++i) res *= i;
-        return TzdValue(res);
-        });
+        return TzdValue(res); });
 
     // ???????toFraction (?????????????????????????)
-    reg("toFraction", [](auto args) {
+    reg("toFraction", [](auto args)
+        {
         if (args.empty()) return TzdValue("0/1");
         double val = valToDouble(args[0]);
         double tol = (args.size() > 1) ? valToDouble(args[1]) : 1e-5;
-        return TzdValue(doubleToFractionStr(val, tol));
-        });
+        return TzdValue(doubleToFractionStr(val, tol)); });
 
     // ??????? AST ??????? Lambda
-    auto evalFunc = [interp](const TzdValue& func, double x) -> double {
-        if (func.type != TzdValue::FUNCTION && func.type != TzdValue::NATIVE_FUNCTION) return 0.0;
+    auto evalFunc = [interp](const TzdValue &func, double x) -> double
+    {
+        if (func.type != TzdValue::FUNCTION && func.type != TzdValue::NATIVE_FUNCTION)
+            return 0.0;
         std::unordered_map<std::string, TzdValue> callScope;
-        if (!func.params.empty()) callScope[func.params[0]] = TzdValue(x);
+        if (!func.params.empty())
+            callScope[func.params[0]] = TzdValue(x);
         interp->scopes.push_back(callScope);
         TzdValue res(0.0);
-        try {
+        try
+        {
             std::any v = interp->visit(func.funcBody);
-            if (v.has_value()) res = std::any_cast<TzdValue>(v);
+            if (v.has_value())
+                res = std::any_cast<TzdValue>(v);
         }
-        catch (const TzdReturnException& e) { res = e.value; }
-        catch (...) { res = TzdValue(0.0); }
+        catch (const TzdReturnException &e)
+        {
+            res = e.value;
+        }
+        catch (...)
+        {
+            res = TzdValue(0.0);
+        }
         interp->scopes.pop_back();
         return valToDouble(res);
-        };
+    };
 
     // ????????
-    reg("derivative", [evalFunc](auto args) -> TzdValue {
+    reg("derivative", [evalFunc](auto args) -> TzdValue
+        {
         if (args.size() < 2 || (args[0].type != TzdValue::FUNCTION && args[0].type != TzdValue::NATIVE_FUNCTION)) return TzdValue(0.0);
         TzdValue func = args[0];
         double x = valToDouble(args[1]), h = 1e-4;
         double df = (-evalFunc(func, x + 2 * h) + 8 * evalFunc(func, x + h) - 8 * evalFunc(func, x - h) + evalFunc(func, x - 2 * h)) / (12 * h);
-        return TzdValue(df);
-        });
+        return TzdValue(df); });
 
     // ????????????
-    reg("solveEq", [evalFunc](auto args) -> TzdValue {
+    reg("solveEq", [evalFunc](auto args) -> TzdValue
+        {
         if (args.empty() || (args[0].type != TzdValue::FUNCTION && args[0].type != TzdValue::NATIVE_FUNCTION)) {
             return TzdValue("Error: solveEq requires a function as the 1st argument.");
         }
@@ -464,10 +570,10 @@ void TzdNativeModule::regMath(TzdInterpreter* interp) {
             if (asFraction) resArr.push_back(TzdValue(doubleToFractionStr(r)));
             else resArr.push_back(TzdValue(r));
         }
-        return TzdValue(resArr);
-        });
+        return TzdValue(resArr); });
 
-    reg("solveSym", [](auto args) -> TzdValue {
+    reg("solveSym", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::STRING) {
             return TzdValue("Error: solveSym requires an equation string as the 1st argument. (e.g., 'x - 1 = 0')");
         }
@@ -515,10 +621,10 @@ void TzdNativeModule::regMath(TzdInterpreter* interp) {
         }
         catch (...) {
             return TzdValue("Unknown error in Fintamath solver.");
-        }
-        });
+        } });
 
-    reg("simplifySym", [](auto args) -> TzdValue {
+    reg("simplifySym", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::STRING) {
             return TzdValue("Error: simplifySym requires an expression string. (e.g., '2*x + 3*x')");
         }
@@ -530,10 +636,10 @@ void TzdNativeModule::regMath(TzdInterpreter* interp) {
         }
         catch (const std::exception& e) {
             return TzdValue(std::string("Symbolic Simplify Error: ") + e.what());
-        }
-        });
+        } });
     // ?????????????????
-    reg("solveIneq", [evalFunc](auto args) -> TzdValue {
+    reg("solveIneq", [evalFunc](auto args) -> TzdValue
+        {
         if (args.size() < 2 || (args[0].type != TzdValue::FUNCTION && args[0].type != TzdValue::NATIVE_FUNCTION)) {
             return TzdValue("Error: solveIneq(func, opStr, [low, high, asFraction])");
         }
@@ -616,26 +722,33 @@ void TzdNativeModule::regMath(TzdInterpreter* interp) {
                 resultStr += formatVal(l) + (op.find('=') != std::string::npos ? " <= x <= " : " < x < ") + formatVal(h);
             }
         }
-        return TzdValue(resultStr);
-        });
+        return TzdValue(resultStr); });
 }
 
 // --- 4. ????????? ---
-void TzdNativeModule::regSystem(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
+void TzdNativeModule::regSystem(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
 
-    reg("time", [](auto args) { return TzdValue((double)std::time(nullptr)); });
-    reg("clock", [](auto args) {
+    reg("time", [](auto args)
+        { return TzdValue((double)std::time(nullptr)); });
+    reg("clock", [](auto args)
+        {
         auto now = std::chrono::high_resolution_clock::now();
         static const auto start_time = now;
         std::chrono::duration<double, std::milli> ms_duration = now - start_time;
-        return TzdValue(ms_duration.count());
-        });
-    reg("sleep", [](auto args) { if (!args.empty()) std::this_thread::sleep_for(std::chrono::milliseconds((int)valToDouble(args[0]))); return TzdValue(); });
-    reg("exit", [](auto args) { std::exit(args.empty() ? 0 : (int)valToDouble(args[0])); return TzdValue(); });
-    reg("getSymbols", [interp](auto args) {
+        return TzdValue(ms_duration.count()); });
+    reg("sleep", [](auto args)
+        { if (!args.empty()) std::this_thread::sleep_for(std::chrono::milliseconds((int)valToDouble(args[0]))); return TzdValue(); });
+    reg("exit", [](auto args)
+        { std::exit(args.empty() ? 0 : (int)valToDouble(args[0])); return TzdValue(); });
+    reg("getSymbols", [interp](auto args)
+        {
         (void)args;
 
         TzdValue result;
@@ -674,14 +787,18 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
         result.mapVal["classes"] = classesArray;
         result.mapVal["functions"] = functionsArray;
 
-        return result;
-        });
+        return result; });
 
-    auto getLenFunc = [](auto args) {
-        if (args.empty()) return TzdValue(0.0);
-        if (args[0].type == TzdValue::ARRAY) return TzdValue((double)args[0].arrVal.size());
-        if (args[0].type == TzdValue::STRING) return TzdValue((double)args[0].sVal.length());
-        if (args[0].type == TzdValue::MAP) return TzdValue((double)args[0].mapVal.size());
+    auto getLenFunc = [](auto args)
+    {
+        if (args.empty())
+            return TzdValue(0.0);
+        if (args[0].type == TzdValue::ARRAY)
+            return TzdValue((double)(args[0].isNativeDoubleArr ? args[0].nativeArr.size() : args[0].arrVal.size()));
+        if (args[0].type == TzdValue::STRING)
+            return TzdValue((double)args[0].sVal.length());
+        if (args[0].type == TzdValue::MAP)
+            return TzdValue((double)args[0].mapVal.size());
         return TzdValue(0.0);
     };
     reg("len", getLenFunc);
@@ -690,7 +807,8 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
     reg("sys_thread_start", &sys_thread_start);
     reg("sys_thread_join", &sys_thread_join);
     reg("sys_thread_detach", &sys_thread_detach);
-    reg("type", [](auto args) {
+    reg("type", [](auto args)
+        {
         if (args.empty()) return TzdValue("NONE");
         switch (args[0].type) {
         case TzdValue::FLOAT: case TzdValue::DOUBLE: return TzdValue("FLOAT");
@@ -706,16 +824,16 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
         case TzdValue::TENSOR: return TzdValue("TENSOR");
         case TzdValue::NONE: return TzdValue("NONE");
         default: return TzdValue("INT");
-        }
-        });
+        } });
 
-    reg("parseInt", [](auto args) {
+    reg("parseInt", [](auto args)
+        {
         if (args.size() < 2) return TzdValue(0.0);
         try { return TzdValue((double)std::stoll(args[0].sVal, nullptr, (int)valToDouble(args[1]))); }
-        catch (...) { return TzdValue(0.0); }
-        });
+        catch (...) { return TzdValue(0.0); } });
 
-    reg("toString", [interp](auto args) {
+    reg("toString", [interp](auto args)
+        {
         if (args.empty()) return TzdValue("");
         if (args.size() < 2) return TzdValue(interp->getAsString(args[0]));
 
@@ -730,10 +848,10 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
             val /= base;
         } while (val > 0);
 
-        return TzdValue((valToDouble(args[0]) < 0 ? "-" : "") + s);
-        });
+        return TzdValue((valToDouble(args[0]) < 0 ? "-" : "") + s); });
 
-    reg("getClassInfo", [interp](auto args) -> TzdValue {
+    reg("getClassInfo", [interp](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue::Error("getClassInfo ?????????? (??????????????)");
         TzdClassDef* targetClass = nullptr;
         TzdValue& input = args[0];
@@ -764,10 +882,10 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
         }
         info["methods"] = TzdValue(methodsList);
 
-        return TzdValue(info);
-        });
+        return TzdValue(info); });
 
-    reg("bit", [](auto args) {
+    reg("bit", [](auto args)
+        {
         if (args.size() < 2) return TzdValue(0.0);
         long long a = (long long)valToDouble(args[0]); std::string op = args[1].sVal;
         if (op == "NOT") return TzdValue((double)~a);
@@ -778,17 +896,17 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
         if (op == "XOR") return TzdValue((double)(a ^ b));
         if (op == "LSH") return TzdValue((double)(a << b));
         if (op == "RSH") return TzdValue((double)(a >> b));
-        return TzdValue(0.0);
-        });
+        return TzdValue(0.0); });
 
-    reg("hexDump", [](auto args) {
+    reg("hexDump", [](auto args)
+        {
         if (args.empty()) return TzdValue("");
         std::stringstream ss; ss << std::hex << std::setfill('0');
         for (unsigned char c : args[0].sVal) ss << std::setw(2) << (int)c << " ";
-        return TzdValue(ss.str());
-        });
+        return TzdValue(ss.str()); });
 
-    reg("getFunctions", [interp](auto args) {
+    reg("getFunctions", [interp](auto args)
+        {
         std::vector<TzdValue> names; std::set<std::string> seen;
         for (auto it = interp->scopes.rbegin(); it != interp->scopes.rend(); ++it) {
             for (auto const& [name, val] : *it) {
@@ -797,38 +915,38 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
                 }
             }
         }
-        return TzdValue(names);
-        });
+        return TzdValue(names); });
 
-    reg("getNativeFunctions", [](auto args) -> TzdValue {
-        // ???????????????????
+    reg("getNativeFunctions", [](auto args) -> TzdValue
+        {
+        // 获取所有内置原生函数元数据
         struct NativeMeta { std::string name; std::string params; std::string desc; };
         static const std::vector<NativeMeta> nativeRegistry = {
-            // ????????????
-            { "addIncludePath", "path", "?????????????????(Include)????????" },
-            { "getScriptPath", "", "?????????????????????????????" },
-            { "getScriptDir", "", "???????????????????????????" },
-            // ??????? (Eigen)
-            { "identity", "[size=1]", "????????????????????" },
-            { "zeros", "rows, [cols]", "???????????????????" },
-            { "ones", "rows, [cols]", "???????????????????" },
-            { "matrixMul", "matA, matB", "???????????????" },
-            { "transpose", "matrix", "??????????????????" },
-            { "inverse", "matrix", "?????????????????????????" },
-            { "det", "matrix", "???????????? (Determinant)" },
-            { "trace", "matrix", "???????? (Trace???????????????)" },
-            { "rank", "matrix", "????????LU????????????????" },
-            { "solve", "matA, matB", "???????????? A * X = B" },
-            { "norm", "matrix", "???????????? Frobenius ????" },
-            { "dot", "vecA, vecB", "??????????????????????" },
-            { "reshape", "matrix, rows, cols", "????????????????????????????????????" },
-            // ???????
-            { "abs", "val", "????????" }, { "sqrt", "val", "?????????????" },
-            { "sin", "rad", "???????(?????)" }, { "cos", "rad", "???????(?????)" }, { "tan", "rad", "????????(?????)" },
-            { "asin", "val", "?????????" }, { "acos", "val", "?????????" }, { "atan", "val", "??????????" },
-            { "log", "val", "?? e ???????????" }, { "log10", "val", "?? 10 ??????????" }, { "exp", "val", "??????? e^x" },
-            { "pow", "base, exp", "?????????? base^exp" },
-            { "ceil", "val", "???????" }, { "floor", "val", "???????" }, { "round", "val", "???????????" },
+            // 模块与环境相关
+            { "addIncludePath", "path", "添加自定义脚本头文件(Include)搜索路径" },
+            { "getScriptPath", "", "获取当前正在执行的脚本文件绝对路径" },
+            { "getScriptDir", "", "获取当前正在执行脚本所在的目录" },
+            // 矩阵与线性代数 (Eigen)
+            { "identity", "[size=1]", "生成指定维度的单位方阵" },
+            { "zeros", "rows, [cols]", "生成全零矩阵或行向量" },
+            { "ones", "rows, [cols]", "生成全幺矩阵或行向量" },
+            { "matrixMul", "matA, matB", "计算两个矩阵的乘积" },
+            { "transpose", "matrix", "计算输入矩阵的转置矩阵" },
+            { "inverse", "matrix", "计算方阵的逆矩阵（要求行列式非零）" },
+            { "det", "matrix", "计算方阵的行列式 (Determinant)" },
+            { "trace", "matrix", "计算方阵的主对角线迹 (Trace)" },
+            { "rank", "matrix", "使用完全主元LU分解计算矩阵的秩" },
+            { "solve", "matA, matB", "求解线性方程组 A * X = B" },
+            { "norm", "matrix", "计算矩阵或向量的 Frobenius 范数" },
+            { "dot", "vecA, vecB", "计算两个同维度向量的点积" },
+            { "reshape", "matrix, rows, cols", "在保持元素总数不变的前提下重新调整矩阵维度" },
+            // 基础数学与高精度
+            { "abs", "val", "计算绝对值" }, { "sqrt", "val", "计算非负数算术平方根" },
+            { "sin", "rad", "正弦函数(弧度制)" }, { "cos", "rad", "余弦函数(弧度制)" }, { "tan", "rad", "正切函数(弧度制)" },
+            { "asin", "val", "反正弦主值函数" }, { "acos", "val", "反余弦主值函数" }, { "atan", "val", "反正切主值函数" },
+            { "log", "val", "以 e 为底的自然对数" }, { "log10", "val", "以 10 为底的常用对数" }, { "exp", "val", "指数函数 e^x" },
+            { "pow", "base, exp", "幂函数计算 base^exp" },
+            { "ceil", "val", "向上取整" }, { "floor", "val", "向下取整" }, { "round", "val", "四舍五入到最近整数" },
             { "factorial", "n", "阶乘 (n!)" },
             { "bigintFactorial", "n", "大数阶乘（任意精度 n!）" },
             { "powmod", "base, exp, mod", "模幂运算 base^exp mod m" },
@@ -839,30 +957,30 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
             { "bigint", "x", "将数值转换为 BIGINT 类型" },
             { "rational", "num, den", "创建分数 num/den" },
             { "toFraction", "val, [tolerance=1e-5]", "将浮点数转为精确分数" },
-            { "derivative", "func, x", "?????????????????????????????? x ???????????" },
-            { "solveEq", "func, [low=-100], [high=100], [asFraction=false]", "??????????????????????????????? func(x) = 0 ???" },
-            { "solveSym", "eqStr, [var='x']", "???? Fintamath ??????????????????????????????" },
-            { "simplifySym", "exprStr", "???? Fintamath ????????????????????????????????" },
-            { "solveIneq", "func, opStr, [low=-100], [high=100], [asFraction=false]", "??????????????????????? opStr ?????????????????" },
-            // ???????????
-            { "time", "", "????????????????????????????" },
-            { "clock", "", "????????????????????????????????????" },
-            { "sleep", "ms", "?????????????/??????????????" },
-            { "exit", "[code=0]", "?????????????????????" },
-            { "len", "container", "??????????????????????????" },
-            { "type", "val", "?????????????????????????" },
-            { "parseInt", "str, base", "??????????(2-36)????????????????????" },
-            { "toString", "val, [base]", "???????????????????????(2-36)???????????" },
-            { "getClassInfo", "target", "?????????????????????????????? OOP ???????" },
-            { "bit", "a, opStr, [b]", "??????????????????? NOT, AND, OR, XOR, LSH, RSH" },
-            { "hexDump", "str", "???????????????????????????????? Hex Dump ?????" },
-            { "getFunctions", "", "???????????????????????????????????????" },
-            { "getNativeFunctions", "", "???????????????????????? C++ ??????????" },
-            // IO????
-            { "input", "[prompt]", "?????????????????????????????? ANSI ?????????" },
-            { "readFile", "path", "????????????????????????????????????" },
-            { "writeFile", "path, content", "??????????????????????????????????" },
-            { "plot", "funcs..., start, end, [step]", "??????????????????????? WebGL ????????" }
+            { "derivative", "func, x", "使用中心差分数值方法计算指定函数在 x 处的数值导数" },
+            { "solveEq", "func, [low=-100], [high=100], [asFraction=false]", "使用二分法在区间内求解单变量非线性方程 func(x) = 0 的根" },
+            { "solveSym", "eqStr, [var='x']", "调用 Fintamath 符号求解引擎解析方程的解析解" },
+            { "simplifySym", "exprStr", "调用 Fintamath 符号代数系统化简数学表达式" },
+            { "solveIneq", "func, opStr, [low=-100], [high=100], [asFraction=false]", "在指定区间上根据比较符号 opStr 求解单变量不等式区间解" },
+            // 系统与通用工具函数
+            { "time", "", "获取自Unix纪元至今的高精度秒级时间戳" },
+            { "clock", "", "获取程序进程启动至今所消耗的 CPU 执行时间" },
+            { "sleep", "ms", "使当前执行线程挂起/休眠指定的毫秒数" },
+            { "exit", "[code=0]", "退出脚本引擎并返回状态码" },
+            { "len", "container", "获取字符串、数组或映射容器的长度" },
+            { "type", "val", "获取给定值的底层数据类型字符串" },
+            { "parseInt", "str, base", "根据指定基数(2-36)将字符串解析为整型数值" },
+            { "toString", "val, [base]", "将变量转换为字符串表示形式(支持2-36进制整数格式化)" },
+            { "getClassInfo", "target", "反射并提取实例对象或类原型的全部元数据 OOP 结构信息" },
+            { "bit", "a, opStr, [b]", "执行位运算支持的操作符包括 NOT, AND, OR, XOR, LSH, RSH" },
+            { "hexDump", "str", "将二进制数据或字符串格式化为可读的十六进制 Hex Dump 视图" },
+            { "getFunctions", "", "获取当前解释器作用域内已定义的所有用户级自定义函数列表" },
+            { "getNativeFunctions", "", "获取当前引擎已注册并暴露的所有 C++ 原生底层函数元数据" },
+            // IO与图形展示
+            { "input", "[prompt]", "向控制台打印提示文字并读取一行标准输入 ANSI 文本数据" },
+            { "readFile", "path", "以 UTF-8 编码完整读取指定路径的文件内容" },
+            { "writeFile", "path, content", "向指定文件覆写写入纯文本或二进制数据" },
+            { "plot", "funcs..., start, end, [step]", "将多个数学函数曲线通过 WebGL 进行交互式绘制展示" }
         };
 
         std::vector<TzdValue> resultList;
@@ -873,10 +991,10 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
             node["description"] = TzdValue(item.desc);
             resultList.push_back(TzdValue(node));
         }
-        return TzdValue(resultList);
-        });
+        return TzdValue(resultList); });
 
-    reg("getArraysInfo", [interp](auto args) -> TzdValue {
+    reg("getArraysInfo", [interp](auto args) -> TzdValue
+        {
         std::unordered_map<std::string, TzdValue> arraysMap;
         std::set<std::string> seen;
         for (auto it = interp->scopes.rbegin(); it != interp->scopes.rend(); ++it) {
@@ -884,31 +1002,31 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
                 if (val.type == TzdValue::ARRAY && seen.find(name) == seen.end()) {
                     seen.insert(name);
                     std::unordered_map<std::string, TzdValue> arrayMeta;
-                    arrayMeta["length"] = TzdValue((double)val.arrVal.size());
+                    arrayMeta["length"] = TzdValue((double)(val.isNativeDoubleArr ? val.nativeArr.size() : val.arrVal.size()));
                     arrayMeta["data"] = val;
                     arraysMap[name] = TzdValue(arrayMeta);
                 }
             }
         }
-        return TzdValue(arraysMap);
-        });
+        return TzdValue(arraysMap); });
 
-    reg("len", [](auto args) -> TzdValue {
+    reg("len", [](auto args) -> TzdValue
+        {
         if (args.empty()) {
             return TzdValue(0);
         }
-
-        // ??????? Lambda ????????????????????? TzdValue ?????????D?? (Bytes)
         std::function<int(const TzdValue&)> auditSize = [&](const TzdValue& val) -> int {
             switch (val.type) {
             case TzdValue::STRING:
-                // ???? string ??????? capacity ?????
                 return (int)(sizeof(std::string) + val.sVal.capacity());
 
             case TzdValue::ARRAY: {
+                if (val.isNativeDoubleArr) {
+                    return (int)(sizeof(std::vector<double>) + (val.nativeArr.capacity() * sizeof(double)));
+                }
                 int size = (int)(sizeof(std::vector<TzdValue>) + (val.arrVal.capacity() * sizeof(TzdValue)));
                 for (const auto& item : val.arrVal) {
-                    size += auditSize(item); // ???????????????????????
+                    size += auditSize(item);
                 }
                 return size;
             }
@@ -923,14 +1041,8 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
 
             case TzdValue::INSTANCE: {
                 if (!val.instanceVal || !val.instanceVal->definition) return 0;
-
-                // 1. 基础大小：指针 + TzdInstance 结构体本身的大小
                 int size = (int)(sizeof(void*) + sizeof(TzdInstance));
-
-                // 加上连续内存数组 std::vector 堆空间的占用
                 size += (int)(val.instanceVal->fieldValues.capacity() * sizeof(TzdValue));
-
-                // 2. 通过定义中的索引，累加每个实际存储的字段属性
                 for (const auto& pair : val.instanceVal->definition->fieldIndices) {
                     if (pair.second >= 0 && pair.second < (int)val.instanceVal->fieldValues.size()) {
                         const TzdValue& fieldValue = val.instanceVal->fieldValues[pair.second];
@@ -964,51 +1076,94 @@ void TzdNativeModule::regSystem(TzdInterpreter* interp) {
 
         const auto& target = args[0];
 
-        // ?????????????????????????????????????????????????????????????????????
         if (target.type == TzdValue::STRING) {
-            return TzdValue((int)target.sVal.length()); // ??????????????????
+            return TzdValue((int)target.sVal.length());
         }
         if (target.type == TzdValue::ARRAY) {
-            return TzdValue((int)target.arrVal.size());  // ??????????????
+            return TzdValue((int)(target.isNativeDoubleArr ? target.nativeArr.size() : target.arrVal.size()));
         }
         if (target.type == TzdValue::MAP) {
-            return TzdValue((int)target.mapVal.size());  // ???????????????
+            return TzdValue((int)target.mapVal.size());
         }
-        return TzdValue(auditSize(target));
-        });
+        
+        return TzdValue(auditSize(target)); });
 }
 
 // --- 5. ????? IO ---
-void TzdNativeModule::regIO(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
+void TzdNativeModule::regIO(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
 
-    reg("input", [interp](auto args) {
-        if (!args.empty()) std::cout << interp->getAsString(args[0]);
-        std::string in; std::getline(std::cin, in);
-        return TzdValue(AnsiToUtf8(in));
+    extern bool IsUTF8(const std::string &str);
+    reg("input", [interp](auto args)
+        {
+        if (!args.empty()) {
+            std::cout << interp->getAsString(args[0]);
+            std::cout.flush();
+        }
+        if (std::cin.fail() && !std::cin.bad()) {
+            std::cin.clear();
+        }
+#ifdef _WIN32
+        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD prevConsoleMode = 0;
+        bool isConsole = GetConsoleMode(hIn, &prevConsoleMode);
+        if (isConsole) {
+            SetConsoleMode(hIn, prevConsoleMode | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
+        }
+#endif
+        std::string in;
+        if (std::getline(std::cin, in)) {
+#ifdef _WIN32
+            if (isConsole) {
+                SetConsoleMode(hIn, prevConsoleMode);
+            }
+#endif
+            if (!in.empty() && in.back() == '\r') {
+                in.pop_back();
+            }
+            if (in.size() >= 3 && (unsigned char)in[0] == 0xEF && (unsigned char)in[1] == 0xBB && (unsigned char)in[2] == 0xBF) {
+                in.erase(0, 3);
+            }
+            return TzdValue(IsUTF8(in) ? in : AnsiToUtf8(in));
+        }
+#ifdef _WIN32
+        if (isConsole) {
+            SetConsoleMode(hIn, prevConsoleMode);
+        }
+#endif
+        return TzdValue("");
         });
 
-    reg("readFile", [](auto args) {
+    reg("readFile", [](auto args)
+        {
         std::ifstream f(args[0].sVal); if (!f) return TzdValue("Error: File not found");
-        std::stringstream ss; ss << f.rdbuf(); return TzdValue(ss.str());
-        });
+        std::stringstream ss; ss << f.rdbuf(); return TzdValue(ss.str()); });
 
-    reg("writeFile", [](auto args) {
+    reg("writeFile", [](auto args)
+        {
         if (args.size() < 2) return TzdValue(false);
         std::ofstream f(args[0].sVal); if (!f) return TzdValue(false);
-        f << args[1].sVal; return TzdValue(true);
-        });
+        f << args[1].sVal; return TzdValue(true); });
 }
 
 // --- 6. ?????? (???????????) ---
-void TzdNativeModule::regPlot(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
-        };
+void TzdNativeModule::regPlot(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
+    };
 
-    reg("plot", [interp](std::vector<TzdValue> args) -> TzdValue {
+    reg("plot", [interp](std::vector<TzdValue> args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("Error: plot(func, start, end, [step])");
         size_t argIdx = 0;
         std::vector<TzdValue> functions;
@@ -1036,10 +1191,10 @@ void TzdNativeModule::regPlot(TzdInterpreter* interp) {
         interp->m_lastPlot.step = step;
 
         interp->internalRenderPlot(functions, start, end, step);
-        return TzdValue(true);
-        });
+        return TzdValue(true); });
 
-    interp->onFunctionRedefined([interp](const std::string& name, const TzdValue& newVal, antlr4::ParserRuleContext* ctx) {
+    interp->onFunctionRedefined([interp](const std::string &name, const TzdValue &newVal, antlr4::ParserRuleContext *ctx)
+                                {
         if (interp->m_lastPlot.active) {
             auto& state = interp->m_lastPlot;
             if (std::find(state.targetFuncNames.begin(), state.targetFuncNames.end(), name) != state.targetFuncNames.end()) {
@@ -1050,17 +1205,21 @@ void TzdNativeModule::regPlot(TzdInterpreter* interp) {
                 }
                 catch (...) {}
             }
-        }
-        });
+        } });
 }
 
 // ======================== String functions ========================
-void TzdNativeModule::regString(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regString(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    reg("split", [](auto args) -> TzdValue {
+    reg("split", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue();
         std::string s = args[0].sVal, delim = args[1].sVal;
         std::vector<TzdValue> result;
@@ -1071,10 +1230,10 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
             start = end + delim.length();
         }
         result.push_back(TzdValue(s.substr(start)));
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("join", [](auto args) -> TzdValue {
+    reg("join", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue("");
         std::string delim = args[1].sVal;
         std::string result;
@@ -1083,10 +1242,10 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
             if (args[0].arrVal[i].type == TzdValue::STRING) result += args[0].arrVal[i].sVal;
             else result += std::to_string(valToDouble(args[0].arrVal[i]));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("replace", [](auto args) -> TzdValue {
+    reg("replace", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         std::string s = args[0].sVal, from = args[1].sVal, to = args[2].sVal;
         if (from.empty()) return TzdValue(s);
@@ -1095,10 +1254,10 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
             s.replace(pos, from.length(), to);
             pos += to.length();
         }
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("substring", [](auto args) -> TzdValue {
+    reg("substring", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue("");
         std::string s = args[0].sVal;
         int start = (int)valToDouble(args[1]);
@@ -1109,79 +1268,79 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
         if (end < 0) end = (int)s.length() + end;
         if (end < start) return TzdValue("");
         if (end > (int)s.length()) end = (int)s.length();
-        return TzdValue(s.substr(start, end - start));
-    });
+        return TzdValue(s.substr(start, end - start)); });
 
-    reg("trim", [](auto args) -> TzdValue {
+    reg("trim", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         size_t first = s.find_first_not_of(" \t\r\n\v\f");
         if (first == std::string::npos) return TzdValue("");
         size_t last = s.find_last_not_of(" \t\r\n\v\f");
-        return TzdValue(s.substr(first, last - first + 1));
-    });
+        return TzdValue(s.substr(first, last - first + 1)); });
 
-    reg("toUpper", [](auto args) -> TzdValue {
+    reg("toUpper", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("toLower", [](auto args) -> TzdValue {
+    reg("toLower", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("contains", [](auto args) -> TzdValue {
+    reg("contains", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
-        return TzdValue(args[0].sVal.find(args[1].sVal) != std::string::npos);
-    });
+        return TzdValue(args[0].sVal.find(args[1].sVal) != std::string::npos); });
 
-    reg("startsWith", [](auto args) -> TzdValue {
+    reg("startsWith", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
-        return TzdValue(args[0].sVal.rfind(args[1].sVal, 0) == 0);
-    });
+        return TzdValue(args[0].sVal.rfind(args[1].sVal, 0) == 0); });
 
-    reg("endsWith", [](auto args) -> TzdValue {
+    reg("endsWith", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         const std::string& s = args[0].sVal;
         const std::string& suffix = args[1].sVal;
         if (suffix.length() > s.length()) return TzdValue(false);
-        return TzdValue(s.compare(s.length() - suffix.length(), suffix.length(), suffix) == 0);
-    });
+        return TzdValue(s.compare(s.length() - suffix.length(), suffix.length(), suffix) == 0); });
 
-    reg("indexOf", [](auto args) -> TzdValue {
+    reg("indexOf", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(-1.0);
         size_t pos = args[0].sVal.find(args[1].sVal);
         if (pos == std::string::npos) return TzdValue(-1.0);
-        return TzdValue((double)pos);
-    });
+        return TzdValue((double)pos); });
 
-    reg("lastIndexOf", [](auto args) -> TzdValue {
+    reg("lastIndexOf", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(-1.0);
         size_t pos = args[0].sVal.rfind(args[1].sVal);
         if (pos == std::string::npos) return TzdValue(-1.0);
-        return TzdValue((double)pos);
-    });
+        return TzdValue((double)pos); });
 
-    reg("charAt", [](auto args) -> TzdValue {
+    reg("charAt", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue("");
         int idx = (int)valToDouble(args[1]);
         if (idx < 0 || idx >= (int)args[0].sVal.length()) return TzdValue("");
-        return TzdValue(std::string(1, args[0].sVal[idx]));
-    });
+        return TzdValue(std::string(1, args[0].sVal[idx])); });
 
-    reg("reverseStr", [](auto args) -> TzdValue {
+    reg("reverseStr", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::reverse(s.begin(), s.end());
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("splitRegex", [](auto args) -> TzdValue {
+    reg("splitRegex", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue();
         try {
             std::regex re(args[1].sVal);
@@ -1190,52 +1349,52 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
             std::vector<TzdValue> result;
             for (; it != end; ++it) result.push_back(TzdValue(it->str()));
             return TzdValue(result);
-        } catch (...) { return TzdValue(); }
-    });
+        } catch (...) { return TzdValue(); } });
 
-    reg("replaceRegex", [](auto args) -> TzdValue {
+    reg("replaceRegex", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         try {
             std::regex re(args[1].sVal);
             return TzdValue(std::regex_replace(args[0].sVal, re, args[2].sVal));
-        } catch (...) { return TzdValue(args[0].sVal); }
-    });
+        } catch (...) { return TzdValue(args[0].sVal); } });
 
-    reg("match", [](auto args) -> TzdValue {
+    reg("match", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         try {
             return TzdValue(std::regex_search(args[0].sVal, std::regex(args[1].sVal)));
-        } catch (...) { return TzdValue(false); }
-    });
+        } catch (...) { return TzdValue(false); } });
 
-    reg("repeat", [](auto args) -> TzdValue {
+    reg("repeat", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue("");
         int n = (int)valToDouble(args[1]);
         if (n <= 0) return TzdValue("");
         std::string result;
         for (int i = 0; i < n; ++i) result += args[0].sVal;
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("padLeft", [](auto args) -> TzdValue {
+    reg("padLeft", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         std::string s = args[0].sVal;
         int width = (int)valToDouble(args[1]);
         char pad = args[2].sVal.empty() ? ' ' : args[2].sVal[0];
         if ((int)s.length() >= width) return TzdValue(s);
-        return TzdValue(std::string(width - s.length(), pad) + s);
-    });
+        return TzdValue(std::string(width - s.length(), pad) + s); });
 
-    reg("padRight", [](auto args) -> TzdValue {
+    reg("padRight", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         std::string s = args[0].sVal;
         int width = (int)valToDouble(args[1]);
         char pad = args[2].sVal.empty() ? ' ' : args[2].sVal[0];
         if ((int)s.length() >= width) return TzdValue(s);
-        return TzdValue(s + std::string(width - s.length(), pad));
-    });
+        return TzdValue(s + std::string(width - s.length(), pad)); });
 
-    reg("format", [](auto args) -> TzdValue {
+    reg("format", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string fmt = args[0].sVal;
         std::string result;
@@ -1252,47 +1411,56 @@ void TzdNativeModule::regString(TzdInterpreter* interp) {
                 result += fmt[i];
             }
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 }
 
 // ======================== Array functions ========================
-void TzdNativeModule::regArray(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regArray(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    auto pushFn = [](auto args) -> TzdValue {
-        if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
+    auto pushFn = [](auto args) -> TzdValue
+    {
+        if (args.empty() || args[0].type != TzdValue::ARRAY)
+            return TzdValue();
         TzdValue result = args[0];
-        for (size_t i = 1; i < args.size(); ++i) result.arrVal.push_back(args[i]);
+        for (size_t i = 1; i < args.size(); ++i)
+            result.arrVal.push_back(args[i]);
         return result;
     };
     reg("push", pushFn);
     reg("array_push", pushFn);
 
-    auto popFn = [](auto args) -> TzdValue {
-        if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue();
+    auto popFn = [](auto args) -> TzdValue
+    {
+        if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
+            return TzdValue();
         return args[0].arrVal.back();
     };
     reg("pop", popFn);
     reg("array_pop", popFn);
 
-    reg("shift", [](auto args) -> TzdValue {
+    reg("shift", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue();
-        return args[0].arrVal.front();
-    });
+        return args[0].arrVal.front(); });
 
-    reg("unshift", [](auto args) -> TzdValue {
+    reg("unshift", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         TzdValue result;
         result.type = TzdValue::ARRAY;
         for (size_t i = 1; i < args.size(); ++i) result.arrVal.push_back(args[i]);
         for (const auto& item : args[0].arrVal) result.arrVal.push_back(item);
-        return result;
-    });
+        return result; });
 
-    reg("slice", [](auto args) -> TzdValue {
+    reg("slice", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         const auto& arr = args[0].arrVal;
         int sz = (int)arr.size();
@@ -1303,10 +1471,10 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
         if (start > sz) start = sz; if (end > sz) end = sz;
         if (end < start) end = start;
         std::vector<TzdValue> result(arr.begin() + start, arr.begin() + end);
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("concat", [](auto args) -> TzdValue {
+    reg("concat", [](auto args) -> TzdValue
+        {
         TzdValue result;
         result.type = TzdValue::ARRAY;
         for (const auto& arg : args) {
@@ -1316,50 +1484,116 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
                 result.arrVal.push_back(arg);
             }
         }
-        return result;
-    });
+        return result; });
 
-    reg("reverse", [](auto args) -> TzdValue {
+    reg("reverse", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         TzdValue result = args[0];
         std::reverse(result.arrVal.begin(), result.arrVal.end());
-        return result;
-    });
+        return result; });
 
-    reg("sort", [](auto args) -> TzdValue {
+    reg("sort", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         TzdValue result = args[0];
         std::sort(result.arrVal.begin(), result.arrVal.end(), [](const TzdValue& a, const TzdValue& b) {
             return valToDouble(a) < valToDouble(b);
         });
-        return result;
-    });
+        return result; });
 
-    reg("range", [](auto args) -> TzdValue {
+    reg("range", [](auto args) -> TzdValue
+        {
         double start = (args.size() > 0) ? valToDouble(args[0]) : 0;
         double end = (args.size() > 1) ? valToDouble(args[1]) : start;
         double step = (args.size() > 2) ? valToDouble(args[2]) : 1.0;
         if (step == 0) step = 1.0;
-        std::vector<TzdValue> result;
-        if (step > 0) {
-            for (double v = start; v < end; v += step) result.push_back(TzdValue(v));
-        } else {
-            for (double v = start; v > end; v += step) result.push_back(TzdValue(v));
+        TzdValue result;
+        result.type = TzdValue::ARRAY;
+        result.isNativeDoubleArr = true;
+        int count = 0;
+        if (step > 0 && end > start) {
+            count = (int)std::ceil((end - start) / step);
+        } else if (step < 0 && start > end) {
+            count = (int)std::ceil((start - end) / (-step));
         }
-        return TzdValue(result);
-    });
+        if (count > 0) {
+            result.nativeArr.resize((size_t)count);
+            double* data = result.nativeArr.data();
 
-    reg("map", [interp](auto args) -> TzdValue {
+            if (step == 1.0) {
+#if defined(_M_X64) || defined(__x86_64__)
+                int i = 0;
+                while (i < count && (reinterpret_cast<uintptr_t>(data + i) & 31) != 0) {
+                    data[i] = start + (double)i;
+                    i++;
+                }
+
+                __m256d vOffsets0 = _mm256_set_pd(3.0, 2.0, 1.0, 0.0);
+                __m256d vOffsets1 = _mm256_set_pd(7.0, 6.0, 5.0, 4.0);
+                __m256d vOffsets2 = _mm256_set_pd(11.0, 10.0, 9.0, 8.0);
+                __m256d vOffsets3 = _mm256_set_pd(15.0, 14.0, 13.0, 12.0);
+                __m256d vStep16 = _mm256_set1_pd(16.0);
+                __m256d vBase = _mm256_set1_pd(start + (double)i);
+                __m256d vVal0 = _mm256_add_pd(vBase, vOffsets0);
+                __m256d vVal1 = _mm256_add_pd(vBase, vOffsets1);
+                __m256d vVal2 = _mm256_add_pd(vBase, vOffsets2);
+                __m256d vVal3 = _mm256_add_pd(vBase, vOffsets3);
+                int limit16 = count - 15;
+
+                if (count >= 4096) {
+                    for (; i < limit16; i += 16) {
+                        _mm256_stream_pd(data + i, vVal0);
+                        _mm256_stream_pd(data + i + 4, vVal1);
+                        _mm256_stream_pd(data + i + 8, vVal2);
+                        _mm256_stream_pd(data + i + 12, vVal3);
+                        vVal0 = _mm256_add_pd(vVal0, vStep16);
+                        vVal1 = _mm256_add_pd(vVal1, vStep16);
+                        vVal2 = _mm256_add_pd(vVal2, vStep16);
+                        vVal3 = _mm256_add_pd(vVal3, vStep16);
+                    }
+                    _mm_sfence();
+                } else {
+                    for (; i < limit16; i += 16) {
+                        _mm256_store_pd(data + i, vVal0);
+                        _mm256_store_pd(data + i + 4, vVal1);
+                        _mm256_store_pd(data + i + 8, vVal2);
+                        _mm256_store_pd(data + i + 12, vVal3);
+                        vVal0 = _mm256_add_pd(vVal0, vStep16);
+                        vVal1 = _mm256_add_pd(vVal1, vStep16);
+                        vVal2 = _mm256_add_pd(vVal2, vStep16);
+                        vVal3 = _mm256_add_pd(vVal3, vStep16);
+                    }
+                }
+                for (; i < count; ++i) {
+                    data[i] = start + (double)i;
+                }
+#else
+                for (int i = 0; i < count; ++i) data[i] = start + i;
+#endif
+            } else if (step > 0) {
+                double v = start;
+                for (int i = 0; i < count; ++i, v += step) data[i] = v;
+            } else {
+                double v = start;
+                for (int i = 0; i < count; ++i, v += step) data[i] = v;
+            }
+            result.syncFastBuf();
+        }
+        return result; });
+
+    reg("map", [interp](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue();
         std::vector<TzdValue> result;
         for (const auto& item : args[0].arrVal) {
             std::vector<TzdValue> callArgs = {item};
             result.push_back(interp->callFunction(args[1], callArgs));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("filter", [interp](auto args) -> TzdValue {
+    reg("filter", [interp](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue();
         std::vector<TzdValue> result;
         for (const auto& item : args[0].arrVal) {
@@ -1367,10 +1601,10 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
             TzdValue r = interp->callFunction(args[1], callArgs);
             if (valToDouble(r) != 0 || r.type == TzdValue::BOOL && r.bVal) result.push_back(item);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("reduce", [interp](auto args) -> TzdValue {
+    reg("reduce", [interp](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue();
         TzdValue acc = (args.size() > 2) ? args[2] : (args[0].arrVal.empty() ? TzdValue() : args[0].arrVal[0]);
         size_t startIdx = (args.size() > 2) ? 0 : 1;
@@ -1378,46 +1612,46 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
             std::vector<TzdValue> callArgs = {acc, args[0].arrVal[i]};
             acc = interp->callFunction(args[1], callArgs);
         }
-        return acc;
-    });
+        return acc; });
 
-    reg("find", [interp](auto args) -> TzdValue {
+    reg("find", [interp](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue();
         for (const auto& item : args[0].arrVal) {
             std::vector<TzdValue> callArgs = {item};
             TzdValue r = interp->callFunction(args[1], callArgs);
             if (valToDouble(r) != 0 || r.type == TzdValue::BOOL && r.bVal) return item;
         }
-        return TzdValue();
-    });
+        return TzdValue(); });
 
-    reg("includes", [](auto args) -> TzdValue {
+    reg("includes", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue(false);
         for (const auto& item : args[0].arrVal) {
             if (item.type == TzdValue::STRING && args[1].type == TzdValue::STRING && item.sVal == args[1].sVal) return TzdValue(true);
             if (valToDouble(item) == valToDouble(args[1]) && item.type == args[1].type) return TzdValue(true);
         }
-        return TzdValue(false);
-    });
+        return TzdValue(false); });
 
-    reg("indexOfArr", [](auto args) -> TzdValue {
+    reg("indexOfArr", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return TzdValue(-1.0);
         for (size_t i = 0; i < args[0].arrVal.size(); ++i) {
             if (args[0].arrVal[i].type == TzdValue::STRING && args[1].type == TzdValue::STRING && args[0].arrVal[i].sVal == args[1].sVal) return TzdValue((double)i);
             if (valToDouble(args[0].arrVal[i]) == valToDouble(args[1])) return TzdValue((double)i);
         }
-        return TzdValue(-1.0);
-    });
+        return TzdValue(-1.0); });
 
-    reg("fill", [](auto args) -> TzdValue {
+    reg("fill", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue();
         int n = (int)valToDouble(args[0]);
         std::vector<TzdValue> result;
         for (int i = 0; i < n; ++i) result.push_back(args[1]);
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("flatten", [](auto args) -> TzdValue {
+    reg("flatten", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         std::vector<TzdValue> result;
         std::function<void(const TzdValue&)> flat = [&](const TzdValue& v) {
@@ -1425,10 +1659,10 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
             else result.push_back(v);
         };
         flat(args[0]);
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("zip", [](auto args) -> TzdValue {
+    reg("zip", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY || args[1].type != TzdValue::ARRAY) return TzdValue();
         size_t n = (std::min)(args[0].arrVal.size(), args[1].arrVal.size());
         std::vector<TzdValue> result;
@@ -1436,10 +1670,10 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
             std::vector<TzdValue> pair = {args[0].arrVal[i], args[1].arrVal[i]};
             result.push_back(TzdValue(pair));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("unique", [](auto args) -> TzdValue {
+    reg("unique", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue();
         std::vector<TzdValue> result;
         for (const auto& item : args[0].arrVal) {
@@ -1450,45 +1684,49 @@ void TzdNativeModule::regArray(TzdInterpreter* interp) {
             }
             if (!found) result.push_back(item);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("sum", [](auto args) -> TzdValue {
+    reg("sum", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue(0.0);
         double s = 0;
         for (const auto& item : args[0].arrVal) s += valToDouble(item);
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("avg", [](auto args) -> TzdValue {
+    reg("avg", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue(0.0);
         double s = 0;
         for (const auto& item : args[0].arrVal) s += valToDouble(item);
-        return TzdValue(s / args[0].arrVal.size());
-    });
+        return TzdValue(s / args[0].arrVal.size()); });
 
-    reg("minArr", [](auto args) -> TzdValue {
+    reg("minArr", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue(0.0);
         double m = valToDouble(args[0].arrVal[0]);
         for (const auto& item : args[0].arrVal) { double v = valToDouble(item); if (v < m) m = v; }
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("maxArr", [](auto args) -> TzdValue {
+    reg("maxArr", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty()) return TzdValue(0.0);
         double m = valToDouble(args[0].arrVal[0]);
         for (const auto& item : args[0].arrVal) { double v = valToDouble(item); if (v > m) m = v; }
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 }
 
 // ======================== JSON functions ========================
-void TzdNativeModule::regJson(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regJson(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    reg("jsonParse", [](auto args) -> TzdValue {
+    reg("jsonParse", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::STRING) return TzdValue();
         std::string s = args[0].sVal;
         size_t pos = 0;
@@ -1575,10 +1813,10 @@ void TzdNativeModule::regJson(TzdInterpreter* interp) {
             if (c == 'n') return parseNull();
             return TzdValue();
         };
-        try { return parseValue(); } catch (...) { return TzdValue(); }
-    });
+        try { return parseValue(); } catch (...) { return TzdValue(); } });
 
-    reg("jsonStringify", [interp](auto args) -> TzdValue {
+    reg("jsonStringify", [interp](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("null");
         std::function<std::string(const TzdValue&)> stringify = [&](const TzdValue& val) -> std::string {
             switch (val.type) {
@@ -1622,27 +1860,31 @@ void TzdNativeModule::regJson(TzdInterpreter* interp) {
                 default: return "null";
             }
         };
-        return TzdValue(stringify(args[0]));
-    });
+        return TzdValue(stringify(args[0])); });
 }
 
 // ======================== File system functions ========================
-void TzdNativeModule::regFileSystem(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regFileSystem(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    reg("fileExists", [](auto args) -> TzdValue {
+    reg("fileExists", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(fs::exists(args[0].sVal) && fs::is_regular_file(args[0].sVal));
-    });
+        return TzdValue(fs::exists(args[0].sVal) && fs::is_regular_file(args[0].sVal)); });
 
-    reg("dirExists", [](auto args) -> TzdValue {
+    reg("dirExists", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(fs::exists(args[0].sVal) && fs::is_directory(args[0].sVal));
-    });
+        return TzdValue(fs::exists(args[0].sVal) && fs::is_directory(args[0].sVal)); });
 
-    reg("listDir", [](auto args) -> TzdValue {
+    reg("listDir", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         std::string path = args[0].sVal;
         if (!fs::exists(path)) return TzdValue();
@@ -1657,76 +1899,76 @@ void TzdNativeModule::regFileSystem(TzdInterpreter* interp) {
                 result.push_back(TzdValue(item));
             }
         } catch (...) {}
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("makeDir", [](auto args) -> TzdValue {
+    reg("makeDir", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         try { return TzdValue(fs::create_directories(args[0].sVal)); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("removeFile", [](auto args) -> TzdValue {
+    reg("removeFile", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         try { return TzdValue(fs::remove(args[0].sVal)); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("removeDir", [](auto args) -> TzdValue {
+    reg("removeDir", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         try { return TzdValue(fs::remove_all(args[0].sVal) > 0); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("copyFile", [](auto args) -> TzdValue {
+    reg("copyFile", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         try { fs::copy_file(args[0].sVal, args[1].sVal, fs::copy_options::overwrite_existing); return TzdValue(true); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("moveFile", [](auto args) -> TzdValue {
+    reg("moveFile", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         try { fs::rename(args[0].sVal, args[1].sVal); return TzdValue(true); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("fileSize", [](auto args) -> TzdValue {
+    reg("fileSize", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         try { if (fs::exists(args[0].sVal)) return TzdValue((double)fs::file_size(args[0].sVal)); }
         catch (...) {}
-        return TzdValue(0.0);
-    });
+        return TzdValue(0.0); });
 
-    reg("currentDir", [](auto args) -> TzdValue {
+    reg("currentDir", [](auto args) -> TzdValue
+        {
         try { return TzdValue(fs::current_path().string()); }
-        catch (...) { return TzdValue(""); }
-    });
+        catch (...) { return TzdValue(""); } });
 
-    reg("changeDir", [](auto args) -> TzdValue {
+    reg("changeDir", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         try { fs::current_path(args[0].sVal); return TzdValue(true); }
-        catch (...) { return TzdValue(false); }
-    });
+        catch (...) { return TzdValue(false); } });
 
-    reg("appendFile", [](auto args) -> TzdValue {
+    reg("appendFile", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         std::ofstream f(args[0].sVal, std::ios::app);
         if (!f) return TzdValue(false);
         f << args[1].sVal;
-        return TzdValue(true);
-    });
+        return TzdValue(true); });
 
-    reg("readLines", [](auto args) -> TzdValue {
+    reg("readLines", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         std::ifstream f(args[0].sVal);
         if (!f) return TzdValue();
         std::vector<TzdValue> lines;
         std::string line;
         while (std::getline(f, line)) lines.push_back(TzdValue(line));
-        return TzdValue(lines);
-    });
+        return TzdValue(lines); });
 
-    reg("writeLines", [](auto args) -> TzdValue {
+    reg("writeLines", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[1].type != TzdValue::ARRAY) return TzdValue(false);
         std::ofstream f(args[0].sVal);
         if (!f) return TzdValue(false);
@@ -1735,150 +1977,158 @@ void TzdNativeModule::regFileSystem(TzdInterpreter* interp) {
             else f << valToDouble(line);
             f << "\n";
         }
-        return TzdValue(true);
-    });
+        return TzdValue(true); });
 }
 
 // ======================== Conversion functions ========================
-void TzdNativeModule::regConv(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regConv(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    reg("toFixed", [](auto args) -> TzdValue {
+    reg("toFixed", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("0");
         int digits = (args.size() > 1) ? (int)valToDouble(args[1]) : 2;
         std::ostringstream ss;
         ss << std::fixed << std::setprecision(digits) << valToDouble(args[0]);
-        return TzdValue(ss.str());
-    });
+        return TzdValue(ss.str()); });
 
-    reg("toPrecision", [](auto args) -> TzdValue {
+    reg("toPrecision", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("0");
         int prec = (args.size() > 1) ? (int)valToDouble(args[1]) : 6;
         std::ostringstream ss;
         ss << std::setprecision(prec) << valToDouble(args[0]);
-        return TzdValue(ss.str());
-    });
+        return TzdValue(ss.str()); });
 
-    reg("parseFloat", [](auto args) -> TzdValue {
+    reg("parseFloat", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         try { return TzdValue(std::stod(args[0].sVal)); }
-        catch (...) { return TzdValue(0.0); }
-    });
+        catch (...) { return TzdValue(0.0); } });
 
-    reg("isFinite", [](auto args) -> TzdValue {
+    reg("isFinite", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(std::isfinite(valToDouble(args[0])));
-    });
+        return TzdValue(std::isfinite(valToDouble(args[0]))); });
 
-    reg("isNaN", [](auto args) -> TzdValue {
+    reg("isNaN", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(true);
-        return TzdValue(std::isnan(valToDouble(args[0])));
-    });
+        return TzdValue(std::isnan(valToDouble(args[0]))); });
 
-    reg("toBool", [](auto args) -> TzdValue {
+    reg("toBool", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         if (args[0].type == TzdValue::STRING) return TzdValue(args[0].sVal == "true" || args[0].sVal == "1");
         if (args[0].type == TzdValue::BOOL) return args[0];
-        return TzdValue(valToDouble(args[0]) != 0);
-    });
+        return TzdValue(valToDouble(args[0]) != 0); });
 
-    reg("toInt", [](auto args) -> TzdValue {
+    reg("toInt", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0);
         if (args[0].type == TzdValue::STRING) { try { return TzdValue((double)std::stoll(args[0].sVal)); } catch (...) { return TzdValue(0.0); } }
-        return TzdValue((double)(long long)valToDouble(args[0]));
-    });
+        return TzdValue((double)(long long)valToDouble(args[0])); });
 
-    reg("toHex", [](auto args) -> TzdValue {
+    reg("toHex", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("0");
         std::ostringstream ss;
         ss << std::hex << (long long)valToDouble(args[0]);
-        return TzdValue(ss.str());
-    });
+        return TzdValue(ss.str()); });
 
-    reg("fromHex", [](auto args) -> TzdValue {
+    reg("fromHex", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         try { return TzdValue((double)std::stoll(args[0].sVal, nullptr, 16)); }
-        catch (...) { return TzdValue(0.0); }
-    });
+        catch (...) { return TzdValue(0.0); } });
 
-    reg("toBinary", [](auto args) -> TzdValue {
+    reg("toBinary", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("0");
         long long val = (long long)valToDouble(args[0]);
         if (val == 0) return TzdValue("0");
         std::string bin;
         while (val > 0) { bin = std::to_string(val & 1) + bin; val >>= 1; }
-        return TzdValue(bin);
-    });
+        return TzdValue(bin); });
 
-    reg("fromBinary", [](auto args) -> TzdValue {
+    reg("fromBinary", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         try { return TzdValue((double)std::stoll(args[0].sVal, nullptr, 2)); }
-        catch (...) { return TzdValue(0.0); }
-    });
+        catch (...) { return TzdValue(0.0); } });
 
-    reg("charCode", [](auto args) -> TzdValue {
+    reg("charCode", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].sVal.empty()) return TzdValue(0.0);
-        return TzdValue((double)(unsigned char)args[0].sVal[0]);
-    });
+        return TzdValue((double)(unsigned char)args[0].sVal[0]); });
 
-    reg("fromCharCode", [](auto args) -> TzdValue {
+    reg("fromCharCode", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         int code = (int)valToDouble(args[0]);
-        return TzdValue(std::string(1, (char)code));
-    });
+        return TzdValue(std::string(1, (char)code)); });
 }
 
 // ======================== Extra math functions ========================
-void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regExtraMath(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
-    reg("atan2", [](auto args) -> TzdValue {
+    reg("atan2", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
-        return TzdValue(std::atan2(valToDouble(args[0]), valToDouble(args[1])));
-    });
+        return TzdValue(std::atan2(valToDouble(args[0]), valToDouble(args[1]))); });
 
-    reg("hypot", [](auto args) -> TzdValue {
+    reg("hypot", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
-        return TzdValue(std::hypot(valToDouble(args[0]), valToDouble(args[1])));
-    });
+        return TzdValue(std::hypot(valToDouble(args[0]), valToDouble(args[1]))); });
 
-    reg("min", [](auto args) -> TzdValue {
+    reg("min", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         double m = valToDouble(args[0]);
         for (size_t i = 1; i < args.size(); ++i) { double v = valToDouble(args[i]); if (v < m) m = v; }
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("max", [](auto args) -> TzdValue {
+    reg("max", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         double m = valToDouble(args[0]);
         for (size_t i = 1; i < args.size(); ++i) { double v = valToDouble(args[i]); if (v > m) m = v; }
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("gcd", [](auto args) -> TzdValue {
+    reg("gcd", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         long long a = std::abs((long long)valToDouble(args[0]));
         long long b = std::abs((long long)valToDouble(args[1]));
         while (b) { long long t = b; b = a % b; a = t; }
-        return TzdValue((double)a);
-    });
+        return TzdValue((double)a); });
 
-    reg("lcm", [](auto args) -> TzdValue {
+    reg("lcm", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         long long a = std::abs((long long)valToDouble(args[0]));
         long long b = std::abs((long long)valToDouble(args[1]));
         if (a == 0 || b == 0) return TzdValue(0.0);
         long long g = a; long long bb = b;
         while (bb) { long long t = bb; bb = g % bb; g = t; }
-        return TzdValue((double)(a / g * b));
-    });
+        return TzdValue((double)(a / g * b)); });
 
-    reg("isPrime", [](auto args) -> TzdValue {
+    reg("isPrime", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         long long n = (long long)valToDouble(args[0]);
         if (n < 2) return TzdValue(false);
@@ -1887,85 +2137,85 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
         for (long long i = 5; i * i <= n; i += 6) {
             if (n % i == 0 || n % (i + 2) == 0) return TzdValue(false);
         }
-        return TzdValue(true);
-    });
+        return TzdValue(true); });
 
-    reg("random", [](auto args) -> TzdValue {
+    reg("random", [](auto args) -> TzdValue
+        {
         static std::mt19937_64 gen(std::random_device{}());
         std::uniform_real_distribution<double> dist(0.0, 1.0);
-        return TzdValue(dist(gen));
-    });
+        return TzdValue(dist(gen)); });
 
-    reg("randomInt", [](auto args) -> TzdValue {
+    reg("randomInt", [](auto args) -> TzdValue
+        {
         static std::mt19937_64 gen(std::random_device{}());
         int lo = (args.size() > 0) ? (int)valToDouble(args[0]) : 0;
         int hi = (args.size() > 1) ? (int)valToDouble(args[1]) : lo;
         if (lo > hi) std::swap(lo, hi);
         std::uniform_int_distribution<int> dist(lo, hi);
-        return TzdValue((double)dist(gen));
-    });
+        return TzdValue((double)dist(gen)); });
 
-    reg("randomSeed", [](auto args) -> TzdValue {
+    reg("randomSeed", [](auto args) -> TzdValue
+        {
         unsigned int seed = (unsigned int)valToDouble(args[0]);
         srand(seed);
-        return TzdValue();
-    });
+        return TzdValue(); });
 
-    reg("degrees", [](auto args) -> TzdValue {
+    reg("degrees", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(valToDouble(args[0]) * 180.0 / 3.14159265358979323846);
-    });
+        return TzdValue(valToDouble(args[0]) * 180.0 / 3.14159265358979323846); });
 
-    reg("radians", [](auto args) -> TzdValue {
+    reg("radians", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(valToDouble(args[0]) * 3.14159265358979323846 / 180.0);
-    });
+        return TzdValue(valToDouble(args[0]) * 3.14159265358979323846 / 180.0); });
 
-    reg("log2", [](auto args) -> TzdValue {
+    reg("log2", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::log2(valToDouble(args[0])));
-    });
+        return TzdValue(std::log2(valToDouble(args[0]))); });
 
-    reg("logBase", [](auto args) -> TzdValue {
+    reg("logBase", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         double x = valToDouble(args[0]), b = valToDouble(args[1]);
         if (x <= 0 || b <= 0 || b == 1) return TzdValue(0.0);
-        return TzdValue(std::log(x) / std::log(b));
-    });
+        return TzdValue(std::log(x) / std::log(b)); });
 
-    reg("erf", [](auto args) -> TzdValue {
+    reg("erf", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::erf(valToDouble(args[0])));
-    });
+        return TzdValue(std::erf(valToDouble(args[0]))); });
 
-    reg("tgamma", [](auto args) -> TzdValue {
+    reg("tgamma", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::tgamma(valToDouble(args[0])));
-    });
+        return TzdValue(std::tgamma(valToDouble(args[0]))); });
 
-    reg("sign", [](auto args) -> TzdValue {
+    reg("sign", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         double v = valToDouble(args[0]);
-        return TzdValue(v > 0 ? 1.0 : (v < 0 ? -1.0 : 0.0));
-    });
+        return TzdValue(v > 0 ? 1.0 : (v < 0 ? -1.0 : 0.0)); });
 
-    reg("clamp", [](auto args) -> TzdValue {
+    reg("clamp", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         double v = valToDouble(args[0]);
         double lo = valToDouble(args[1]);
         double hi = valToDouble(args[2]);
-        return TzdValue(v < lo ? lo : (v > hi ? hi : v));
-    });
+        return TzdValue(v < lo ? lo : (v > hi ? hi : v)); });
 
-    reg("lerp", [](auto args) -> TzdValue {
+    reg("lerp", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue();
         double a = valToDouble(args[0]);
         double b = valToDouble(args[1]);
         double t = valToDouble(args[2]);
-        return TzdValue(a + (b - a) * t);
-    });
+        return TzdValue(a + (b - a) * t); });
 
-    reg("sum", [](auto args) -> TzdValue {
+    reg("sum", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         if (args[0].type == TzdValue::ARRAY) {
             double s = 0;
@@ -1974,17 +2224,21 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
         }
         double s = 0;
         for (const auto& arg : args) s += valToDouble(arg);
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("PI", [](auto args) -> TzdValue { return TzdValue(3.14159265358979323846); });
-    reg("E", [](auto args) -> TzdValue { return TzdValue(2.71828182845904523536); });
-    reg("INF", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::infinity()); });
-    reg("NAN", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::quiet_NaN()); });
+    reg("PI", [](auto args) -> TzdValue
+        { return TzdValue(3.14159265358979323846); });
+    reg("E", [](auto args) -> TzdValue
+        { return TzdValue(2.71828182845904523536); });
+    reg("INF", [](auto args) -> TzdValue
+        { return TzdValue(std::numeric_limits<double>::infinity()); });
+    reg("NAN", [](auto args) -> TzdValue
+        { return TzdValue(std::numeric_limits<double>::quiet_NaN()); });
 
     // --- BIGINT (arbitrary precision integer) functions ---
     // bigint(x): convert any numeric value to BIGINT
-    reg("bigint", [](auto args) -> TzdValue {
+    reg("bigint", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         const TzdValue& v = args[0];
         if (v.type == TzdValue::BIGINT) return v;
@@ -1996,11 +2250,11 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
             s = std::to_string((long long)d);
         } else s = std::to_string(v.lVal);
         TzdValue r; r.type = TzdValue::BIGINT; r.sVal = s;
-        return r;
-    });
+        return r; });
 
     // bigintFactorial(n): factorial using arbitrary precision
-    reg("bigintFactorial", [](auto args) -> TzdValue {
+    reg("bigintFactorial", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(1LL);
         long long n = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
         if (n < 0) return TzdValue(0LL);
@@ -2019,40 +2273,38 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
             }
         }
         TzdValue r; r.type = TzdValue::BIGINT; r.sVal = result;
-        return r;
-    });
+        return r; });
 
     // setBigIntMaxDigits(n): configure the maximum digit count for BIGINT results
-    reg("setBigIntMaxDigits", [](auto args) -> TzdValue {
+    reg("setBigIntMaxDigits", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0LL);
         long long n = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
         setBigIntMaxDigits((size_t)n);
-        return TzdValue((long long)getBigIntMaxDigits());
-    });
+        return TzdValue((long long)getBigIntMaxDigits()); });
 
     // getBigIntMaxDigits(): get the current BIGINT digit limit
-    reg("getBigIntMaxDigits", [](auto args) -> TzdValue {
-        return TzdValue((long long)getBigIntMaxDigits());
-    });
+    reg("getBigIntMaxDigits", [](auto args) -> TzdValue
+        { return TzdValue((long long)getBigIntMaxDigits()); });
 
     // powmod(base, exp, mod): modular exponentiation
-    reg("powmod", [](auto args) -> TzdValue {
+    reg("powmod", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue(0LL);
         std::string base = to_bigint_str(args[0]);
         std::string exp = to_bigint_str(args[1]);
         std::string mod = to_bigint_str(args[2]);
         std::string r = bigint_powmod(base, exp, mod);
         TzdValue v; v.type = TzdValue::BIGINT; v.sVal = r;
-        return v;
-    });
+        return v; });
 
     // isBigint(x): check if value is BIGINT type
-    reg("isBigint", [](auto args) -> TzdValue {
-        return TzdValue(!args.empty() && args[0].type == TzdValue::BIGINT);
-    });
+    reg("isBigint", [](auto args) -> TzdValue
+        { return TzdValue(!args.empty() && args[0].type == TzdValue::BIGINT); });
 
     // bigintGcd(a, b): greatest common divisor using big integers
-    reg("bigintGcd", [](auto args) -> TzdValue {
+    reg("bigintGcd", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0LL);
         std::string a = bigint_abs(to_bigint_str(args[0]));
         std::string b = bigint_abs(to_bigint_str(args[1]));
@@ -2061,12 +2313,12 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
             a = b; b = r;
         }
         TzdValue v; v.type = TzdValue::BIGINT; v.sVal = a.empty() ? "0" : a;
-        return v;
-    });
+        return v; });
 
     // --- RATIONAL (exact fraction) functions ---
     // rational(num, den): create an exact fraction
-    reg("rational", [](auto args) -> TzdValue {
+    reg("rational", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) {
             // Single arg: convert number to rational
             if (args.empty()) return TzdValue();
@@ -2074,11 +2326,11 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
             TzdValue v; v.type = (s.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = s;
             return v;
         }
-        return make_rational(to_bigint_str(args[0]), to_bigint_str(args[1]));
-    });
+        return make_rational(to_bigint_str(args[0]), to_bigint_str(args[1])); });
 
     // toFraction(x): convert a double to an exact fraction
-    reg("toFraction", [](auto args) -> TzdValue {
+    reg("toFraction", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         const TzdValue& v = args[0];
         if (v.type == TzdValue::RATIONAL) return v;
@@ -2103,48 +2355,52 @@ void TzdNativeModule::regExtraMath(TzdInterpreter* interp) {
             num = n / g; den = d2 / g;
         }
         if (neg) num = -num;
-        return make_rational(std::to_string(num), std::to_string(den));
-    });
+        return make_rational(std::to_string(num), std::to_string(den)); });
 
     // rationalAdd(a, b): exact fraction addition
-    reg("rationalAdd", [](auto args) -> TzdValue {
+    reg("rationalAdd", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue();
         std::string r = rational_add(to_rational_str(args[0]), to_rational_str(args[1]));
         TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
-        return v;
-    });
+        return v; });
 
     // rationalMul(a, b): exact fraction multiplication
-    reg("rationalMul", [](auto args) -> TzdValue {
+    reg("rationalMul", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue();
         std::string r = rational_mul(to_rational_str(args[0]), to_rational_str(args[1]));
         TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
-        return v;
-    });
+        return v; });
 }
 
 // ============================================================================
 // Extended Standard Library — datetime, encoding, environment, utilities
 // ============================================================================
-void TzdNativeModule::regExtended(TzdInterpreter* interp) {
-    auto reg = [&](std::string name, TzdValue::NativeFuncType f) {
-        TzdValue v(f); v.name = name; interp->setGlobalVariable(name, v);
+void TzdNativeModule::regExtended(TzdInterpreter *interp)
+{
+    auto reg = [&](std::string name, TzdValue::NativeFuncType f)
+    {
+        TzdValue v(f);
+        v.name = name;
+        interp->setGlobalVariable(name, v);
     };
 
     // ---- DateTime functions ----
-    reg("now", [](auto args) -> TzdValue {
+    reg("now", [](auto args) -> TzdValue
+        {
         auto now = std::chrono::system_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch());
-        return TzdValue((double)ms.count());
-    });
+        return TzdValue((double)ms.count()); });
 
-    reg("timestamp", [](auto args) -> TzdValue {
+    reg("timestamp", [](auto args) -> TzdValue
+        {
         auto now = std::chrono::system_clock::now();
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch());
-        return TzdValue((double)secs.count());
-    });
+        return TzdValue((double)secs.count()); });
 
-    reg("formatTime", [](auto args) -> TzdValue {
+    reg("formatTime", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         double ts = valToDouble(args[0]);
         std::string fmt = (args.size() > 1) ? args[1].sVal : "%Y-%m-%d %H:%M:%S";
@@ -2153,10 +2409,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         localtime_s(&timeinfo, &rawtime);
         char buffer[256];
         strftime(buffer, sizeof(buffer), fmt.c_str(), &timeinfo);
-        return TzdValue(std::string(buffer));
-    });
+        return TzdValue(std::string(buffer)); });
 
-    reg("dateParts", [](auto args) -> TzdValue {
+    reg("dateParts", [](auto args) -> TzdValue
+        {
         double ts = args.empty() ? (double)std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count() : valToDouble(args[0]);
         time_t rawtime = (time_t)ts / 1000;
@@ -2171,19 +2427,19 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         m["second"] = TzdValue((double)timeinfo.tm_sec);
         m["weekday"] = TzdValue((double)timeinfo.tm_wday);
         m["dayOfYear"] = TzdValue((double)timeinfo.tm_yday);
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("dateDiff", [](auto args) -> TzdValue {
+    reg("dateDiff", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         double t1 = valToDouble(args[0]);
         double t2 = valToDouble(args[1]);
-        return TzdValue(t2 - t1);
-    });
+        return TzdValue(t2 - t1); });
 
     // ---- Base64 encoding/decoding ----
     static const char b64Table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    reg("base64Encode", [](auto args) -> TzdValue {
+    reg("base64Encode", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string input = args[0].sVal;
         std::string output;
@@ -2198,10 +2454,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         }
         if (valb > 0) output.push_back(b64Table[(val << (6 - valb)) & 0x3F]);
         while (output.size() % 4) output.push_back('=');
-        return TzdValue(output);
-    });
+        return TzdValue(output); });
 
-    reg("base64Decode", [](auto args) -> TzdValue {
+    reg("base64Decode", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string input = args[0].sVal;
         static int b64DecTable[128] = {0};
@@ -2222,11 +2478,11 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 valb -= 8;
             }
         }
-        return TzdValue(output);
-    });
+        return TzdValue(output); });
 
     // ---- CRC32 ----
-    reg("crc32", [](auto args) -> TzdValue {
+    reg("crc32", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         std::string data = args[0].sVal;
         static uint32_t table[256] = {0};
@@ -2244,11 +2500,11 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         for (unsigned char c : data) {
             crc = table[(crc ^ c) & 0xFF] ^ (crc >> 8);
         }
-        return TzdValue((double)(crc ^ 0xFFFFFFFF));
-    });
+        return TzdValue((double)(crc ^ 0xFFFFFFFF)); });
 
     // ---- Hash (simple FNV-1a 64-bit) ----
-    reg("hash", [](auto args) -> TzdValue {
+    reg("hash", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         std::string data = args[0].sVal;
         uint64_t hash = 14695981039346656037ULL;
@@ -2256,42 +2512,44 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             hash ^= c;
             hash *= 1099511628211ULL;
         }
-        return TzdValue((double)hash);
-    });
+        return TzdValue((double)hash); });
 
     // ---- Environment variables ----
-    reg("getEnv", [](auto args) -> TzdValue {
+    reg("getEnv", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         const char* val = std::getenv(args[0].sVal.c_str());
-        return TzdValue(val ? std::string(val) : "");
-    });
+        return TzdValue(val ? std::string(val) : ""); });
 
-    reg("setEnv", [](auto args) -> TzdValue {
-        if (args.size() < 2) return TzdValue(false);
+    reg("setEnv", [](auto args) -> TzdValue
+        {
+            if (args.size() < 2)
+                return TzdValue(false);
 #ifdef _WIN32
-        return TzdValue(_putenv_s(args[0].sVal.c_str(), args[1].sVal.c_str()) == 0);
+            return TzdValue(_putenv_s(args[0].sVal.c_str(), args[1].sVal.c_str()) == 0);
 #else
-        return TzdValue(setenv(args[0].sVal.c_str(), args[1].sVal.c_str(), 1) == 0);
+            return TzdValue(setenv(args[0].sVal.c_str(), args[1].sVal.c_str(), 1) == 0);
 #endif
-    });
+        });
 
     // ---- Additional math functions ----
-    reg("cbrt", [](auto args) -> TzdValue {
+    reg("cbrt", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::cbrt(valToDouble(args[0])));
-    });
+        return TzdValue(std::cbrt(valToDouble(args[0]))); });
 
-    reg("log1p", [](auto args) -> TzdValue {
+    reg("log1p", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::log1p(valToDouble(args[0])));
-    });
+        return TzdValue(std::log1p(valToDouble(args[0]))); });
 
-    reg("expm1", [](auto args) -> TzdValue {
+    reg("expm1", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
-        return TzdValue(std::expm1(valToDouble(args[0])));
-    });
+        return TzdValue(std::expm1(valToDouble(args[0]))); });
 
-    reg("comb", [](auto args) -> TzdValue {
+    reg("comb", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         long long n = (long long)valToDouble(args[0]);
         long long k = (long long)valToDouble(args[1]);
@@ -2301,20 +2559,20 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         for (long long i = 0; i < k; i++) {
             result = result * (n - i) / (i + 1);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("perm", [](auto args) -> TzdValue {
+    reg("perm", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         long long n = (long long)valToDouble(args[0]);
         long long k = (long long)valToDouble(args[1]);
         if (k < 0 || k > n) return TzdValue(0.0);
         double result = 1.0;
         for (long long i = 0; i < k; i++) result *= (n - i);
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("fib", [](auto args) -> TzdValue {
+    reg("fib", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         long long n = (long long)valToDouble(args[0]);
         if (n <= 0) return TzdValue(0.0);
@@ -2323,41 +2581,41 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         for (long long i = 2; i <= n; i++) {
             double c = a + b; a = b; b = c;
         }
-        return TzdValue(b);
-    });
+        return TzdValue(b); });
 
-    reg("isPowerOf2", [](auto args) -> TzdValue {
+    reg("isPowerOf2", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
         long long n = (long long)valToDouble(args[0]);
-        return TzdValue(n > 0 && (n & (n - 1)) == 0);
-    });
+        return TzdValue(n > 0 && (n & (n - 1)) == 0); });
 
-    reg("nextPowerOf2", [](auto args) -> TzdValue {
+    reg("nextPowerOf2", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(1.0);
         long long n = (long long)valToDouble(args[0]);
         if (n <= 1) return TzdValue(1.0);
         n--;
         n |= n >> 1; n |= n >> 2; n |= n >> 4; n |= n >> 8; n |= n >> 16; n |= n >> 32;
-        return TzdValue((double)(n + 1));
-    });
+        return TzdValue((double)(n + 1)); });
 
-    reg("isnan_t", [](auto args) -> TzdValue {
+    reg("isnan_t", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(std::isnan(valToDouble(args[0])));
-    });
+        return TzdValue(std::isnan(valToDouble(args[0]))); });
 
-    reg("isinf_t", [](auto args) -> TzdValue {
+    reg("isinf_t", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(std::isinf(valToDouble(args[0])));
-    });
+        return TzdValue(std::isinf(valToDouble(args[0]))); });
 
-    reg("isfinite_t", [](auto args) -> TzdValue {
+    reg("isfinite_t", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(false);
-        return TzdValue(std::isfinite(valToDouble(args[0])));
-    });
+        return TzdValue(std::isfinite(valToDouble(args[0]))); });
 
     // ---- Additional string functions ----
-    reg("toTitleCase", [](auto args) -> TzdValue {
+    reg("toTitleCase", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         bool newWord = true;
@@ -2366,10 +2624,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             if (newWord) { c = (char)std::toupper((unsigned char)c); newWord = false; }
             else c = (char)std::tolower((unsigned char)c);
         }
-        return TzdValue(s);
-    });
+        return TzdValue(s); });
 
-    reg("levenshtein", [](auto args) -> TzdValue {
+    reg("levenshtein", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         std::string s1 = args[0].sVal, s2 = args[1].sVal;
         int m = (int)s1.size(), n = (int)s2.size();
@@ -2383,10 +2641,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             }
             prev = curr;
         }
-        return TzdValue((double)prev[n]);
-    });
+        return TzdValue((double)prev[n]); });
 
-    reg("countSubstr", [](auto args) -> TzdValue {
+    reg("countSubstr", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(0.0);
         std::string str = args[0].sVal, sub = args[1].sVal;
         if (sub.empty()) return TzdValue(0.0);
@@ -2395,10 +2653,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         while ((pos = str.find(sub, pos)) != std::string::npos) {
             count++; pos += sub.size();
         }
-        return TzdValue((double)count);
-    });
+        return TzdValue((double)count); });
 
-    reg("wordCount", [](auto args) -> TzdValue {
+    reg("wordCount", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue(0.0);
         std::string s = args[0].sVal;
         int count = 0;
@@ -2408,10 +2666,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 if (!inWord) { count++; inWord = true; }
             } else inWord = false;
         }
-        return TzdValue((double)count);
-    });
+        return TzdValue((double)count); });
 
-    reg("toCamelCase", [](auto args) -> TzdValue {
+    reg("toCamelCase", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::string result;
@@ -2421,10 +2679,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             result.push_back(upperNext ? (char)std::toupper((unsigned char)c) : c);
             upperNext = false;
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("toSnakeCase", [](auto args) -> TzdValue {
+    reg("toSnakeCase", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::string result;
@@ -2435,10 +2693,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 result.push_back((char)std::tolower((unsigned char)c));
             } else result.push_back(c);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("escape", [](auto args) -> TzdValue {
+    reg("escape", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::string result;
@@ -2452,10 +2710,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             default: result.push_back(c);
             }
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("unescape", [](auto args) -> TzdValue {
+    reg("unescape", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue("");
         std::string s = args[0].sVal;
         std::string result;
@@ -2471,11 +2729,11 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 }
             } else result.push_back(s[i]);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
     // ---- UUID generation ----
-    reg("uuid", [](auto args) -> TzdValue {
+    reg("uuid", [](auto args) -> TzdValue
+        {
         static std::mt19937_64 gen(std::random_device{}());
         std::uniform_int_distribution<uint64_t> dis;
         uint64_t a = dis(gen), b = dis(gen);
@@ -2485,141 +2743,147 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         snprintf(buf, sizeof(buf), "%08x-%04x-%04x-%04x-%012llx",
             (uint32_t)(a >> 32), (uint16_t)((a >> 16) & 0xFFFF), (uint16_t)(a & 0xFFFF),
             (uint16_t)(b >> 48), (unsigned long long)(b & 0xFFFFFFFFFFFFULL));
-        return TzdValue(std::string(buf));
-    });
+        return TzdValue(std::string(buf)); });
 
     // ---- Performance measurement ----
-    reg("measure", [](auto args) -> TzdValue {
+    reg("measure", [](auto args) -> TzdValue
+        {
         // Returns a closure-like value: call once to start, call again to get elapsed
         // Simplified: just returns current high-res clock
         auto now = std::chrono::high_resolution_clock::now();
         auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
-        return TzdValue((double)ns.count());
-    });
+        return TzdValue((double)ns.count()); });
 
     // ---- Additional data structure: Set operations ----
-    reg("setCreate", [](auto args) -> TzdValue {
+    reg("setCreate", [](auto args) -> TzdValue
+        {
         std::unordered_map<std::string, TzdValue> m;
         for (const auto& a : args) {
             m[TzdInterpreter::getAsString(a)] = a;
         }
         TzdValue v(m);
-        return v;
-    });
+        return v; });
 
-    reg("setContains", [](auto args) -> TzdValue {
+    reg("setContains", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return TzdValue(false);
         if (args[0].type != TzdValue::MAP) return TzdValue(false);
-        return TzdValue(args[0].mapVal.count(TzdInterpreter::getAsString(args[1])) > 0);
-    });
+        return TzdValue(args[0].mapVal.count(TzdInterpreter::getAsString(args[1])) > 0); });
 
-    reg("setAdd", [](auto args) -> TzdValue {
+    reg("setAdd", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return args[0];
         // Note: TzdValue is copy-on-write, so we return a new map
         std::unordered_map<std::string, TzdValue> m = args[0].mapVal;
         m[TzdInterpreter::getAsString(args[1])] = args[1];
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("setRemove", [](auto args) -> TzdValue {
+    reg("setRemove", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return args[0];
         std::unordered_map<std::string, TzdValue> m = args[0].mapVal;
         m.erase(TzdInterpreter::getAsString(args[1]));
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("setSize", [](auto args) -> TzdValue {
+    reg("setSize", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(0.0);
-        return TzdValue((double)args[0].mapVal.size());
-    });
+        return TzdValue((double)args[0].mapVal.size()); });
 
-    reg("setUnion", [](auto args) -> TzdValue {
+    reg("setUnion", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP || args[1].type != TzdValue::MAP)
             return args.empty() ? TzdValue() : args[0];
         std::unordered_map<std::string, TzdValue> m = args[0].mapVal;
         for (const auto& [k, v] : args[1].mapVal) m[k] = v;
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
-    reg("setIntersect", [](auto args) -> TzdValue {
+    reg("setIntersect", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP || args[1].type != TzdValue::MAP)
             return TzdValue(std::unordered_map<std::string, TzdValue>{});
         std::unordered_map<std::string, TzdValue> result;
         for (const auto& [k, v] : args[0].mapVal) {
             if (args[1].mapVal.count(k)) result[k] = v;
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("setDifference", [](auto args) -> TzdValue {
+    reg("setDifference", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP || args[1].type != TzdValue::MAP)
             return args.empty() ? TzdValue() : args[0];
         std::unordered_map<std::string, TzdValue> result;
         for (const auto& [k, v] : args[0].mapVal) {
             if (!args[1].mapVal.count(k)) result[k] = v;
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
     // ---- Queue/Stack operations (using arrays) ----
-    reg("queuePush", [](auto args) -> TzdValue {
+    reg("queuePush", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return args.empty() ? TzdValue() : args[0];
         std::vector<TzdValue> arr = args[0].arrVal;
         arr.push_back(args[1]);
-        return TzdValue(arr);
-    });
+        return TzdValue(arr); });
 
-    reg("queuePop", [](auto args) -> TzdValue {
+    reg("queuePop", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
             return TzdValue();
-        return args[0].arrVal.front();
-    });
+        return args[0].arrVal.front(); });
 
-    reg("queuePopAll", [](auto args) -> TzdValue {
-        if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue(std::vector<TzdValue>{});
-        return args[0]; // Return the array itself (FIFO order)
-    });
+    reg("queuePopAll", [](auto args) -> TzdValue
+        {
+            if (args.empty() || args[0].type != TzdValue::ARRAY)
+                return TzdValue(std::vector<TzdValue>{});
+            return args[0]; // Return the array itself (FIFO order)
+        });
 
-    reg("stackPush", [](auto args) -> TzdValue {
+    reg("stackPush", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::ARRAY) return args.empty() ? TzdValue() : args[0];
         std::vector<TzdValue> arr = args[0].arrVal;
         arr.push_back(args[1]);
-        return TzdValue(arr);
-    });
+        return TzdValue(arr); });
 
-    reg("stackPop", [](auto args) -> TzdValue {
+    reg("stackPop", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
             return TzdValue();
-        return args[0].arrVal.back();
-    });
+        return args[0].arrVal.back(); });
 
     // ---- Additional conversion ----
-    reg("toJSON", [](auto args) -> TzdValue {
-        // Alias for jsonStringify
-        if (args.empty()) return TzdValue("null");
-        // Delegate to jsonStringify by calling it through the interpreter
-        return TzdValue(); // Simplified - user should use jsonStringify directly
-    });
+    reg("toJSON", [](auto args) -> TzdValue
+        {
+            // Alias for jsonStringify
+            if (args.empty())
+                return TzdValue("null");
+            // Delegate to jsonStringify by calling it through the interpreter
+            return TzdValue(); // Simplified - user should use jsonStringify directly
+        });
 
-    reg("fromJSON", [](auto args) -> TzdValue {
+    reg("fromJSON", [](auto args) -> TzdValue
+        {
         // Alias for jsonParse
-        return TzdValue();
-    });
+        return TzdValue(); });
 
-    reg("deepCopy", [](auto args) -> TzdValue {
-        if (args.empty()) return TzdValue();
-        return args[0]; // TzdValue copy constructor does deep copy
-    });
+    reg("deepCopy", [](auto args) -> TzdValue
+        {
+            if (args.empty())
+                return TzdValue();
+            return args[0]; // TzdValue copy constructor does deep copy
+        });
 
-    reg("shuffle", [](auto args) -> TzdValue {
+    reg("shuffle", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return args[0];
         std::vector<TzdValue> arr = args[0].arrVal;
         static std::mt19937_64 gen(std::random_device{}());
         std::shuffle(arr.begin(), arr.end(), gen);
-        return TzdValue(arr);
-    });
+        return TzdValue(arr); });
 
-    reg("sample", [](auto args) -> TzdValue {
+    reg("sample", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
             return TzdValue();
         int count = (args.size() > 1) ? (int)valToDouble(args[1]) : 1;
@@ -2628,10 +2892,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         std::shuffle(arr.begin(), arr.end(), gen);
         count = (std::min)(count, (int)arr.size());
         std::vector<TzdValue> result(arr.begin(), arr.begin() + count);
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("argmax", [](auto args) -> TzdValue {
+    reg("argmax", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
             return TzdValue(0.0);
         double maxVal = valToDouble(args[0].arrVal[0]);
@@ -2640,10 +2904,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             double v = valToDouble(args[0].arrVal[i]);
             if (v > maxVal) { maxVal = v; maxIdx = i; }
         }
-        return TzdValue((double)maxIdx);
-    });
+        return TzdValue((double)maxIdx); });
 
-    reg("argmin", [](auto args) -> TzdValue {
+    reg("argmin", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
             return TzdValue(0.0);
         double minVal = valToDouble(args[0].arrVal[0]);
@@ -2652,10 +2916,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             double v = valToDouble(args[0].arrVal[i]);
             if (v < minVal) { minVal = v; minIdx = i; }
         }
-        return TzdValue((double)minIdx);
-    });
+        return TzdValue((double)minIdx); });
 
-    reg("cumsum", [](auto args) -> TzdValue {
+    reg("cumsum", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
         double sum = 0;
@@ -2663,20 +2927,20 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             sum += valToDouble(v);
             result.push_back(TzdValue(sum));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("diff", [](auto args) -> TzdValue {
+    reg("diff", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.size() < 2)
             return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
         for (size_t i = 1; i < args[0].arrVal.size(); i++) {
             result.push_back(TzdValue(valToDouble(args[0].arrVal[i]) - valToDouble(args[0].arrVal[i - 1])));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("linspace_arr", [](auto args) -> TzdValue {
+    reg("linspace_arr", [](auto args) -> TzdValue
+        {
         if (args.size() < 3) return TzdValue(std::vector<TzdValue>{});
         double start = valToDouble(args[0]);
         double end = valToDouble(args[1]);
@@ -2686,11 +2950,11 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
         if (n == 1) { result.push_back(TzdValue(start)); return TzdValue(result); }
         double step = (end - start) / (n - 1);
         for (int i = 0; i < n; i++) result.push_back(TzdValue(start + i * step));
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
     // ---- OS info ----
-    reg("getOsInfo", [](auto args) -> TzdValue {
+    reg("getOsInfo", [](auto args) -> TzdValue
+        {
         std::unordered_map<std::string, TzdValue> m;
 #ifdef _WIN32
         m["os"] = TzdValue("Windows");
@@ -2699,63 +2963,73 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
 #endif
         m["arch"] = TzdValue("x64");
         m["cores"] = TzdValue((double)std::thread::hardware_concurrency());
-        return TzdValue(m);
-    });
+        return TzdValue(m); });
 
     // ---- Assertions and debugging ----
-    reg("assert_t", [](auto args) -> TzdValue {
+    reg("assert_t", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         bool cond = valToDouble(args[0]) != 0;
         if (!cond) {
             std::string msg = (args.size() > 1) ? args[1].sVal : "Assertion failed";
             throw std::runtime_error(msg);
         }
-        return TzdValue();
-    });
+        return TzdValue(); });
 
-    reg("warn", [](auto args) -> TzdValue {
+    reg("warn", [](auto args) -> TzdValue
+        {
         if (args.empty()) return TzdValue();
         std::cerr << "[WARNING] " << TzdInterpreter::getAsString(args[0]) << std::endl;
-        return TzdValue();
-    });
+        return TzdValue(); });
 
     // ---- Math constants ----
-    reg("TAU", [](auto args) -> TzdValue { return TzdValue(6.28318530717958647692); });
-    reg("SQRT2", [](auto args) -> TzdValue { return TzdValue(1.41421356237309504880); });
-    reg("GOLDEN_RATIO", [](auto args) -> TzdValue { return TzdValue(1.61803398874989484820); });
-    reg("EPSILON", [](auto args) -> TzdValue { return TzdValue(std::numeric_limits<double>::epsilon()); });
+    reg("TAU", [](auto args) -> TzdValue
+        { return TzdValue(6.28318530717958647692); });
+    reg("SQRT2", [](auto args) -> TzdValue
+        { return TzdValue(1.41421356237309504880); });
+    reg("GOLDEN_RATIO", [](auto args) -> TzdValue
+        { return TzdValue(1.61803398874989484820); });
+    reg("EPSILON", [](auto args) -> TzdValue
+        { return TzdValue(std::numeric_limits<double>::epsilon()); });
 
-    auto getMapKeys = [](auto args) -> TzdValue {
-        if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(std::vector<TzdValue>{});
+    auto getMapKeys = [](auto args) -> TzdValue
+    {
+        if (args.empty() || args[0].type != TzdValue::MAP)
+            return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
-        for (const auto& [k, v] : args[0].mapVal) result.push_back(TzdValue(k));
+        for (const auto &[k, v] : args[0].mapVal)
+            result.push_back(TzdValue(k));
         return TzdValue(result);
     };
     reg("mapKeys", getMapKeys);
     reg("keys", getMapKeys);
 
-    auto getMapValues = [](auto args) -> TzdValue {
-        if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(std::vector<TzdValue>{});
+    auto getMapValues = [](auto args) -> TzdValue
+    {
+        if (args.empty() || args[0].type != TzdValue::MAP)
+            return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
-        for (const auto& [k, v] : args[0].mapVal) result.push_back(v);
+        for (const auto &[k, v] : args[0].mapVal)
+            result.push_back(v);
         return TzdValue(result);
     };
     reg("mapValues", getMapValues);
     reg("values", getMapValues);
 
-    reg("mapHas", [](auto args) -> TzdValue {
+    reg("mapHas", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return TzdValue(false);
-        return TzdValue(args[0].mapVal.count(args[1].sVal) > 0);
-    });
+        return TzdValue(args[0].mapVal.count(args[1].sVal) > 0); });
 
-    reg("mapGet", [](auto args) -> TzdValue {
+    reg("mapGet", [](auto args) -> TzdValue
+        {
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return TzdValue();
         auto it = args[0].mapVal.find(args[1].sVal);
         if (it != args[0].mapVal.end()) return it->second;
-        return (args.size() > 2) ? args[2] : TzdValue();
-    });
+        return (args.size() > 2) ? args[2] : TzdValue(); });
 
-    reg("mapEntries", [](auto args) -> TzdValue {
+    reg("mapEntries", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::MAP) return TzdValue(std::vector<TzdValue>{});
         std::vector<TzdValue> result;
         for (const auto& [k, v] : args[0].mapVal) {
@@ -2764,10 +3038,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             entry.push_back(v);
             result.push_back(TzdValue(entry));
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("mapFromEntries", [](auto args) -> TzdValue {
+    reg("mapFromEntries", [](auto args) -> TzdValue
+        {
         if (args.empty() || args[0].type != TzdValue::ARRAY) return TzdValue(std::unordered_map<std::string, TzdValue>{});
         std::unordered_map<std::string, TzdValue> result;
         for (const auto& entry : args[0].arrVal) {
@@ -2775,18 +3049,18 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 result[TzdInterpreter::getAsString(entry.arrVal[0])] = entry.arrVal[1];
             }
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("mapMerge", [](auto args) -> TzdValue {
+    reg("mapMerge", [](auto args) -> TzdValue
+        {
         if (args.size() < 2) return args.empty() ? TzdValue() : args[0];
         std::unordered_map<std::string, TzdValue> result;
         if (args[0].type == TzdValue::MAP) for (const auto& [k, v] : args[0].mapVal) result[k] = v;
         if (args[1].type == TzdValue::MAP) for (const auto& [k, v] : args[1].mapVal) result[k] = v;
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("mapFilter", [interp](auto args) -> TzdValue {
+    reg("mapFilter", [interp](auto args) -> TzdValue
+        {
         // mapFilter(map, predicateFunc) - filter map entries
         // predicate receives (key, value) and returns bool
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return TzdValue(std::unordered_map<std::string, TzdValue>{});
@@ -2797,10 +3071,10 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
                 result[k] = v;
             }
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 
-    reg("mapMap", [interp](auto args) -> TzdValue {
+    reg("mapMap", [interp](auto args) -> TzdValue
+        {
         // mapMap(map, transformFunc) - transform map values
         // transform receives (key, value) and returns new value
         if (args.size() < 2 || args[0].type != TzdValue::MAP) return TzdValue(std::unordered_map<std::string, TzdValue>{});
@@ -2809,6 +3083,5 @@ void TzdNativeModule::regExtended(TzdInterpreter* interp) {
             std::vector<TzdValue> tArgs = {TzdValue(k), v};
             result[k] = interp->callFunction(args[1], tArgs);
         }
-        return TzdValue(result);
-    });
+        return TzdValue(result); });
 }

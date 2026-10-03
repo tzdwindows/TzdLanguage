@@ -100,27 +100,55 @@ TzdClassDef::TzdClassDef(const std::string& fqn) : fullName(fqn) {
 
 struct TzdInstancePool {
     static constexpr size_t POOL_CAP = 16384;
-    void* slots[POOL_CAP];
+    TzdInstance* slots[POOL_CAP];
     size_t count = 0;
 
-    inline void* allocate(size_t size) {
-        if (count > 0) return slots[--count];
-        return std::malloc(size);
+    inline TzdInstance* get(TzdClassDef* def) {
+        if (count > 0) {
+            TzdInstance* inst = slots[--count];
+            inst->definition = def;
+            inst->refCount.store(0, std::memory_order_relaxed);
+            if (def) {
+                const auto& dFields = def->defaultFieldValues;
+                size_t n = dFields.size();
+                if (inst->fieldValues.size() != n) {
+                    inst->fieldValues = dFields;
+                }
+            } else {
+                inst->fieldValues.clear();
+            }
+            return inst;
+        }
+        return new TzdInstance(def);
     }
-    inline void deallocate(void* ptr) {
-        if (count < POOL_CAP) slots[count++] = ptr;
-        else std::free(ptr);
+
+    inline void put(TzdInstance* inst) {
+        if (!inst) return;
+        if (count < POOL_CAP) {
+            slots[count++] = inst;
+        } else {
+            delete inst;
+        }
     }
 };
 
 static thread_local TzdInstancePool s_instancePool;
 
+TzdInstance* TzdInstance::create(TzdClassDef* def) {
+    return s_instancePool.get(def);
+}
+
+void TzdInstance::recycle(TzdInstance* inst) {
+    if (!inst) return;
+    s_instancePool.put(inst);
+}
+
 void* TzdInstance::operator new(size_t size) {
-    return s_instancePool.allocate(size);
+    return std::malloc(size);
 }
 
 void TzdInstance::operator delete(void* ptr) {
-    s_instancePool.deallocate(ptr);
+    std::free(ptr);
 }
 
 // 【性能优化】：实例化对象时，直接拷贝已在类注册时展平计算好的默认字段模板，无需任何遍历

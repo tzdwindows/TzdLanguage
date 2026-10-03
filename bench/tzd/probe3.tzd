@@ -1,0 +1,34 @@
+// Probe 3: isolate range/array semantics — no try/catch
+
+var a1 = range(0, 5, 1);
+print("len a1 (expect 5): " + toString(len(a1)));
+print("a1[2] (expect 2): " + toString(a1[2]));
+
+var n = 5;
+var a2 = range(0, n, 1);
+print("len a2 (expect 5): " + toString(len(a2)));
+print("a2[2] (expect 2): " + toString(a2[2]));
+
+fun makeArr(size) {
+    return range(0, size, 1);
+}
+var a3 = makeArr(5);
+print("len a3 (expect 5): " + toString(len(a3)));
+print("a3[2] (expect 2): " + toString(a3[2]));
+
+fun mutParam(a, idx, v) {
+    a[idx] = v;
+    return 0;
+}
+mutParam(a3, 2, 99);
+print("a3[2] after mutParam (expect 99): " + toString(a3[2]));
+
+var garr = range(0, 5, 1);
+fun writeGlobalArr() {
+    garr[1] = 42;
+    return 0;
+}
+writeGlobalArr();
+print("garr[1] (expect 42): " + toString(garr[1]));
+
+print("=== probe3 done ===");

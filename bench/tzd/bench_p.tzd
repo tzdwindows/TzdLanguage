@@ -1,0 +1,62 @@
+import "time/DateTime.tzd";
+
+fun benchPrimesBreakdown(limit) {
+    var sw = new Stopwatch();
+
+    // Measure Phase 1: range
+    sw.start();
+    var sieve = range(0, limit, 1);
+    sw.stop();
+    var t1 = sw.elapsedMs();
+
+    // Measure Phase 2: init true
+    sw.start();
+    var i = 0;
+    while (i < limit) {
+        sieve[i] = true;
+        i = i + 1;
+    }
+    sw.stop();
+    var t2 = sw.elapsedMs();
+
+    sieve[0] = false;
+    sieve[1] = false;
+
+    // Measure Phase 3: sieve loop
+    sw.start();
+    var p = 2;
+    while (p * p < limit) {
+        if (sieve[p]) {
+            var m = p * p;
+            while (m < limit) {
+                sieve[m] = false;
+                m = m + p;
+            }
+        }
+        p = p + 1;
+    }
+    sw.stop();
+    var t3 = sw.elapsedMs();
+
+    // Measure Phase 4: count loop
+    sw.start();
+    var count = 0;
+    var k = 0;
+    while (k < limit) {
+        if (sieve[k]) {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    sw.stop();
+    var t4 = sw.elapsedMs();
+
+    print("Phase 1 (range): " + toString(t1) + " ms");
+    print("Phase 2 (init true): " + toString(t2) + " ms");
+    print("Phase 3 (sieve loop): " + toString(t3) + " ms");
+    print("Phase 4 (count loop): " + toString(t4) + " ms");
+    print("Total: " + toString(t1 + t2 + t3 + t4) + " ms");
+    print("Primes count: " + toString(count));
+}
+
+benchPrimesBreakdown(1000000);

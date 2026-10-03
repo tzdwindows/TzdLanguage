@@ -1,0 +1,66 @@
+// Probe: TzdLang semantics needed for round-2 kernels
+
+// 1. empty string literal
+var s = "";
+print("empty-str ok, len marker");
+
+// 2. string + string concat with toString
+s = s + toString(42) + "-" + toString(3);
+print("concat: " + s);
+
+// 3. empty map literal {}
+var m = {};
+print("empty-map-literal ok");
+
+// 4. map write/read with string keys
+m["k1"] = 7;
+print("map read: " + toString(m["k1"]));
+
+// 5. class + method + float math
+class Pt {
+    var float x;
+    var float y;
+    Pt(x, y) { this.x = x; this.y = y; }
+    fun d2(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        return dx * dx + dy * dy;
+    }
+}
+var p1 = new Pt(1.0, 2.0);
+print("d2: " + toString(p1.d2(new Pt(4.0, 6.0))));
+
+// 6. array param mutation visibility (by-ref?)
+fun mutParam(a, idx, v) {
+    a[idx] = v;
+    return 0;
+}
+var arr = range(0, 5, 1);
+mutParam(arr, 2, 99);
+print("array-by-ref (expect 99): " + toString(arr[2]));
+
+// 7. global read inside function
+var gvar = 5;
+fun readGlobal() {
+    return gvar + 1;
+}
+print("global read (expect 6): " + toString(readGlobal()));
+
+// 8. global array index-write inside function
+var garr = range(0, 5, 1);
+fun writeGlobalArr() {
+    garr[1] = 42;
+    return 0;
+}
+writeGlobalArr();
+print("global arr write (expect 42): " + toString(garr[1]));
+
+// 9. len() on array
+print("len (expect 6): " + toString(len(range(0, 6, 1))));
+
+// 10. int64 LCG step exactness
+var x = 2147483646;
+x = (x * 16807) % 2147483647;
+print("lcg step: " + toString(x));
+
+print("=== probe done ===");

@@ -10,6 +10,7 @@ namespace TzdDebugger {
     void shutdownServer();
     bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLine);
     bool isStepping();
+    bool hasAnyBreakpoints();
 }
 
 #endif

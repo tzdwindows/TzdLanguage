@@ -25,14 +25,14 @@
 class TzdClassDef;
 
 struct TzdJitConfig {
-    int optLevel = 2;                  // 0 = Off/Debug, 1 = Basic, 2 = Standard (Default), 3 = Aggressive
-    int inlineThreshold = 250;         // Inlining threshold (0 = disable, 250 = default, 500 = aggressive)
+    int optLevel = 3;                  // 0 = Off/Debug, 1 = Basic, 2 = Standard, 3 = Aggressive (Default)
+    int inlineThreshold = 500;         // Inlining threshold (0 = disable, 250 = default, 500 = aggressive)
     bool enableAstInlining = true;     // AST-level small function inlining
     bool enableMathIntrinsics = true;  // Direct LLVM math intrinsics
     bool enableLoopUnroll = true;      // Loop unrolling for O2/O3
     bool enableJitDebug = false;       // JIT debugging interface / safepoints
-    int maxInlineDepth = 4;            // Max nested inlining depth
-    int maxInlineStmts = 25;           // Max statements in inlined function
+    int maxInlineDepth = 8;            // Max nested inlining depth
+    int maxInlineStmts = 60;           // Max statements in inlined function
 };
 
 struct JittedFunctionInfo {
@@ -118,7 +118,7 @@ public:
     llvm::Value* inlineToDoubleFast(llvm::Value* src);
 
     // Advanced Inlining (AST-level small function inlining & math intrinsics)
-    bool tryInlineFunction(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result, llvm::Value* receiverVal = nullptr, const std::string& explicitClassName = "");
+    bool tryInlineFunction(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result, llvm::Value* receiverVal = nullptr, const std::string& explicitClassName = "", const std::string& receiverVarName = "");
     bool tryInlineMathIntrinsic(const std::string& funcName, const std::vector<TzdLangParser::ExpressionContext*>& exprs, llvm::Value*& result);
 
     std::unique_ptr<llvm::Module> getModule();
@@ -134,7 +134,7 @@ public:
 
      void initLLVMTypes();
 
-     llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Type* Ty, const std::string& Name, llvm::Value* ArraySize);
+     llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Type* Ty, const std::string& Name, llvm::Value* ArraySize = nullptr);
 
     void compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName);
     void compileNamedFunction(TzdLangParser::BlockContext* block, const std::vector<std::string>& paramNames, const std::string& internalName);
@@ -147,6 +147,7 @@ public:
     llvm::Function* getRtFunc(const std::string& name);
     llvm::orc::ThreadSafeModule extractThreadSafeModule();
     llvm::Value* boxToTzdValue(llvm::Value* val);
+    llvm::Value* emitTruthyCond(TzdLangParser::ExpressionContext* exprCtx);
 
     virtual std::any visitProgram(TzdLangParser::ProgramContext* ctx) override;
     virtual std::any visitFunctionDeclaration(TzdLangParser::FunctionDeclarationContext* ctx) override;
@@ -174,6 +175,7 @@ public:
     virtual std::any visitForStmt(TzdLangParser::ForStmtContext* ctx) override;
     virtual std::any visitPrefixExpr(TzdLangParser::PrefixExprContext* ctx) override;
     virtual std::any visitWhileStmt(TzdLangParser::WhileStmtContext* ctx) override;
+    bool tryEmitCanonicalSumReduction(TzdLangParser::WhileStmtContext* ctx);
     virtual std::any visitBreakStmt(TzdLangParser::BreakStmtContext* ctx) override;
     virtual std::any visitContinueStmt(TzdLangParser::ContinueStmtContext* ctx) override;
     virtual std::any visitSwitchStmt(TzdLangParser::SwitchStmtContext* ctx) override;
@@ -218,6 +220,20 @@ private:
     std::unique_ptr<llvm::Module> m_module;
 
     std::unordered_map<std::string, llvm::Value*> m_namedValues;
+
+    struct HoistedArrayInfo {
+        llvm::Value* container = nullptr;
+        llvm::Value* fastBuf = nullptr;
+        llvm::Value* fastLen = nullptr;
+        llvm::Value* hasBuf = nullptr;
+        std::string safeIndexVar;
+        llvm::Value* safeFastCond = nullptr;
+        bool inFastLoop = false;
+    };
+    std::unordered_map<std::string, HoistedArrayInfo> m_hoistedArrays;
+    std::unordered_map<std::string, llvm::AllocaInst*> m_shadowI64IndVars;
+    std::unordered_map<std::string, std::unordered_map<std::string, llvm::AllocaInst*>> m_varFieldAllocas;
+    std::unordered_map<std::string, llvm::AllocaInst*> m_lastNewFieldAllocas;
 
     llvm::Type* m_ptrTy;
     llvm::Type* m_doubleTy;

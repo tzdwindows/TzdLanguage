@@ -124,12 +124,15 @@ public:
 
     std::vector<struct TzdValue> fieldValues;
 
+    static TzdInstance* create(TzdClassDef* def);
+    static void recycle(TzdInstance* inst);
+
     // 侵入式引用计数：TzdValue 拷贝时 retain，析构/覆盖时 release；归 0 自删。
     mutable std::atomic<int> refCount{ 0 };
     inline void retain() const { refCount.fetch_add(1, std::memory_order_relaxed); }
     inline void release() const {
         int prev = refCount.fetch_sub(1, std::memory_order_acq_rel);
-        if (prev == 1) delete this;
+        if (prev == 1) recycle(const_cast<TzdInstance*>(this));
     }
 
     void* operator new(size_t size);
@@ -179,6 +182,7 @@ public:
     static void registerClass(TzdClassDef* cls);
     static void unregisterClass(const std::string& name);
     static TzdClassDef* getClass(const std::string& name);
+    static const std::unordered_map<std::string, TzdClassDef*>& getClasses() { return classMap; }
     static std::vector<TzdClassDef*> getSubclassesOf(const std::string& parentName);
     static bool isInstanceOf(TzdInstance* obj, const std::string& typeName);
 };

@@ -17,8 +17,18 @@ function flog(...args) {
     fs.appendFileSync(LOG_FILE, line);
   } catch(_) {}
 }
-flog("=== debugAdapter.js v0.2.2 loaded ===");
+flog("=== debugAdapter.js v0.2.3 loaded ===");
 
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+    srv.on("error", reject);
+  });
+}
 
 class TzdDebugSession {
   constructor(context, config) {
@@ -188,7 +198,14 @@ class TzdDebugSession {
   async handleLaunch(request, args) {
     this.stopOnEntry = args.stopOnEntry === true;
     const host = args.debugHost || "127.0.0.1";
-    const port = args.debugPort || args.debugServer || 54321;
+    let port = args.debugPort || args.debugServer;
+    if (!port) {
+      try {
+        port = await getFreePort();
+      } catch (_) {
+        port = 54321;
+      }
+    }
     const program = args.program;
     flog(`handleLaunch: program=${program} port=${port} stopOnEntry=${this.stopOnEntry}`);
 
@@ -224,9 +241,9 @@ class TzdDebugSession {
       }
     }
 
-    this.jitEnabled = args.jit !== false;
+    this.jitEnabled = args.jit === true;
 
-    // 默认开启 JIT 极速运行与 JIT 调试支持
+    // 当用户在 launch.json 中显式指定 "jit": true 时开启 JIT 调试支持
     if (this.jitEnabled) {
       if (!cmdArgs.includes("--jit")) cmdArgs.push("--jit");
       if (!cmdArgs.includes("--jit-debug")) cmdArgs.push("--jit-debug");
@@ -676,25 +693,6 @@ class TzdDebugSession {
     });
   }
 
-  async syncAllBreakpoints() {
-    if (!this.socket || this.socket.destroyed) return;
-    flog("syncAllBreakpoints: starting sync...");
-    for (const [normPath, bps] of this.breakpointsMap.entries()) {
-      flog(`syncAllBreakpoints: syncing ${bps.length} breakpoints for ${normPath}`);
-      try {
-        await this.sendDebugCommand(`:bp clear "${normPath}"\n`);
-        for (const bp of bps) {
-          flog(`syncAllBreakpoints: sending :bp add "${normPath}" ${bp.line}`);
-          await this.sendDebugCommand(`:bp add "${normPath}" ${bp.line}\n`);
-        }
-      } catch (e) {
-        flog(`syncAllBreakpoints EXCEPTION for ${normPath}: ${e.message}`);
-      }
-    }
-    this.breakpointsSynced = true;
-    flog("syncAllBreakpoints: finished successfully");
-  }
-
   async handleConfigurationDone(request) {
     this.configured = true;
     flog(`handleConfigurationDone: breakpointsSynced=${this.breakpointsSynced} isSuspended=${this.isSuspended} stopOnEntry=${this.stopOnEntry}`);
@@ -995,6 +993,18 @@ class TzdDebugSession {
     if (!rawExpr) {
       this.sendResponse(request, { result: "", variablesReference: 0 });
       return;
+    }
+
+    // ⭐ 如果程序处于运行状态（未被断点挂起），用户在调试控制台输入的内容作为 stdin 传递给进程（支持 input() 函数）
+    if (!this.isSuspended && this.childProcess && this.childProcess.stdin && !this.childProcess.stdin.destroyed) {
+      try {
+        this.childProcess.stdin.write(args.expression + "\n");
+        this.sendOutput(args.expression + "\n", "stdout");
+        this.sendResponse(request, { result: "", variablesReference: 0 });
+        return;
+      } catch (err) {
+        flog("stdin write error: " + err.message);
+      }
     }
 
     if (rawExpr.startsWith(":") || rawExpr === "jit" || rawExpr.startsWith("jit ")) {

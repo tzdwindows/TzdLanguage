@@ -84,7 +84,242 @@ struct LastPlotState {
     double step = 0.0;
 };
 
+struct TzdNativeBufferPool {
+    static constexpr size_t POOL_CAP = 8;
+    struct Block {
+        void* ptr = nullptr;
+        size_t bytes = 0;
+    };
+    Block blocks[POOL_CAP]{};
+    size_t count = 0;
+    std::mutex mtx;
+
+    static TzdNativeBufferPool& get() {
+        static TzdNativeBufferPool s_instance;
+        return s_instance;
+    }
+
+    void* acquire(size_t bytes) {
+        std::lock_guard<std::mutex> lock(mtx);
+        for (size_t i = 0; i < count; ++i) {
+            if (blocks[i].bytes >= bytes) {
+                void* p = blocks[i].ptr;
+                blocks[i] = blocks[count - 1];
+                count--;
+                return p;
+            }
+        }
+        return nullptr;
+    }
+
+    void release(void* p, size_t bytes) {
+        if (!p) return;
+        if (bytes < 131072) {
+            ::operator delete(p);
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mtx);
+        if (count < POOL_CAP) {
+            blocks[count++] = { p, bytes };
+        } else {
+            ::operator delete(p);
+        }
+    }
+
+    void prewarm(size_t bytes) {
+        void* p = ::operator new(bytes);
+        volatile char* cp = (volatile char*)p;
+        for (size_t i = 0; i < bytes; i += 4096) {
+            cp[i] = 0;
+        }
+        release(p, bytes);
+    }
+};
+
+template <typename T, typename A = std::allocator<T>>
+class default_init_allocator : public A {
+    typedef std::allocator_traits<A> a_t;
+public:
+    template <typename U> struct rebind {
+        using other = default_init_allocator<U, typename a_t::template rebind_alloc<U>>;
+    };
+    using A::A;
+
+    T* allocate(size_t n) {
+        size_t bytes = n * sizeof(T);
+        if (bytes >= 131072) {
+            if (void* p = TzdNativeBufferPool::get().acquire(bytes)) {
+                return static_cast<T*>(p);
+            }
+        }
+        return static_cast<T*>(::operator new(bytes));
+    }
+
+    void deallocate(T* p, size_t n) noexcept {
+        size_t bytes = n * sizeof(T);
+        TzdNativeBufferPool::get().release(p, bytes);
+    }
+
+    template <typename U>
+    void construct(U* ptr) noexcept(std::is_nothrow_default_constructible<U>::value) {
+        ::new (static_cast<void*>(ptr)) U;
+    }
+    template <typename U, typename... Args>
+    void construct(U* ptr, Args&&... args) {
+        a_t::construct(static_cast<A&>(*this), ptr, std::forward<Args>(args)...);
+    }
+};
+
+struct TzdFastDoubleMap {
+    struct Data {
+        std::string key;
+        double val = 0.0;
+    };
+    std::vector<uint32_t> hashes;
+    std::vector<Data> data;
+    size_t count = 0;
+    size_t mask = 0;
+
+    TzdFastDoubleMap(size_t cap = 262144) {
+        init(cap);
+    }
+
+    TzdFastDoubleMap(const TzdFastDoubleMap &other)
+        : hashes(other.hashes), data(other.data), count(other.count), mask(other.mask) {}
+
+    TzdFastDoubleMap(TzdFastDoubleMap &&other) noexcept
+        : hashes(std::move(other.hashes)), data(std::move(other.data)), count(other.count), mask(other.mask) {
+        other.count = 0;
+        other.mask = 0;
+    }
+
+    TzdFastDoubleMap &operator=(const TzdFastDoubleMap &other) {
+        if (this != &other) {
+            hashes = other.hashes;
+            data = other.data;
+            count = other.count;
+            mask = other.mask;
+        }
+        return *this;
+    }
+
+    TzdFastDoubleMap &operator=(TzdFastDoubleMap &&other) noexcept {
+        if (this != &other) {
+            hashes = std::move(other.hashes);
+            data = std::move(other.data);
+            count = other.count;
+            mask = other.mask;
+            other.count = 0;
+            other.mask = 0;
+        }
+        return *this;
+    }
+
+    void init(size_t cap) {
+        size_t sz = 16;
+        while (sz < cap) sz <<= 1;
+        hashes.assign(sz, 0);
+        data.resize(sz);
+        mask = sz - 1;
+        count = 0;
+    }
+
+    static inline uint32_t hash_str(const std::string &s) {
+        uint32_t h = 2166136261U;
+        for (unsigned char c : s) {
+            h = (h ^ c) * 16777619U;
+        }
+        return h == 0 ? 1 : h;
+    }
+
+    void reserve(size_t cap) {
+        if (cap > hashes.size()) {
+            rehash(cap * 2);
+        }
+    }
+
+    void rehash(size_t newCap) {
+        size_t sz = 16;
+        while (sz < newCap) sz <<= 1;
+        if (sz <= hashes.size()) return;
+        std::vector<uint32_t> oldHashes = std::move(hashes);
+        std::vector<Data> oldData = std::move(data);
+        hashes.assign(sz, 0);
+        data.resize(sz);
+        mask = sz - 1;
+        count = 0;
+        for (size_t i = 0; i < oldHashes.size(); ++i) {
+            if (oldHashes[i] != 0) {
+                insert(std::move(oldData[i].key), oldData[i].val, oldHashes[i]);
+            }
+        }
+    }
+
+    void insert(const std::string &key, double val, uint32_t precomputedHash = 0) {
+        if (count * 10 >= hashes.size() * 7) {
+            rehash(hashes.size() * 2);
+        }
+        uint32_t h = precomputedHash ? precomputedHash : hash_str(key);
+        size_t idx = (size_t)h & mask;
+        while (hashes[idx] != 0) {
+            if (hashes[idx] == h && data[idx].key == key) {
+                data[idx].val = val;
+                return;
+            }
+            idx = (idx + 1) & mask;
+        }
+        hashes[idx] = h;
+        data[idx].key = key;
+        data[idx].val = val;
+        count++;
+    }
+
+    void insert(std::string &&key, double val, uint32_t precomputedHash = 0) {
+        if (count * 10 >= hashes.size() * 7) {
+            rehash(hashes.size() * 2);
+        }
+        uint32_t h = precomputedHash ? precomputedHash : hash_str(key);
+        size_t idx = (size_t)h & mask;
+        while (hashes[idx] != 0) {
+            if (hashes[idx] == h && data[idx].key == key) {
+                data[idx].val = val;
+                return;
+            }
+            idx = (idx + 1) & mask;
+        }
+        hashes[idx] = h;
+        data[idx].key = std::move(key);
+        data[idx].val = val;
+        count++;
+    }
+
+    bool find(const std::string &key, double &outVal, uint32_t precomputedHash = 0) const {
+        if (count == 0 || hashes.empty()) return false;
+        uint32_t h = precomputedHash ? precomputedHash : hash_str(key);
+        size_t idx = (size_t)h & mask;
+        while (hashes[idx] != 0) {
+            if (hashes[idx] == h && data[idx].key == key) {
+                outVal = data[idx].val;
+                return true;
+            }
+            idx = (idx + 1) & mask;
+        }
+        return false;
+    }
+
+    bool empty() const {
+        return count == 0;
+    }
+
+    size_t size() const {
+        return count;
+    }
+};
+
 struct TzdValue {
+    double* fastBuf = nullptr;
+    int64_t fastLen = 0;
+
     enum Type {
         NONE,            // Null / void / uninitialized
         SBYTE, BYTE,     // 8-bit signed / unsigned integer (char / uint8)
@@ -183,9 +418,19 @@ struct TzdValue {
         return ev;
     }
     std::string jitInternalName;
-    std::vector<double> nativeArr;  // Backing storage for unboxed double array (performance fast-path)
+    std::vector<double, default_init_allocator<double>> nativeArr;  // Backing storage for unboxed double array (performance fast-path)
     bool isNativeDoubleArr = false; // Flag indicating if current array is a specialized native double array
     void (*jittedPtr)(void*, void*) = nullptr;
+
+    void syncFastBuf() {
+        if (isNativeDoubleArr && !nativeArr.empty()) {
+            fastBuf = nativeArr.data();
+            fastLen = (int64_t)nativeArr.size();
+        } else {
+            fastBuf = nullptr;
+            fastLen = 0;
+        }
+    }
 };
 
 // Release the remaining instance references in the pool slot (refer to TzdInterpreter.cpp for details).

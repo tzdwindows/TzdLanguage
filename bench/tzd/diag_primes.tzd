@@ -1,0 +1,52 @@
+import "time/DateTime.tzd";
+
+fun diagPrimes(limit) {
+    var sw = new Stopwatch();
+
+    sw.start();
+    var sieve = range(0, limit, 1);
+    sw.stop();
+    print("1. range(0, limit): " + toString(sw.elapsedMs()) + " ms");
+
+    sw.start();
+    var i = 0;
+    while (i < limit) {
+        sieve[i] = true;
+        i = i + 1;
+    }
+    sw.stop();
+    print("2. init sieve true: " + toString(sw.elapsedMs()) + " ms");
+
+    sieve[0] = false;
+    sieve[1] = false;
+
+    sw.start();
+    var p = 2;
+    while (p * p < limit) {
+        if (sieve[p]) {
+            var m = p * p;
+            while (m < limit) {
+                sieve[m] = false;
+                m = m + p;
+            }
+        }
+        p = p + 1;
+    }
+    sw.stop();
+    print("3. sieve loop (p*p < limit): " + toString(sw.elapsedMs()) + " ms");
+
+    sw.start();
+    var count = 0;
+    var k = 0;
+    while (k < limit) {
+        if (sieve[k]) {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    sw.stop();
+    print("4. count loop: " + toString(sw.elapsedMs()) + " ms");
+    print("total primes = " + toString(count));
+}
+
+diagPrimes(1000000);

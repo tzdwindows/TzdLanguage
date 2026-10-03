@@ -1,0 +1,29 @@
+// Probe 6: global array write from inside a function (workaround for array-param bug)
+
+var garr = range(0, 5, 1);
+
+fun writeGlobalArr() {
+    garr[1] = 42;
+    return 0;
+}
+
+fun readGlobalArr(i) {
+    return garr[i];
+}
+
+writeGlobalArr();
+print("garr[1] after fun write (expect 42): " + toString(garr[1]));
+print("readGlobalArr(1) (expect 42): " + toString(readGlobalArr(1)));
+
+// swap two entries via global access
+fun swapG(i, j) {
+    var t = garr[i];
+    garr[i] = garr[j];
+    garr[j] = t;
+    return 0;
+}
+swapG(0, 4);
+print("garr[0] after swap (expect 4): " + toString(garr[0]));
+print("garr[4] after swap (expect 0): " + toString(garr[4]));
+
+print("=== probe6 done ===");

@@ -46,9 +46,13 @@ struct DebugState {
 
     // State to avoid re-entry of debugger during eval
     bool isEvaluating = false;
+
+    std::string currentFile = "";
+    int currentLine = 1;
 };
 
 static DebugState g_DebugState;
+static SOCKET g_DebugListenSocket = INVALID_SOCKET;
 
 std::string formatTzdValue(const TzdValue& val) {
     switch (val.type) {
@@ -83,6 +87,11 @@ std::string formatTzdValue(const TzdValue& val) {
 bool isStepping() {
     std::unique_lock<std::mutex> lock(g_DebugState.mutex);
     return g_DebugState.stepInto || g_DebugState.stepOver || g_DebugState.stepOut;
+}
+
+bool hasAnyBreakpoints() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    return !g_DebugState.breakpoints.empty();
 }
 
 bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLine) {
@@ -123,7 +132,7 @@ bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLin
 }
 
 void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& file, int line) {
-    if (g_DebugState.isEvaluating) return;
+    if (g_DebugState.isEvaluating || !g_DebugActive) return;
 
     // Check if we need to wait for debugger connection at startup
     static bool firstStatement = true;
@@ -131,16 +140,26 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
         std::unique_lock<std::mutex> lock(g_DebugState.mutex);
         if (g_DebugState.clientSocket == INVALID_SOCKET) {
             std::cout << "[DEBUGGER] Paused at startup. Waiting for debugger client to connect..." << std::endl;
-            g_DebugState.cond.wait(lock, []() { return g_DebugState.clientSocket != INVALID_SOCKET; });
+            g_DebugState.cond.wait(lock, []() { return g_DebugState.clientSocket != INVALID_SOCKET || !g_DebugActive; });
         }
         firstStatement = false;
+        if (!g_DebugActive || g_DebugState.clientSocket == INVALID_SOCKET) return;
+
         g_DebugState.isSuspended = true;
+        g_DebugState.currentFile = file;
+        g_DebugState.currentLine = line;
 
         std::string msg = "\n*BREAK* Attached. Paused at startup (line " + std::to_string(line) + ")\n";
         msg += "*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\nTzdDebug> ";
-        send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        int ret = send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        if (ret == SOCKET_ERROR || ret <= 0) {
+            closesocket(g_DebugState.clientSocket);
+            g_DebugState.clientSocket = INVALID_SOCKET;
+            g_DebugState.isSuspended = false;
+            return;
+        }
 
-        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended; });
+        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended || g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive; });
         return;
     }
     firstStatement = false;
@@ -209,22 +228,31 @@ void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& f
 
     if (shouldSuspend) {
         std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+        if (g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive) {
+            return;
+        }
         g_DebugState.isSuspended = true;
+        g_DebugState.currentFile = file;
+        g_DebugState.currentLine = line;
 
-        if (g_DebugState.clientSocket != INVALID_SOCKET) {
-            std::string msg = "\n*BREAK* Hit " + reason + " at " + file + ":" + std::to_string(line);
-            if (!interpreter->m_callStackFrames.empty()) {
-                msg += " (frame: " + interpreter->m_callStackFrames.back() + ")";
-            }
-            msg += "\n*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
-            if (!interpreter->m_callStackFrames.empty()) {
-                msg += "*FRAME* " + interpreter->m_callStackFrames.back() + "\n";
-            }
-            msg += "TzdDebug> ";
-            send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        std::string msg = "\n*BREAK* Hit " + reason + " at " + file + ":" + std::to_string(line);
+        if (!interpreter->m_callStackFrames.empty()) {
+            msg += " (frame: " + interpreter->m_callStackFrames.back() + ")";
+        }
+        msg += "\n*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
+        if (!interpreter->m_callStackFrames.empty()) {
+            msg += "*FRAME* " + interpreter->m_callStackFrames.back() + "\n";
+        }
+        msg += "TzdDebug> ";
+        int ret = send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        if (ret == SOCKET_ERROR || ret <= 0) {
+            closesocket(g_DebugState.clientSocket);
+            g_DebugState.clientSocket = INVALID_SOCKET;
+            g_DebugState.isSuspended = false;
+            return;
         }
 
-        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended; });
+        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended || g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive; });
     }
 }
 
@@ -415,13 +443,36 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
         else if (action == "stack" || action == "bt") {
             std::stringstream reply;
             reply << "=== Call Stack (depth: " << interpreter->m_callStackFrames.size() << ") ===\n";
+            std::string curFile = g_DebugState.currentFile;
+            if (curFile.empty()) {
+                if (!interpreter->m_debugFileStack.empty() && !interpreter->m_debugFileStack.back().empty())
+                    curFile = interpreter->m_debugFileStack.back();
+                else if (!interpreter->m_scriptPathStack.empty())
+                    curFile = interpreter->m_scriptPathStack.back().string();
+                else if (!interpreter->m_currentExecutingFile.empty())
+                    curFile = interpreter->m_currentExecutingFile;
+                else
+                    curFile = "script.tzd";
+            }
+            int curLine = g_DebugState.currentLine > 0 ? g_DebugState.currentLine : 1;
+
             if (interpreter->m_callStackFrames.empty()) {
-                reply << "  [0] <global_scope>\n";
+                reply << "  [0] <global_scope> (" << curFile << ":" << curLine << ")\n";
             } else {
                 for (int i = (int)interpreter->m_callStackFrames.size() - 1; i >= 0; --i) {
-                    reply << "  [" << i + 1 << "] " << interpreter->m_callStackFrames[i] << "\n";
+                    std::string frameDesc = interpreter->m_callStackFrames[i];
+                    if (i == (int)interpreter->m_callStackFrames.size() - 1 && !curFile.empty()) {
+                        size_t lparen = frameDesc.find(" (");
+                        if (lparen != std::string::npos) {
+                            std::string funcName = frameDesc.substr(0, lparen);
+                            size_t modePos = frameDesc.find(") (", lparen);
+                            std::string modeStr = (modePos != std::string::npos) ? frameDesc.substr(modePos + 2) : " (Interpreted)";
+                            frameDesc = funcName + " (" + curFile + ":" + std::to_string(curLine) + ")" + modeStr;
+                        }
+                    }
+                    reply << "  [" << i + 1 << "] " << frameDesc << "\n";
                 }
-                reply << "  [0] <global_scope>\n";
+                reply << "  [0] <global_scope> (" << curFile << ":" << curLine << ")\n";
             }
             sendStr(clientSocket, reply.str());
         }
@@ -697,14 +748,25 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
             std::cerr << "[DEBUGGER] WSAStartup failed" << std::endl;
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
             return;
         }
         SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listenSocket == INVALID_SOCKET) {
             std::cerr << "[DEBUGGER] socket creation failed" << std::endl;
             WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
             return;
         }
+
+        int opt = 1;
+        setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+        g_DebugListenSocket = listenSocket;
+
         sockaddr_in addr;
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
@@ -713,13 +775,21 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
         if (bind(listenSocket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             std::cerr << "[DEBUGGER] bind failed for " << host << ":" << port << std::endl;
             closesocket(listenSocket);
+            g_DebugListenSocket = INVALID_SOCKET;
             WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
             return;
         }
         if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
             std::cerr << "[DEBUGGER] listen failed" << std::endl;
             closesocket(listenSocket);
+            g_DebugListenSocket = INVALID_SOCKET;
             WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
             return;
         }
 
@@ -790,12 +860,17 @@ void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int 
             }).detach();
         }
         closesocket(listenSocket);
+        g_DebugListenSocket = INVALID_SOCKET;
         WSACleanup();
     }).detach();
 }
 
 void shutdownServer() {
     std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    if (g_DebugListenSocket != INVALID_SOCKET) {
+        closesocket(g_DebugListenSocket);
+        g_DebugListenSocket = INVALID_SOCKET;
+    }
     if (g_DebugState.clientSocket != INVALID_SOCKET) {
         std::string exitMsg = "\n*EXIT* Program exited with code 0\n";
         send(g_DebugState.clientSocket, exitMsg.c_str(), (int)exitMsg.size(), 0);

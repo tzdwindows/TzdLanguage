@@ -602,8 +602,8 @@ void TzdCommandSystem::process(std::string input) {
 
     // 3. 关键字保护
     static const std::set<std::string> keywords = {
-        "fun", "class", "var", "if", "while", "for", "return", "ret",
-        "print", "new", "sin", "cos", "tan", "log"
+        "fun", "class", "var", "let", "const", "if", "while", "for", "return", "ret",
+        "print", "new", "sin", "cos", "tan", "log", "import", "try", "throw"
     };
     bool isKeyword = keywords.count(cmdHead);
     bool looksLikeFunctionCall = false;
@@ -628,6 +628,11 @@ void TzdCommandSystem::process(std::string input) {
             if (scriptStart != std::string::npos) scriptCode.erase(0, scriptStart);
         }
         if (scriptCode.empty()) return;
+
+        // 自动为单行语句补全尾部分号（如果未以 ; 或 } 结尾），避免 REPL 报缺少分号语法错误
+        if (!scriptCode.empty() && scriptCode.back() != ';' && scriptCode.back() != '}') {
+            scriptCode += ";";
+        }
 
         std::vector<std::string> args = { scriptCode };
         try {

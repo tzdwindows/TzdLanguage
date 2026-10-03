@@ -1,0 +1,19 @@
+fun phase(n) {
+    var m = {};
+    var i = 0;
+    while (i < n) {
+        m[toString(i)] = i;
+        i = i + 1;
+    }
+    var sum = 0;
+    i = 0;
+    while (i < n) {
+        sum = sum + m[toString(i)];
+        i = i + 1;
+    }
+    print("n=" + toString(n) + " ok sum=" + toString(sum));
+    return 0;
+}
+
+phase(100000);
+print("=== done ===");

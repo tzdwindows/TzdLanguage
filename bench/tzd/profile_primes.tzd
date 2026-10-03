@@ -1,0 +1,15 @@
+import "time/DateTime.tzd";
+
+fun profilePrimes() {
+    var sw = new Stopwatch();
+    sw.start();
+    var sum = 0.0;
+    for (var i = 0; i < 100000000; i++) {
+        sum = sum + i;
+    }
+    sw.stop();
+    print("最终累加结果: " + toString(sum));
+    print("循环 1 亿次耗时: " + toString(sw.elapsedMs()) + " ms");
+}
+
+profilePrimes();

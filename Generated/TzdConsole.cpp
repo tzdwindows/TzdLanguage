@@ -79,10 +79,6 @@ TzdConsole::TzdConsole()
     DWORD outMode = m_oldOutputMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(m_hOutput, outMode);
     m_vtEnabled = true;
-
-    // Set input mode: disable line input and echo for per-keystroke reading
-    DWORD inMode = ENABLE_PROCESSED_INPUT;
-    SetConsoleMode(m_hInput, inMode);
 #endif
 }
 
@@ -409,22 +405,40 @@ std::string TzdConsole::readLine(const std::string& prompt) {
     std::cout.flush();
 
 #ifdef _WIN32
-    // Switch to raw input mode for per-keystroke reading
-    DWORD oldMode;
-    GetConsoleMode(m_hInput, &oldMode);
-    DWORD newMode = 0; // Disable line input, echo, etc.
+    DWORD oldMode = 0;
+    if (!GetConsoleMode(m_hInput, &oldMode)) {
+        // Stdin is piped or redirected - not an interactive console
+        std::string line;
+        if (std::getline(std::cin, line)) {
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            m_lineBuffer = line;
+            if (!m_lineBuffer.empty()) {
+                m_history.push_back(m_lineBuffer);
+                m_historyIndex = (int)m_history.size();
+            }
+            return m_lineBuffer;
+        }
+        return "exit"; // EOF reached
+    }
+
+    // Switch to raw input mode for per-keystroke reading with Unicode
+    DWORD newMode = ENABLE_WINDOW_INPUT;
     SetConsoleMode(m_hInput, newMode);
 
     INPUT_RECORD ir;
     DWORD eventsRead;
 
     while (true) {
-        if (!ReadConsoleInput(m_hInput, &ir, 1, &eventsRead) || eventsRead == 0) continue;
+        if (!ReadConsoleInputW(m_hInput, &ir, 1, &eventsRead) || eventsRead == 0) {
+            break;
+        }
         if (ir.EventType != KEY_EVENT) continue;
         if (!ir.Event.KeyEvent.bKeyDown) continue;
 
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
-        char ch = ir.Event.KeyEvent.uChar.AsciiChar;
+        wchar_t wch = ir.Event.KeyEvent.uChar.UnicodeChar;
         DWORD ctrl = ir.Event.KeyEvent.dwControlKeyState;
 
         bool isCtrl = (ctrl & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
@@ -443,8 +457,14 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         // Backspace
         if (vk == VK_BACK) {
             if (m_cursorPos > 0) {
-                m_lineBuffer.erase(m_cursorPos - 1, 1);
-                m_cursorPos--;
+                // Delete multi-byte UTF-8 character before cursor
+                size_t charStart = m_cursorPos - 1;
+                while (charStart > 0 && (static_cast<unsigned char>(m_lineBuffer[charStart]) & 0xC0) == 0x80) {
+                    charStart--;
+                }
+                size_t charLen = m_cursorPos - charStart;
+                m_lineBuffer.erase(charStart, charLen);
+                m_cursorPos = charStart;
                 renderLine(prompt, m_lineBuffer, m_cursorPos);
             }
             continue;
@@ -453,7 +473,12 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         // Delete key
         if (vk == VK_DELETE) {
             if (m_cursorPos < m_lineBuffer.size()) {
-                m_lineBuffer.erase(m_cursorPos, 1);
+                size_t charLen = 1;
+                while (m_cursorPos + charLen < m_lineBuffer.size() &&
+                       (static_cast<unsigned char>(m_lineBuffer[m_cursorPos + charLen]) & 0xC0) == 0x80) {
+                    charLen++;
+                }
+                m_lineBuffer.erase(m_cursorPos, charLen);
                 renderLine(prompt, m_lineBuffer, m_cursorPos);
             }
             continue;
@@ -462,14 +487,22 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         // Arrow keys
         if (vk == VK_LEFT) {
             if (m_cursorPos > 0) {
-                m_cursorPos--;
+                size_t prev = m_cursorPos - 1;
+                while (prev > 0 && (static_cast<unsigned char>(m_lineBuffer[prev]) & 0xC0) == 0x80) {
+                    prev--;
+                }
+                m_cursorPos = prev;
                 renderLine(prompt, m_lineBuffer, m_cursorPos);
             }
             continue;
         }
         if (vk == VK_RIGHT) {
             if (m_cursorPos < m_lineBuffer.size()) {
-                m_cursorPos++;
+                size_t next = m_cursorPos + 1;
+                while (next < m_lineBuffer.size() && (static_cast<unsigned char>(m_lineBuffer[next]) & 0xC0) == 0x80) {
+                    next++;
+                }
+                m_cursorPos = next;
                 renderLine(prompt, m_lineBuffer, m_cursorPos);
             }
             continue;
@@ -510,8 +543,8 @@ std::string TzdConsole::readLine(const std::string& prompt) {
             continue;
         }
 
-        // Ctrl+C: copy current line to clipboard, or abort
-        if (isCtrl && ch == 3) { // Ctrl+C
+        // Ctrl+C: copy current line to clipboard
+        if (isCtrl && (wch == 3 || vk == 'C')) {
             if (!m_lineBuffer.empty()) {
                 clipboardCopy(m_lineBuffer);
                 std::cout << "\r\n[Copied to clipboard]\r\n";
@@ -522,7 +555,7 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         }
 
         // Ctrl+V: paste from clipboard
-        if (isCtrl && ch == 22) { // Ctrl+V
+        if (isCtrl && (wch == 22 || vk == 'V')) {
             std::string clip = clipboardPaste();
             if (!clip.empty()) {
                 // Remove newlines
@@ -538,22 +571,26 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         }
 
         // Ctrl+L: clear screen
-        if (isCtrl && ch == 12) {
+        if (isCtrl && (wch == 12 || vk == 'L')) {
             clearScreen();
             printPrompt(prompt);
             renderLine(prompt, m_lineBuffer, m_cursorPos);
             continue;
         }
 
-        // Regular printable character
-        if (ch >= 32 && ch < 127) {
-            m_lineBuffer.insert(m_lineBuffer.begin() + m_cursorPos, ch);
-            m_cursorPos++;
-            renderLine(prompt, m_lineBuffer, m_cursorPos);
+        // Regular printable character (ASCII + Unicode / Chinese IME)
+        if (wch >= 32 && wch != 127) {
+            char utf8Buf[8] = {0};
+            int utf8Bytes = WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8Buf, sizeof(utf8Buf), nullptr, nullptr);
+            if (utf8Bytes > 0) {
+                m_lineBuffer.insert(m_cursorPos, utf8Buf, utf8Bytes);
+                m_cursorPos += utf8Bytes;
+                renderLine(prompt, m_lineBuffer, m_cursorPos);
+            }
             continue;
         }
 
-        // Tab: auto-complete (basic - just insert spaces for now)
+        // Tab: indent 4 spaces
         if (vk == VK_TAB) {
             m_lineBuffer.insert(m_cursorPos, "    ");
             m_cursorPos += 4;
@@ -562,7 +599,7 @@ std::string TzdConsole::readLine(const std::string& prompt) {
         }
     }
 
-    // Restore input mode
+    // Always restore original console mode so std::cin / input() works normally
     SetConsoleMode(m_hInput, oldMode);
 #else
     // Fallback: use getline
@@ -622,16 +659,23 @@ void TzdConsole::run(const std::string& prompt, const std::string& continuePromp
                 if (c == '}') m_braceCount--;
             }
         }
+        if (m_braceCount < 0) m_braceCount = 0;
 
         inputBuffer += line + "\n";
 
-        // Check if input is complete (braces balanced and ends with ; or })
-        std::string tempBuffer = inputBuffer;
-        size_t lastCharIdx = tempBuffer.find_last_not_of(" \t\r\n");
-        bool endsWithSemi = (lastCharIdx != std::string::npos &&
-                            (tempBuffer[lastCharIdx] == ';' || tempBuffer[lastCharIdx] == '}'));
-
-        if (m_braceCount <= 0 && endsWithSemi) {
+        // If all opened braces are closed, execute the command immediately!
+        if (m_braceCount <= 0) {
+            std::string toExec = inputBuffer;
+            size_t s = toExec.find_first_not_of(" \t\r\n");
+            if (s != std::string::npos) {
+                bool shouldContinue = callback(toExec);
+                if (!shouldContinue) break;
+            }
+            inputBuffer.clear();
+            m_braceCount = 0;
+            m_inString = false;
+        } else if (trimLine.empty()) {
+            // User pressed Enter on empty line during multi-line: submit what we have
             bool shouldContinue = callback(inputBuffer);
             if (!shouldContinue) break;
             inputBuffer.clear();

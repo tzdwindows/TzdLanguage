@@ -1,0 +1,23 @@
+import "time/DateTime.tzd";
+
+// Supplementary: loopSum with a runtime-varying n (from time_now_ms) so the
+// optimizer cannot constant-fold the loop into a closed form.
+
+fun loopSum(n) {
+    var sum = 0;
+    var i = 0;
+    while (i < n) {
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}
+
+var jitter = toInt(time_now_ms()) % 8;
+var n = 100000000 + jitter;
+
+var sw = new Stopwatch();
+sw.start();
+var s = loopSum(n);
+sw.stop();
+print("loopSum(n=" + toString(n) + ")=" + toString(s) + " | " + toString(sw.elapsedMs()) + " ms");

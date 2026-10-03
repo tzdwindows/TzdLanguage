@@ -154,10 +154,10 @@
     </Manifest>
     <PostBuildEvent>
       <Command>robocopy "$(SolutionDir)stdlib" "$(OutDir)stdlib" /XO /E /NDL /NFL /NJH /NJS
-copy "$(SolutionDir)External\libtorch\lib\*.dll" "$(OutDir)" /Y >nul 2>&amp;1
-copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc64_120_0.dll" "$(OutDir)" /Y >nul 2>&amp;1
-copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc-builtins64_126.dll" "$(OutDir)" /Y >nul 2>&amp;1
-if %ERRORLEVEL% LEQ 7 exit 0</Command>
+robocopy "$(SolutionDir)External\libtorch\lib" "$(OutDir)\" *.dll /XO /NDL /NFL /NJH /NJS
+if not exist "$(OutDir)nvrtc64_120_0.dll" if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc64_120_0.dll" copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc64_120_0.dll" "$(OutDir)" /Y >nul 2>&amp;1
+if not exist "$(OutDir)nvrtc-builtins64_126.dll" if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc-builtins64_126.dll" copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvrtc-builtins64_126.dll" "$(OutDir)" /Y >nul 2>&amp;1
+exit /B 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

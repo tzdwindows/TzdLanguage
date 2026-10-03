@@ -250,6 +250,11 @@
                 "icon": "$(play)"
             },
             {
+                "command": "tzdlang.runCurrentFileInTerminal",
+                "title": "TzdLang: 在交互式终端中运行当前文件 (支持 input 键盘输入)",
+                "icon": "$(terminal)"
+            },
+            {
                 "command": "tzdlang.resetToolsPath",
                 "title": "TzdLang: 重新设置 TzdTools 路径"
             },
@@ -280,6 +285,11 @@
                 {
                     "command": "tzdlang.runCurrentFile",
                     "group": "navigation@2",
+                    "when": "editorLangId == tzdlang"
+                },
+                {
+                    "command": "tzdlang.runCurrentFileInTerminal",
+                    "group": "navigation@3",
                     "when": "editorLangId == tzdlang"
                 }
             ]
@@ -319,6 +329,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "是否默认开启 AST 级小函数极速内联。"
+                },
+                "tzdlang.runInTerminal": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "是否默认在交互式终端中运行脚本（支持键盘输入函数 input()）。"
                 }
             }
         }
@@ -328,7 +343,8 @@
         "pretest": "npm run lint",
         "test": "vscode-test",
         "test:dap": "node test/dap_test.js",
-        "test:main": "node test/dap_main_func_test.js"
+        "test:main": "node test/dap_main_func_test.js",
+        "test:import": "node test/dap_import_test.js"
     },
     "devDependencies": {
         "@types/mocha": "^10.0.10",

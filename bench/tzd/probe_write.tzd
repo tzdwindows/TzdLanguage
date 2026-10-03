@@ -1,0 +1,39 @@
+import "time/DateTime.tzd";
+
+// Test 1: write to a LITERAL array param
+fun mut1(a, idx, v) { a[idx] = v; return 0; }
+var lit = [10, 20, 30];
+mut1(lit, 1, 77);
+print("T1 lit[1] expect 77: " + toString(lit[1]));
+
+// Test 2: write to a range array param
+fun mut2(a, idx, v) { a[idx] = v; return 0; }
+var rng = range(0, 5, 1);
+mut2(rng, 2, 99);
+print("T2 rng[2] expect 99: " + toString(rng[2]));
+
+// Test 3: write to range array param, NO return (void function)
+fun mut3(a, idx, v) { a[idx] = v; }
+var rng3 = range(0, 5, 1);
+mut3(rng3, 2, 99);
+print("T3 rng3[2] expect 99: " + toString(rng3[2]));
+
+// Test 4: write with LITERAL index (not variable)
+fun mut4(a, v) { a[2] = v; return 0; }
+var rng4 = range(0, 5, 1);
+mut4(rng4, 99);
+print("T4 rng4[2] expect 99: " + toString(rng4[2]));
+
+// Test 5: read THEN write
+fun mut5(a, idx, v) { var old = a[idx]; a[idx] = v; return old; }
+var rng5 = range(0, 5, 1);
+var old5 = mut5(rng5, 2, 99);
+print("T5 old=" + toString(old5) + " rng5[2] expect 99: " + toString(rng5[2]));
+
+// Test 6: direct global array write inside function (the qsort pattern)
+var G6 = range(0, 5, 1);
+fun mut6(idx, v) { G6[idx] = v; return 0; }
+mut6(2, 99);
+print("T6 G6[2] expect 99: " + toString(G6[2]));
+
+print("=== probe_write done ===");

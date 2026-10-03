@@ -190,6 +190,12 @@ async function runCurrentFile(context) {
   }
   const filePath = document.uri.fsPath;
 
+  const extCfg = vscode.workspace.getConfiguration(CFG_SECTION);
+  if (extCfg.get("runInTerminal", true) !== false) {
+    await runCurrentFileInTerminal(context);
+    return;
+  }
+
   const toolsPath = findTzdTools(context);
   if (!toolsPath) {
     const action = "设置路径";
@@ -322,6 +328,67 @@ async function runCurrentFile(context) {
     updateStatusBar("$(error) TzdLang 错误");
     vscode.window.showErrorMessage("启动 TzdTools 失败: " + err.message);
   });
+}
+
+/**
+ * tzdlang.runCurrentFileInTerminal: 在 VS Code 交互式终端中运行当前 Tzd 脚本（完全支持 input 键盘输入）。
+ */
+async function runCurrentFileInTerminal(context) {
+  const vscode = require("vscode");
+  const path = require("path");
+
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showErrorMessage("请先打开一个 .tzd 文件");
+    return;
+  }
+
+  const document = editor.document;
+  if (document.isDirty) {
+    await document.save();
+  }
+  const filePath = document.uri.fsPath;
+
+  const toolsPath = findTzdTools(context);
+  if (!toolsPath) {
+    vscode.window.showErrorMessage('找不到 TzdTools.exe，请先设置路径。');
+    return;
+  }
+
+  const projectDir = path.dirname(filePath);
+  const stdlibPath = findStdlib(toolsPath);
+
+  let term = vscode.window.terminals.find((t) => t.name === "TzdLang");
+  if (!term) {
+    term = vscode.window.createTerminal("TzdLang");
+  }
+  term.show(true);
+
+  // 兼容不同终端 Shell (PowerShell 需要 &，cmd.exe/bash 不需要)
+  const shell = (vscode.env.shell || "").toLowerCase();
+  const isPowerShell =
+    shell.includes("powershell") ||
+    shell.includes("pwsh") ||
+    (!shell && process.platform === "win32");
+
+  let cmd = isPowerShell ? `& "${toolsPath}"` : `"${toolsPath}"`;
+  cmd += ` "--setProjectDirectory=${projectDir}"`;
+  if (stdlibPath) {
+    cmd += ` "--addLibraryDirectory=${stdlibPath}"`;
+  }
+
+  const extCfg = vscode.workspace.getConfiguration(CFG_SECTION);
+  if (extCfg.get("enableJit", true)) {
+    cmd += ` "--jit"`;
+    const optLevel = extCfg.get("optLevel", 3);
+    cmd += ` "-O${optLevel}"`;
+    if (extCfg.get("enableAstInlining", true)) {
+      cmd += ` "--inline-threshold=500"`;
+    }
+  }
+
+  cmd += ` "--runMainTzd=${filePath}"`;
+  term.sendText(cmd);
 }
 
 /**
@@ -843,6 +910,10 @@ function activate(context) {
         return;
       }
       await runCurrentFile(context);
+    }),
+
+    vscode.commands.registerCommand("tzdlang.runCurrentFileInTerminal", async () => {
+      await runCurrentFileInTerminal(context);
     }),
 
 
