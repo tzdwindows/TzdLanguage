@@ -77,11 +77,11 @@ memberDecl
     // ???????: const bb = 0;
     | KW_CONST IDENTIFIER (':' typeType)? ASSIGN expression ';'      # FieldConstDecl
     // ???????
-    | KW_STATIC KW_FUN IDENTIFIER '(' paramList? ')' block           # MethodStaticDecl
-    // ?????
-    | KW_ABSTRACT KW_FUN IDENTIFIER '(' paramList? ')' ';'           # MethodAbstractDecl
-    // ???????
-    | KW_FUN IDENTIFIER '(' paramList? ')' block                     # MethodDecl
+    | KW_STATIC KW_FUN IDENTIFIER '(' paramList? ')' (ARROW typeType)? block           # MethodStaticDecl
+    // 抽象方法
+    | KW_ABSTRACT KW_FUN IDENTIFIER '(' paramList? ')' (ARROW typeType)? ';'           # MethodAbstractDecl
+    // 普通实例方法
+    | KW_FUN IDENTIFIER '(' paramList? ')' (ARROW typeType)? block                     # MethodDecl
     // ??????: Test() {} (??????????????????????��????)
     | IDENTIFIER '(' paramList? ')' block                            # ConstructorDecl
     ;
@@ -93,12 +93,12 @@ accessModifier : KW_PUBLIC | KW_PRIVATE | KW_PROTECTED ;
 
 // ???????
 functionDeclaration
-    : annotationUsage? KW_FUN IDENTIFIER '(' paramList? ')' block
+    : annotationUsage? KW_FUN IDENTIFIER '(' paramList? ')' (ARROW typeType)? block
     ;
 
-// Native ????
+// Native 函数声明
 nativeFunctionDeclaration
-    : annotationUsage? KW_NATIVE KW_FUN IDENTIFIER '(' paramList? ')' 
+    : annotationUsage? KW_NATIVE KW_FUN IDENTIFIER '(' paramList? ')' (ARROW typeType)?
       '(' nativeAttrList? ')' ';'
     ;
 nativeAttrList : nativeAttr (',' nativeAttr)* ;
@@ -124,19 +124,23 @@ expression
     : '(' typeType ')' expression                   # CastExpr
     | expression '[' expression ']'                  # IndexExpr
     | expression (INC | DEC)                         # PostfixExpr
-    | expression '^' expression                      # PowerExpr
+    | <assoc=right> expression POW expression        # PowerExpr
     | (INC | DEC) expression                         # PrefixExpr
-    | (MINUS | NOT | GXXX) expression                # UnaryExpr
+    | (PLUS | MINUS | NOT | BIT_NOT | GXXX) expression # UnaryExpr
     // ??????: obj in org.tzd.Test ?? val in int
     | expression KW_IN (qualifiedName | typeType)    # TypeCheckExpr  
     | expression (MUL | DIV | MOD) expression         # MultiplicativeExpr
     | expression (PLUS | MINUS) expression           # AdditiveExpr
+    | expression (SHL | SHR | USHR) expression       # ShiftExpr
     | expression (GT | LT | GE | LE) expression       # RelationalExpr
     | expression (EEQ | NEQ) expression               # EqualityExpr
+    | expression BIT_AND expression                  # BitAndExpr
+    | expression BIT_XOR expression                  # BitXorExpr
+    | expression BIT_OR expression                   # BitOrExpr
     | expression AND expression                      # LogicalAndExpr
     | expression OR expression                       # LogicalOrExpr
     | <assoc=right> expression 
-      (ASSIGN | PLUS_ASSIGN | MIN_ASSIGN | MUL_ASSIGN | DIV_ASSIGN) 
+      (ASSIGN | PLUS_ASSIGN | MIN_ASSIGN | MUL_ASSIGN | DIV_ASSIGN | MOD_ASSIGN | AND_ASSIGN | OR_ASSIGN | XOR_ASSIGN | SHL_ASSIGN | SHR_ASSIGN | USHR_ASSIGN) 
       expression                                     # AssignmentExpr
     | atom                                           # AtomExpr
     ;
@@ -159,7 +163,7 @@ atom
     | atom '.' IDENTIFIER                              # MemberAccessExpr
     // New: new org.tzd.Test() { ... }
     | KW_NEW qualifiedName '(' exprList? ')' classOverrideBlock? # NewExpr 
-    | KW_FUN '(' paramList? ')' block                  # LambdaExpr
+    | KW_FUN '(' paramList? ')' (ARROW typeType)? block                  # LambdaExpr
     ;
 
 classOverrideBlock : '{' classMember* '}' ;
@@ -225,10 +229,41 @@ T_FUNCTION : 'function' | 'fn';
 
 INC : '++'; DEC : '--';
 GXXX : 'gxxx';
-PLUS : '+'; MINUS : '-'; MUL : '*'; DIV : '/'; MOD : '%'; NOT : '!';
-GE : '>='; LE : '<='; GT : '>'; LT : '<'; EEQ : '=='; NEQ : '!=';
-AND : '&&'; OR : '||'; ASSIGN : '='; PLUS_ASSIGN : '+='; MIN_ASSIGN : '-=';
-MUL_ASSIGN : '*='; DIV_ASSIGN : '/=';
+USHR_ASSIGN : '>>>=';
+SHR_ASSIGN  : '>>=';
+SHL_ASSIGN  : '<<=';
+USHR        : '>>>';
+SHR         : '>>';
+SHL         : '<<';
+AND_ASSIGN  : '&=';
+OR_ASSIGN   : '|=';
+XOR_ASSIGN  : '^=';
+MOD_ASSIGN  : '%=';
+PLUS_ASSIGN : '+=';
+MIN_ASSIGN  : '-=';
+MUL_ASSIGN  : '*=';
+DIV_ASSIGN  : '/=';
+EEQ         : '==';
+NEQ         : '!=';
+GE          : '>=';
+LE          : '<=';
+AND         : '&&';
+OR          : '||';
+POW         : '**';
+BIT_NOT     : '~';
+BIT_AND     : '&';
+BIT_OR      : '|';
+BIT_XOR     : '^';
+ARROW       : '->';
+PLUS        : '+';
+MINUS       : '-';
+MUL         : '*';
+DIV         : '/';
+MOD         : '%';
+NOT         : '!';
+GT          : '>';
+LT          : '<';
+ASSIGN      : '=';
 
 IDENTIFIER : [a-zA-Z_] [a-zA-Z0-9_]* ;
 INTEGER : [0-9]+ | '0' [xX] [0-9a-fA-F]+ ;

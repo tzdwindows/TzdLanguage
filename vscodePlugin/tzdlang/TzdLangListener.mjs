@@ -1,4 +1,4 @@
-// Generated from C:/Users/tzdwindows 7/source/repos/TzdTools/Grammar/TzdLang.g4 by ANTLR 4.13.1
+// Generated from Grammar/TzdLang.g4 by ANTLR 4.13.1
 // jshint ignore: start
 import antlr4 from 'antlr4';
 
@@ -455,6 +455,15 @@ export default class TzdLangListener extends antlr4.tree.ParseTreeListener {
 	}
 
 
+	// Enter a parse tree produced by TzdLangParser#BitAndExpr.
+	enterBitAndExpr(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#BitAndExpr.
+	exitBitAndExpr(ctx) {
+	}
+
+
 	// Enter a parse tree produced by TzdLangParser#RelationalExpr.
 	enterRelationalExpr(ctx) {
 	}
@@ -479,6 +488,15 @@ export default class TzdLangListener extends antlr4.tree.ParseTreeListener {
 
 	// Exit a parse tree produced by TzdLangParser#AtomExpr.
 	exitAtomExpr(ctx) {
+	}
+
+
+	// Enter a parse tree produced by TzdLangParser#BitOrExpr.
+	enterBitOrExpr(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#BitOrExpr.
+	exitBitOrExpr(ctx) {
 	}
 
 
@@ -581,6 +599,24 @@ export default class TzdLangListener extends antlr4.tree.ParseTreeListener {
 	}
 
 
+	// Enter a parse tree produced by TzdLangParser#ShiftExpr.
+	enterShiftExpr(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#ShiftExpr.
+	exitShiftExpr(ctx) {
+	}
+
+
+	// Enter a parse tree produced by TzdLangParser#BitXorExpr.
+	enterBitXorExpr(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#BitXorExpr.
+	exitBitXorExpr(ctx) {
+	}
+
+
 	// Enter a parse tree produced by TzdLangParser#BoolTrueExpr.
 	enterBoolTrueExpr(ctx) {
 	}
@@ -671,6 +707,15 @@ export default class TzdLangListener extends antlr4.tree.ParseTreeListener {
 	}
 
 
+	// Enter a parse tree produced by TzdLangParser#MapLiteralExpr.
+	enterMapLiteralExpr(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#MapLiteralExpr.
+	exitMapLiteralExpr(ctx) {
+	}
+
+
 	// Enter a parse tree produced by TzdLangParser#NewExpr.
 	enterNewExpr(ctx) {
 	}
@@ -740,6 +785,33 @@ export default class TzdLangListener extends antlr4.tree.ParseTreeListener {
 
 	// Exit a parse tree produced by TzdLangParser#exprList.
 	exitExprList(ctx) {
+	}
+
+
+	// Enter a parse tree produced by TzdLangParser#mapEntryList.
+	enterMapEntryList(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#mapEntryList.
+	exitMapEntryList(ctx) {
+	}
+
+
+	// Enter a parse tree produced by TzdLangParser#mapEntry.
+	enterMapEntry(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#mapEntry.
+	exitMapEntry(ctx) {
+	}
+
+
+	// Enter a parse tree produced by TzdLangParser#mapKey.
+	enterMapKey(ctx) {
+	}
+
+	// Exit a parse tree produced by TzdLangParser#mapKey.
+	exitMapKey(ctx) {
 	}
 
 

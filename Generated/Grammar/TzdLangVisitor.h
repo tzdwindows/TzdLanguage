@@ -119,11 +119,15 @@ public:
 
     virtual std::any visitTypeCheckExpr(TzdLangParser::TypeCheckExprContext *context) = 0;
 
+    virtual std::any visitBitAndExpr(TzdLangParser::BitAndExprContext *context) = 0;
+
     virtual std::any visitRelationalExpr(TzdLangParser::RelationalExprContext *context) = 0;
 
     virtual std::any visitAssignmentExpr(TzdLangParser::AssignmentExprContext *context) = 0;
 
     virtual std::any visitAtomExpr(TzdLangParser::AtomExprContext *context) = 0;
+
+    virtual std::any visitBitOrExpr(TzdLangParser::BitOrExprContext *context) = 0;
 
     virtual std::any visitUnaryExpr(TzdLangParser::UnaryExprContext *context) = 0;
 
@@ -146,6 +150,10 @@ public:
     virtual std::any visitAdditiveExpr(TzdLangParser::AdditiveExprContext *context) = 0;
 
     virtual std::any visitCastExpr(TzdLangParser::CastExprContext *context) = 0;
+
+    virtual std::any visitShiftExpr(TzdLangParser::ShiftExprContext *context) = 0;
+
+    virtual std::any visitBitXorExpr(TzdLangParser::BitXorExprContext *context) = 0;
 
     virtual std::any visitBoolTrueExpr(TzdLangParser::BoolTrueExprContext *context) = 0;
 

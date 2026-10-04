@@ -1,0 +1,164 @@
+import "time/DateTime.tzd";
+
+// 1. 3D Point class (3 fields: x, y, z)
+class Pt3 {
+    var float x;
+    var float y;
+    var float z;
+    Pt3(x, y, z) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+    fun d2(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        var dz = this.z - p.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+}
+
+// 2. 4D Rectangle class (4 fields: x, y, w, h)
+class Rect {
+    var float x;
+    var float y;
+    var float w;
+    var float h;
+    Rect(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+    }
+    fun area() {
+        return this.w * this.h;
+    }
+}
+
+// 3. Nested object composition: Segment holds two Pt3 instances
+class Segment3 {
+    var Pt3 p1;
+    var Pt3 p2;
+    Segment3(p1, p2) {
+        this.p1 = p1;
+        this.p2 = p2;
+    }
+    fun length2() {
+        return this.p1.d2(this.p2);
+    }
+}
+
+// 4. Function with explicit parameter types (int a, int b)
+fun typedAdd(int a, int b) {
+    return a + b;
+}
+
+// Benchmark 3D OOP Dispatch with General SROA (200,000 iterations)
+fun oop3Dispatch(int n) {
+    var x = 1;
+    var sum = 0.0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var a = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var b = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var c = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var d = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var e = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var f = x % 1000;
+
+        var p1 = new Pt3(a * 1.0, b * 1.0, c * 1.0);
+        var p2 = new Pt3(d * 1.0, e * 1.0, f * 1.0);
+        sum = sum + p1.d2(p2);
+        i = i + 1;
+    }
+    return sum;
+}
+
+// Benchmark Nested Object Dispatch with General SROA (200,000 iterations)
+fun nestedDispatch(int n) {
+    var x = 1;
+    var sum = 0.0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var a = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var b = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var c = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var d = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var e = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var f = x % 1000;
+
+        var p1 = new Pt3(a * 1.0, b * 1.0, c * 1.0);
+        var p2 = new Pt3(d * 1.0, e * 1.0, f * 1.0);
+        var seg = new Segment3(p1, p2);
+        sum = sum + seg.length2();
+        i = i + 1;
+    }
+    return sum;
+}
+
+// Benchmark 4D Rect Dispatch (200,000 iterations)
+fun rectDispatch(int n) {
+    var x = 1;
+    var sum = 0.0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var a = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var b = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var w = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var h = x % 1000;
+
+        var r = new Rect(a * 1.0, b * 1.0, w * 1.0, h * 1.0);
+        sum = sum + r.area();
+        i = i + 1;
+    }
+    return sum;
+}
+
+// Test typed add
+print("typedAdd(10, 20) = " + toString(typedAdd(10, 20)));
+
+// Test nested direct field access
+var testP1 = new Pt3(10.0, 20.0, 30.0);
+var testP2 = new Pt3(40.0, 50.0, 60.0);
+var testSeg = new Segment3(testP1, testP2);
+print("Direct nested access testSeg.p1.z = " + toString(testSeg.p1.z));
+print("Direct nested access testSeg.p2.y = " + toString(testSeg.p2.y));
+print("Direct testSeg.length2() = " + toString(testSeg.length2()));
+print("Single iteration nestedDispatch(1) = " + toString(nestedDispatch(1)));
+
+// Test 3D OOP
+var sw3d = new Stopwatch();
+sw3d.start();
+var r3d = oop3Dispatch(200000);
+sw3d.stop();
+print("3D OOP (3 fields) sum=" + toString(r3d) + " | " + toString(sw3d.elapsedMs()) + " ms");
+
+// Test Nested OOP
+var swNest = new Stopwatch();
+swNest.start();
+var rNest = nestedDispatch(200000);
+swNest.stop();
+print("Nested OOP (Segment->Pt3) sum=" + toString(rNest) + " | " + toString(swNest.elapsedMs()) + " ms");
+
+// Test 4D Rect OOP
+var swRect = new Stopwatch();
+swRect.start();
+var rRect = rectDispatch(200000);
+swRect.stop();
+print("4D Rect (4 fields) sum=" + toString(rRect) + " | " + toString(swRect.elapsedMs()) + " ms");

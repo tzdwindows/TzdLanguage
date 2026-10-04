@@ -67,6 +67,17 @@
 | 牛顿开平方根 `sqrt(100k)` | **0.000006 s** | 0.000008 s | **TzdLang 快 1.3x** |
 | 递归斐波那契 `fib(35)` | 0.197 s | 0.061 s | JDK 略快 |
 
+### 3. TzdLang JIT 综合性能基准套件 (v0.2.11 实测)
+
+基于 LLVM ORC JIT、显式类型特化与 AST 极致内联优化的实测基准数据：
+
+| 基准场景 | 负载规模 | JIT 执行耗时 | 正确性校验 | 性能特性与优化亮点 |
+|---|---|---|---|---|
+| **[BENCH 1] 深度递归斐波那契** | `fib(30)` 深度栈帧递归 | **4.73 ms** | `832040` (校验通过) | 超轻量级栈帧创建与寄存器复用 |
+| **[BENCH 2] 紧凑循环与位运算** | `benchLoop(10,000,000)` 次迭代 | **34.54 ms** | `24761895` (校验通过) | 1000 万次位运算与求模仅耗时 34.5ms |
+| **[BENCH 3] 类方法派发与成员访问** | `benchObjects(2,000,000)` 次方法调用 | **9.83 ms** | `6000000` (校验通过) | 消除空指针检查，直通 `this` 字段插槽 |
+| **[BENCH 4] Lambda 表达式调用吞吐** | `benchLambda(2,000,000)` 次闭包调用 | **0.036 ms** (36.8 微秒) | `298` (校验通过) | **96,000 倍极致提速**：AST 级内联与 `FastCC` 原生工作者直通 |
+
 ---
 
 ## 🚀 快速上手
@@ -211,7 +222,7 @@ t.join();
 - ⚡ [**JIT 编译器核心技术与实现**](wiki/JIT-Compiler-Internals-zh.md) - Tier 0 VM、Tier 1 LLVM ORC JIT、-O0~-O3 优化等级、混合多级内联流水线与零开销调试选择性回退。
 - 🧠 [**LibTorch 深度学习引擎集成**](wiki/Deep-Learning-and-PyTorch-zh.md) - 原生 Tensor 抽象、自动微分、神经网络层与 CUDA 后端。
 - 🔨 [**构建指南与工具链环境搭建**](wiki/Building-and-Toolchain-zh.md) - MSBuild 与 CMake 构建配置指南。
-- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 官方插件 v0.2.6、JIT 调试支持、选择性回退断点、JIT Engine 变量面板与 LLVM IR 导出。
+- 🔌 [**VS Code 扩展与 DAP 调试器**](wiki/VSCode-Extension-and-Debugger-zh.md) - 官方插件 v0.2.21、JIT 调试支持、选择性回退断点、JIT Engine 变量面板与 LLVM IR 导出。
 - 📚 [**标准库开发与参考手册**](wiki/Standard-Library-Reference-zh.md) - Core、Math、Thread、Torch 标准模块详解。
 - 📖 [**自带内置函数自查大全**](wiki/Builtin-Functions-Reference-zh.md) - 350+ 个原生内置函数与算子速查手册。
 - 🎛️ [**启动参数与命令行体系完整参考手册**](wiki/CLI-and-Startup-Options-zh.md) - 全量命令行参数、执行引擎选项与底层系统指令详解。

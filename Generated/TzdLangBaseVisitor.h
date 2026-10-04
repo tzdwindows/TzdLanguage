@@ -215,6 +215,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitBitAndExpr(TzdLangParser::BitAndExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitRelationalExpr(TzdLangParser::RelationalExprContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -224,6 +228,10 @@ public:
   }
 
   virtual std::any visitAtomExpr(TzdLangParser::AtomExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitBitOrExpr(TzdLangParser::BitOrExprContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -268,6 +276,14 @@ public:
   }
 
   virtual std::any visitCastExpr(TzdLangParser::CastExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitShiftExpr(TzdLangParser::ShiftExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitBitXorExpr(TzdLangParser::BitXorExprContext *ctx) override {
     return visitChildren(ctx);
   }
 

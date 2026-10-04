@@ -360,6 +360,7 @@ struct TzdValue {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
+    std::string returnType = "";
     TzdLangParser::BlockContext* funcBody = nullptr;
     using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
     NativeFuncType nativeFunc;
@@ -403,8 +404,8 @@ struct TzdValue {
     TzdValue(const std::vector<TzdValue>& v) : type(ARRAY), arrVal(v) {}
     TzdValue(const std::unordered_map<std::string, TzdValue>& v) : type(MAP), mapVal(v) {}
 
-    TzdValue(std::string n, std::vector<std::string> p, TzdLangParser::BlockContext* ctx)
-        : type(FUNCTION), name(n), params(p), funcBody(ctx) {
+    TzdValue(std::string n, std::vector<std::string> p, TzdLangParser::BlockContext* ctx, std::string retType = "")
+        : type(FUNCTION), name(n), params(p), funcBody(ctx), returnType(retType) {
     }
 
     TzdValue(NativeFuncType func, std::string n = "")
@@ -459,6 +460,13 @@ std::string bigint_div(const std::string& a, const std::string& b);
 std::string bigint_mod(const std::string& a, const std::string& b);
 std::string bigint_pow(const std::string& base, const std::string& exp);
 std::string bigint_powmod(const std::string& base, const std::string& exp, const std::string& mod);
+std::string bigint_and(const std::string& a, const std::string& b);
+std::string bigint_or(const std::string& a, const std::string& b);
+std::string bigint_xor(const std::string& a, const std::string& b);
+std::string bigint_not(const std::string& a);
+std::string bigint_shl(const std::string& a, int64_t shift);
+std::string bigint_shr(const std::string& a, int64_t shift);
+std::string bigint_ushr(const std::string& a, int64_t shift);
 std::string bigint_normalize(const std::string& s);
 std::string bigint_abs(const std::string& s);
 bool bigint_is_neg(const std::string& s);
@@ -617,6 +625,7 @@ public:
     using FunctionRedefinedCallback = std::function<void(const std::string&, const TzdValue&, antlr4::ParserRuleContext*)>;
     std::vector<std::unordered_map<std::string, TzdValue>> scopes;
     bool m_isCompiling = false;
+    bool m_inPhase1 = false;
     std::vector<ScriptModule*> loadedModules;
     std::string m_currentSource;
     std::set<std::string> m_importedFiles;
@@ -659,7 +668,8 @@ public:
     // Safe to call from a worker thread — uses independent LLVMContext.
     void* compileFunctionInBackground(const std::string& funcName,
                                        TzdLangParser::BlockContext* funcBody,
-                                       const std::vector<std::string>& params);
+                                       const std::vector<std::string>& params,
+                                       const std::string& explicitReturnType = "");
 
     void initNativeFunctions();
     void registerNativeFunction(const std::string& name, TzdValue::NativeFuncType func) {
@@ -709,6 +719,10 @@ public:
     TzdValue executeFunction(const TzdValue& funcVal, const std::vector<TzdValue>& args);
 
     virtual std::any visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) override;
+    virtual std::any visitShiftExpr(TzdLangParser::ShiftExprContext* ctx) override;
+    virtual std::any visitBitAndExpr(TzdLangParser::BitAndExprContext* ctx) override;
+    virtual std::any visitBitXorExpr(TzdLangParser::BitXorExprContext* ctx) override;
+    virtual std::any visitBitOrExpr(TzdLangParser::BitOrExprContext* ctx) override;
     virtual std::any visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprContext* ctx) override;
     virtual std::any visitPowerExpr(TzdLangParser::PowerExprContext* ctx) override;
     virtual std::any visitUnaryExpr(TzdLangParser::UnaryExprContext* ctx) override;
@@ -767,6 +781,8 @@ public:
     }
     static double getAsDouble(std::any value);
     static double getAsDoubleInternal(const TzdValue& v);
+    static int64_t getAsInt64(std::any value);
+    static int64_t getAsInt64Internal(const TzdValue& v);
     static bool isTruthy(const TzdValue& v);
     static bool valuesEqual(const TzdValue& l, const TzdValue& r);
     static std::string getAsString(const TzdValue& value);

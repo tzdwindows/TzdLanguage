@@ -65,7 +65,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.tzdlang",
-          "match": "\\b(int|float|string|bool|void|ptr|pointer|hwnd|function|fn)\\b"
+          "match": "\\b(int|float|double|long|char|byte|short|string|bool|void|ptr|pointer|hwnd|function|fn|any|object)\\b"
         }
       ]
     },
@@ -96,12 +96,20 @@
     "operators": {
       "patterns": [
         {
+          "name": "keyword.operator.arrow.tzdlang",
+          "match": "(->)"
+        },
+        {
           "name": "keyword.operator.assignment.tzdlang",
-          "match": "(\\+=|-=|\\*= |/=|\\b=\\b)"
+          "match": "(>>>=|>>=|<<=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|\\b=\\b)"
         },
         {
           "name": "keyword.operator.comparison.tzdlang",
           "match": "(==|!=|>=|<=|>|<)"
+        },
+        {
+          "name": "keyword.operator.bitwise.tzdlang",
+          "match": "(>>>|>>|<<|&|\\||\\^|~)"
         },
         {
           "name": "keyword.operator.logical.tzdlang",
@@ -109,7 +117,7 @@
         },
         {
           "name": "keyword.operator.arithmetic.tzdlang",
-          "match": "(\\+\\+|--|\\+|\\b-\\b|\\*|/|%|\\^)"
+          "match": "(\\+\\+|--|\\*\\*|\\+|\\b-\\b|\\*|/|%)"
         }
       ]
     }

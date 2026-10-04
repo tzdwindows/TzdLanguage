@@ -136,8 +136,8 @@ public:
 
      llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Type* Ty, const std::string& Name, llvm::Value* ArraySize = nullptr);
 
-    void compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName);
-    void compileNamedFunction(TzdLangParser::BlockContext* block, const std::vector<std::string>& paramNames, const std::string& internalName);
+    void compileNamedFunction(TzdLangParser::BlockContext* block, TzdLangParser::ParamListContext* params, const std::string& internalName, const std::string& explicitReturnType = "");
+    void compileNamedFunction(TzdLangParser::BlockContext* block, const std::vector<std::string>& paramNames, const std::string& internalName, const std::string& explicitReturnType = "");
     void compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx);
     void compileClassMethod(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::MethodDeclContext* methodCtx, const std::string& internalName);
     void compileConstructor(TzdLangParser::ClassDeclarationContext* classCtx, TzdLangParser::ConstructorDeclContext* ctorCtx, const std::string& internalName);
@@ -167,6 +167,10 @@ public:
     virtual std::any visitIndexExpr(TzdLangParser::IndexExprContext* ctx) override;
 
     virtual std::any visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) override;
+    virtual std::any visitShiftExpr(TzdLangParser::ShiftExprContext* ctx) override;
+    virtual std::any visitBitAndExpr(TzdLangParser::BitAndExprContext* ctx) override;
+    virtual std::any visitBitXorExpr(TzdLangParser::BitXorExprContext* ctx) override;
+    virtual std::any visitBitOrExpr(TzdLangParser::BitOrExprContext* ctx) override;
     virtual std::any visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprContext* ctx) override;
     virtual std::any visitPowerExpr(TzdLangParser::PowerExprContext* ctx) override;
     virtual std::any visitUnaryExpr(TzdLangParser::UnaryExprContext* ctx) override;
@@ -251,6 +255,7 @@ private:
     std::unordered_map<std::string, llvm::Value*> m_nativeDoubleLocals;
     std::unordered_set<std::string> m_declaredLocals;
     llvm::Value* castToNativeDouble(llvm::Value* val);
+    llvm::Value* castToNativeI64(llvm::Value* val);
     llvm::Value* boxDouble(llvm::Value* nativeVal);
 
     struct LoopLabels {

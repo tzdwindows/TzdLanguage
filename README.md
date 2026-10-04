@@ -67,6 +67,17 @@ Benchmark multiplying two $4,741,006$-digit numbers on an Intel Core i7-4790 CPU
 | Newton Square Root `sqrt(100k)` | **0.000006 s** | 0.000008 s | **TzdLang 1.3x faster** |
 | Recursive Fibonacci `fib(35)` | 0.197 s | 0.061 s | JDK faster |
 
+### 3. TzdLang JIT Performance Benchmark Suite (v0.2.11)
+
+Real benchmark measurements on Windows x64 using LLVM ORC JIT with explicit return type specializations and AST inlining optimizations:
+
+| Benchmark Case | Description & Workload | Execution Time (JIT) | Output / Checksum | Performance Highlights |
+|---|---|---|---|---|
+| **[BENCH 1] Recursive Fibonacci** | `fib(30)` Deep call frame recursion | **4.73 ms** | `832040` (Passed) | Ultra-low frame overhead |
+| **[BENCH 2] Tight Loop Accumulation** | `benchLoop(10,000,000)` iterations | **34.54 ms** | `24761895` (Passed) | 35ms for 10M bitwise loop |
+| **[BENCH 3] Class Method Dispatch** | `benchObjects(2,000,000)` calls | **9.83 ms** | `6000000` (Passed) | Direct `this` field slot access |
+| **[BENCH 4] Lambda Invocation** | `benchLambda(2,000,000)` calls | **0.036 ms** (36.8 µs) | `298` (Passed) | **96,000x Speedup** via AST inlining & `FastCC` |
+
 ---
 
 ## 🚀 Quick Start
@@ -211,7 +222,7 @@ Comprehensive technical documentation and deep-dive design guides are available 
 - ⚡ [**JIT Compiler Internals**](wiki/JIT-Compiler-Internals.md) - Tier 0 VM, Tier 1 LLVM ORC JIT, -O0~-O3 optimization levels, hybrid inlining pipeline & zero-overhead selective deoptimization.
 - 🧠 [**Deep Learning with LibTorch**](wiki/Deep-Learning-and-PyTorch.md) - Tensor APIs, autograd, neural networks, CUDA acceleration.
 - 🔨 [**Build & Toolchain Guide**](wiki/Building-and-Toolchain.md) - Detailed build instructions for MSBuild and CMake.
-- 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Official v0.2.6 extension, native JIT debugging, selective deoptimization, JIT Engine variable scope & LLVM IR dumping.
+- 🔌 [**VS Code Extension & DAP Debugger**](wiki/VSCode-Extension-and-Debugger.md) - Official v0.2.21 extension, native JIT debugging, selective deoptimization, JIT Engine variable scope & LLVM IR dumping.
 - 📚 [**Standard Library Reference**](wiki/Standard-Library-Reference.md) - Core, Math, Thread, and Torch libraries.
 - 📖 [**Built-in Functions Reference**](wiki/Builtin-Functions-Reference.md) - Comprehensive 350+ function reference manual.
 - 🎛️ [**CLI Flags & Startup Parameters Reference**](wiki/CLI-and-Startup-Options.md) - Complete documentation for all command-line options and system commands.

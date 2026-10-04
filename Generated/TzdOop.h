@@ -47,6 +47,7 @@ struct ClassMethod {
     bool isAnnotation = false;
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
+    std::string returnType = "";
     void (*jittedPtr)(void*, void*) = nullptr;
     TzdLangParser::BlockContext* body = nullptr;
 

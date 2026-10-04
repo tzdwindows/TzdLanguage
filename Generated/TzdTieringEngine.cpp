@@ -143,6 +143,7 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
     // Try free function first (search interpreter scopes)
     TzdLangParser::BlockContext* funcBody = nullptr;
     std::vector<std::string> params;
+    std::string retType = "";
     std::string compileName = task.funcName;
 
     if (task.interp) {
@@ -153,6 +154,7 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
                 if (fv.type == TzdValue::FUNCTION && fv.funcBody) {
                     funcBody = fv.funcBody;
                     params = fv.params;
+                    retType = fv.returnType;
                 }
                 break;
             }
@@ -174,6 +176,7 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
                         funcBody = m.body;
                         params.push_back("this");
                         for (auto& p : m.params) params.push_back(p);
+                        retType = m.returnType;
                     }
                 }
                 // Search constructors (constructor name == class simple name)
@@ -195,7 +198,7 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
 
     // Compile in the background (thread-safe, independent LLVMContext)
     void* jitPtr = task.interp->compileFunctionInBackground(
-        compileName, funcBody, params);
+        compileName, funcBody, params, retType);
 
     if (jitPtr) {
         TzdBytecodeJIT::getInstance().storeJittedPtr(task.funcName, jitPtr);

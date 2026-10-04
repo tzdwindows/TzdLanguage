@@ -2,7 +2,7 @@
 # TzdTools Installer One-Click Build Script
 # ==============================================================================
 param(
-    [string]$Version = "0.2.10"
+    [string]$Version = "0.2.11"
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,10 +98,15 @@ Copy-Item (Join-Path $InstallerDir "uninstall.cmd") $StagingDir -Force -ErrorAct
 # 3. Compress Payload with 7-Zip LZMA2 (使用增量更新模式避免磁盘 100% 卡死)
 Write-Host "[2/5] Compressing GPU payload with 7-Zip (incremental update)..." -ForegroundColor Yellow
 $PayloadFile = Join-Path $InstallerDir "payload.7z"
-if (Test-Path $PayloadFile) {
-    & $SevenZip u -mx=5 $PayloadFile "$StagingDir\*" | Out-Null
-} else {
-    & $SevenZip a -mx=5 $PayloadFile "$StagingDir\*" | Out-Null
+Push-Location $StagingDir
+try {
+    if (Test-Path $PayloadFile) {
+        & $SevenZip u -y -mx=3 $PayloadFile "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" | Out-Null
+    } else {
+        & $SevenZip a -y -mx=3 $PayloadFile "*" | Out-Null
+    }
+} finally {
+    Pop-Location
 }
 $PayloadSize = (Get-Item $PayloadFile).Length / 1MB
 Write-Host "  -> GPU Payload compressed: $([Math]::Round($PayloadSize, 1)) MB" -ForegroundColor Green
@@ -128,10 +133,15 @@ if (Test-Path $CpuStagingDir) {
     }
 
     $PayloadCpu = Join-Path $InstallerDir "payload_cpu.7z"
-    if (Test-Path $PayloadCpu) {
-        & $SevenZip u -mx=5 $PayloadCpu "$CpuStagingDir\*" | Out-Null
-    } else {
-        & $SevenZip a -mx=5 $PayloadCpu "$CpuStagingDir\*" | Out-Null
+    Push-Location $CpuStagingDir
+    try {
+        if (Test-Path $PayloadCpu) {
+            & $SevenZip u -y -mx=3 $PayloadCpu "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" | Out-Null
+        } else {
+            & $SevenZip a -y -mx=3 $PayloadCpu "*" | Out-Null
+        }
+    } finally {
+        Pop-Location
     }
     $CpuPayloadSize = (Get-Item $PayloadCpu).Length / 1MB
     Write-Host "  -> CPU Payload compressed: $([Math]::Round($CpuPayloadSize, 1)) MB" -ForegroundColor Green

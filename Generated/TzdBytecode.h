@@ -39,6 +39,10 @@ enum class OpCode : uint8_t {
     // Logical
     AND = 0x40, OR = 0x41, NOT = 0x42,
 
+    // Bitwise
+    BIT_AND = 0x48, BIT_OR = 0x49, BIT_XOR = 0x4A, BIT_NOT = 0x4B,
+    SHL = 0x4C, SHR = 0x4D, USHR = 0x4E,
+
     // Control flow
     JMP        = 0x50,
     JMP_FALSE  = 0x51,
@@ -160,6 +164,10 @@ public:
 
     // ---- Expression visitors ----
     virtual std::any visitAdditiveExpr(TzdLangParser::AdditiveExprContext* ctx) override;
+    virtual std::any visitShiftExpr(TzdLangParser::ShiftExprContext* ctx) override;
+    virtual std::any visitBitAndExpr(TzdLangParser::BitAndExprContext* ctx) override;
+    virtual std::any visitBitXorExpr(TzdLangParser::BitXorExprContext* ctx) override;
+    virtual std::any visitBitOrExpr(TzdLangParser::BitOrExprContext* ctx) override;
     virtual std::any visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprContext* ctx) override;
     virtual std::any visitPowerExpr(TzdLangParser::PowerExprContext* ctx) override;
     virtual std::any visitUnaryExpr(TzdLangParser::UnaryExprContext* ctx) override;

@@ -108,6 +108,7 @@ struct InlineReturnTarget
     llvm::BasicBlock *returnBB = nullptr;
     llvm::AllocaInst *retNativeDouble = nullptr;
     llvm::AllocaInst *retBoxed = nullptr;
+    bool expectsDouble = false;
 };
 static thread_local std::vector<InlineReturnTarget> s_inlineReturnStack;
 static thread_local std::unordered_set<std::string> s_inlinedFunctionsInStack;
@@ -282,6 +283,13 @@ static std::string getParamName(TzdLangParser::ParamContext *p)
     return p->getText();
 }
 
+static std::string getParamType(TzdLangParser::ParamContext *p)
+{
+    if (!p || !p->typeType())
+        return "";
+    return p->typeType()->getText();
+}
+
 static bool isNonNumericParam(TzdLangParser::ParamContext *p)
 {
     if (!p)
@@ -310,14 +318,21 @@ static bool isNonNumericParam(TzdLangParser::ParamContext *p)
     return false;
 }
 
+static bool isExplicitNumericType(const std::string &t)
+{
+    return (t == "int" || t == "float" || t == "double" || t == "number" ||
+            t == "i32" || t == "i64" || t == "long" || t == "short" ||
+            t == "byte" || t == "sbyte" || t == "uint" || t == "ulong" ||
+            t == "ushort" || t == "char");
+}
+
 static bool isExplicitNumericParam(TzdLangParser::ParamContext *p)
 {
     if (!p)
         return false;
     if (p->typeType())
     {
-        std::string t = p->typeType()->getText();
-        return (t == "int" || t == "float" || t == "double" || t == "number" || t == "i32" || t == "i64");
+        return isExplicitNumericType(p->typeType()->getText());
     }
     return false;
 }
@@ -450,6 +465,8 @@ static bool isTreePureNumeric(antlr4::tree::ParseTree *tree, const std::string &
 }
 // #endregion
 
+static bool isBlockReturningDouble(antlr4::tree::ParseTree *block);
+
 // 辅助函数：判断表达式是否明确为非纯数值类型（例如对象、this、字符串、容器、布尔等）
 static bool isExprNonDouble(antlr4::tree::ParseTree *tree, antlr4::tree::ParseTree *block = nullptr)
 {
@@ -498,7 +515,7 @@ static bool isExprNonDouble(antlr4::tree::ParseTree *tree, antlr4::tree::ParseTr
             {
                 if (ClassField *f = cls->findField(field))
                 {
-                    if (f->type == "float" || f->type == "double" || f->type == "int" || f->type == "number")
+                    if (f->type == "float" || f->type == "double" || f->type == "int" || f->type == "number" || f->type.empty())
                         return false;
                 }
             }
@@ -531,6 +548,23 @@ static bool isExprNonDouble(antlr4::tree::ParseTree *tree, antlr4::tree::ParseTr
         if (!s_currentCompilingFuncName.empty() && callee == s_currentCompilingFuncName)
         {
             return false; // 递归自调用纯数值函数视为 double 返回
+        }
+        if (auto mem = dynamic_cast<TzdLangParser::MemberAccessExprContext *>(call->atom()))
+        {
+            std::string methodName = mem->IDENTIFIER() ? mem->IDENTIFIER()->getText() : "";
+            for (const auto &[cName, cls] : TzdOopManager::getClasses())
+            {
+                if (cls)
+                {
+                    if (ClassMethod *m = cls->findMethod(methodName))
+                    {
+                        if (m->body && m->body != block && isBlockReturningDouble(m->body))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
         }
         return true;
     }
@@ -655,6 +689,130 @@ static std::string getNewExprClassName(antlr4::tree::ParseTree *tree)
         if (newExpr->qualifiedName())
         {
             return newExpr->qualifiedName()->getText();
+        }
+    }
+    return "";
+}
+
+static std::vector<std::string> resolveConstructorFields(TzdClassDef *def, int argCount)
+{
+    std::vector<std::string> fields;
+    if (!def)
+        return fields;
+
+    const ClassConstructor *matchedCtor = def->findConstructor(argCount);
+
+    if (matchedCtor && matchedCtor->body)
+    {
+        std::map<int, std::string> paramToField;
+        for (auto stmt : matchedCtor->body->statement())
+        {
+            if (auto exprStmt = dynamic_cast<TzdLangParser::ExprStmtContext *>(stmt))
+            {
+                if (auto assignExpr = dynamic_cast<TzdLangParser::AssignmentExprContext *>(exprStmt->expression()))
+                {
+                    std::string lhs = assignExpr->expression(0)->getText();
+                    std::string rhs = assignExpr->expression(1)->getText();
+                    std::string fName;
+                    if (lhs.rfind("this.", 0) == 0)
+                        fName = lhs.substr(5);
+                    else if (def->findField(lhs))
+                        fName = lhs;
+
+                    if (!fName.empty())
+                    {
+                        for (size_t pIdx = 0; pIdx < matchedCtor->params.size(); ++pIdx)
+                        {
+                            if (matchedCtor->params[pIdx] == rhs)
+                            {
+                                paramToField[(int)pIdx] = fName;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if ((int)paramToField.size() == argCount)
+        {
+            fields.resize(argCount);
+            for (int i = 0; i < argCount; ++i)
+                fields[i] = paramToField[i];
+            return fields;
+        }
+    }
+
+    if (matchedCtor && (int)matchedCtor->params.size() == argCount)
+    {
+        bool allMatch = true;
+        for (const auto &p : matchedCtor->params)
+        {
+            if (!def->findField(p))
+            {
+                allMatch = false;
+                break;
+            }
+        }
+        if (allMatch)
+        {
+            return matchedCtor->params;
+        }
+    }
+
+    if ((int)def->fieldIndices.size() >= argCount)
+    {
+        for (int i = 0; i < argCount; ++i)
+        {
+            fields.push_back(def->fieldIndices[i].first);
+        }
+        return fields;
+    }
+
+    for (int i = 0; i < argCount; ++i)
+    {
+        fields.push_back("field_" + std::to_string(i));
+    }
+    return fields;
+}
+
+static std::string deduceExprClassName(antlr4::tree::ParseTree *tree,
+                                       const std::unordered_map<std::string, std::string> &varTypes,
+                                       TzdClassDef *currentDef)
+{
+    if (!tree)
+        return "";
+    std::string newCls = getNewExprClassName(tree);
+    if (!newCls.empty())
+        return newCls;
+    std::string text = tree->getText();
+    auto it = varTypes.find(text);
+    if (it != varTypes.end())
+        return it->second;
+    if (text == "this" && currentDef)
+        return currentDef->simpleName;
+    size_t dot = text.find('.');
+    if (dot != std::string::npos)
+    {
+        std::string root = text.substr(0, dot);
+        std::string sub = text.substr(dot + 1);
+        std::string rootCls = "";
+        if (root == "this" && currentDef)
+            rootCls = currentDef->simpleName;
+        else
+        {
+            auto rIt = varTypes.find(root);
+            if (rIt != varTypes.end())
+                rootCls = rIt->second;
+        }
+        if (!rootCls.empty())
+        {
+            TzdClassDef *pDef = TzdOopManager::getClass(rootCls);
+            if (pDef)
+            {
+                ClassField *f = pDef->findField(sub);
+                if (f && !f->type.empty())
+                    return f->type;
+            }
         }
     }
     return "";
@@ -842,11 +1000,54 @@ extern "C"
 
     void *rt_get_worker_ptr(const char *funcName)
     {
-        std::shared_lock<std::shared_mutex> lock(s_workerPointersMutex);
-        auto it = s_workerPointers.find(funcName);
-        if (it != s_workerPointers.end())
+        if (!funcName)
+            return nullptr;
         {
-            return it->second;
+            std::shared_lock<std::shared_mutex> lock(s_workerPointersMutex);
+            auto it = s_workerPointers.find(funcName);
+            if (it != s_workerPointers.end())
+            {
+                return it->second;
+            }
+        }
+        if (g_CurrentInterpreter)
+        {
+            for (auto scopeIt = g_CurrentInterpreter->scopes.rbegin(); scopeIt != g_CurrentInterpreter->scopes.rend(); ++scopeIt)
+            {
+                auto it = scopeIt->find(funcName);
+                if (it != scopeIt->end() && it->second.type == TzdValue::FUNCTION)
+                {
+                    void *worker = nullptr;
+                    if (!it->second.jitInternalName.empty())
+                    {
+                        std::shared_lock<std::shared_mutex> lock(s_workerPointersMutex);
+                        auto wit = s_workerPointers.find(it->second.jitInternalName);
+                        if (wit != s_workerPointers.end())
+                        {
+                            worker = wit->second;
+                        }
+                    }
+                    if (!worker && !it->second.jitInternalName.empty() && g_CurrentInterpreter->m_jitEngine)
+                    {
+                        std::string workerName = it->second.jitInternalName + "_worker";
+                        auto symOrErr = g_CurrentInterpreter->m_jitEngine->lookupSymbol(workerName);
+                        if (symOrErr)
+                        {
+                            worker = reinterpret_cast<void *>(symOrErr->getValue());
+                        }
+                        else
+                        {
+                            llvm::consumeError(symOrErr.takeError());
+                        }
+                    }
+                    if (worker)
+                    {
+                        std::unique_lock<std::shared_mutex> ulock(s_workerPointersMutex);
+                        s_workerPointers[funcName] = worker;
+                        return worker;
+                    }
+                }
+            }
         }
         return nullptr;
     }
@@ -1324,11 +1525,13 @@ extern "C"
             *p = '\0';
             bool neg = lVal < 0;
             unsigned long long uVal = neg ? (unsigned long long)(-lVal) : (unsigned long long)lVal;
-            do {
+            do
+            {
                 *--p = '0' + (char)(uVal % 10);
                 uVal /= 10;
             } while (uVal > 0);
-            if (neg) *--p = '-';
+            if (neg)
+                *--p = '-';
             size_t len = (buf + 31) - p;
             res->sVal.assign(p, len);
             uint32_t h = 2166136261U;
@@ -1857,6 +2060,164 @@ extern "C"
 
     void *rt_op_not(void *a) { return make_bool(!rt_to_bool(a)); }
 
+    int64_t rt_to_int64_fast(void *v)
+    {
+        if (!v)
+            return 0;
+        if ((uintptr_t)v < 4096)
+            return (int64_t)(uintptr_t)v;
+        TzdValue *val = (TzdValue *)v;
+        return TzdInterpreter::getAsInt64Internal(*val);
+    }
+
+    void *rt_op_bitand(void *a, void *b)
+    {
+        if (!a || !b)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+        {
+            std::string r = bigint_and(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        return make_double((double)(v1_i & v2_i));
+    }
+
+    void *rt_op_bitor(void *a, void *b)
+    {
+        if (!a || !b)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+        {
+            std::string r = bigint_or(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        return make_double((double)(v1_i | v2_i));
+    }
+
+    void *rt_op_bitxor(void *a, void *b)
+    {
+        if (!a || !b)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || v2->type == TzdValue::BIGINT)
+        {
+            std::string r = bigint_xor(to_bigint_str(*v1), to_bigint_str(*v2));
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        return make_double((double)(v1_i ^ v2_i));
+    }
+
+    void *rt_op_bitnot(void *a)
+    {
+        if (!a)
+            return make_double(-1.0);
+        TzdValue *v1 = (TzdValue *)a;
+        if (v1->type == TzdValue::BIGINT)
+        {
+            std::string r = bigint_not(to_bigint_str(*v1));
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        return make_double((double)(~v1_i));
+    }
+
+    void *rt_op_shl(void *a, void *b)
+    {
+        if (!a)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || (v2 && v2->type == TzdValue::BIGINT))
+        {
+            int64_t shift = rt_to_int64_fast(b);
+            std::string r = bigint_shl(to_bigint_str(*v1), shift);
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        if (v2_i >= 64 || v2_i < 0 || (v2_i > 0 && v1_i != 0 && (v2_i >= 62 || (uint64_t)std::abs(v1_i) > (0x7FFFFFFFFFFFFFFFULL >> v2_i))))
+        {
+            std::string r = bigint_shl(std::to_string(v1_i), v2_i);
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        return make_double((double)(v1_i << (v2_i & 63)));
+    }
+
+    void *rt_op_shr(void *a, void *b)
+    {
+        if (!a)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || (v2 && v2->type == TzdValue::BIGINT))
+        {
+            int64_t shift = rt_to_int64_fast(b);
+            std::string r = bigint_shr(to_bigint_str(*v1), shift);
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        int64_t v1_i = rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        if (v2_i >= 64)
+            return make_double(v1_i < 0 ? -1.0 : 0.0);
+        if (v2_i < 0)
+            return make_double(0.0);
+        return make_double((double)(v1_i >> (v2_i & 63)));
+    }
+
+    void *rt_op_ushr(void *a, void *b)
+    {
+        if (!a)
+            return make_double(0.0);
+        TzdValue *v1 = (TzdValue *)a;
+        TzdValue *v2 = (TzdValue *)b;
+        if (v1->type == TzdValue::BIGINT || (v2 && v2->type == TzdValue::BIGINT))
+        {
+            int64_t shift = rt_to_int64_fast(b);
+            std::string r = bigint_ushr(to_bigint_str(*v1), shift);
+            TzdValue *res = g_JitPool.next();
+            res->type = TzdValue::BIGINT;
+            res->sVal = r;
+            return res;
+        }
+        uint64_t v1_i = (uint64_t)rt_to_int64_fast(a);
+        int64_t v2_i = rt_to_int64_fast(b);
+        if (v2_i >= 64 || v2_i < 0)
+            return make_double(0.0);
+        return make_double((double)(v1_i >> (v2_i & 63)));
+    }
+
     void *rt_op_sqrt(void *a) { return make_double(sqrt(TzdInterpreter::getAsDoubleInternal(*(TzdValue *)a))); }
 
     void *rt_op_gt(void *a, void *b)
@@ -2037,7 +2398,7 @@ extern "C"
                                        : TzdInterpreter::getAsString(*vIdx);
             if (vArr->ptrVal)
             {
-                auto *m = (TzdFastDoubleMap*)vArr->ptrVal;
+                auto *m = (TzdFastDoubleMap *)vArr->ptrVal;
                 uint32_t h = (vIdx->type == TzdValue::STRING && vIdx->ulVal != 0) ? (uint32_t)vIdx->ulVal : 0;
                 double outVal = 0.0;
                 if (m->find(k, outVal, h))
@@ -2291,18 +2652,21 @@ extern "C"
                 if (g_JitPool.contains(vIdx))
                 {
                     auto [it, inserted] = vArr->mapVal.try_emplace(std::move(vIdx->sVal), *vVal);
-                    if (!inserted) it->second = *vVal;
+                    if (!inserted)
+                        it->second = *vVal;
                 }
                 else
                 {
                     auto [it, inserted] = vArr->mapVal.try_emplace(vIdx->sVal, *vVal);
-                    if (!inserted) it->second = *vVal;
+                    if (!inserted)
+                        it->second = *vVal;
                 }
             }
             else
             {
                 auto [it, inserted] = vArr->mapVal.try_emplace(TzdInterpreter::getAsString(*vIdx), *vVal);
-                if (!inserted) it->second = *vVal;
+                if (!inserted)
+                    it->second = *vVal;
             }
             return;
         }
@@ -2372,7 +2736,7 @@ extern "C"
             {
                 vArr->ptrVal = new TzdFastDoubleMap(524288);
             }
-            auto *m = (TzdFastDoubleMap*)vArr->ptrVal;
+            auto *m = (TzdFastDoubleMap *)vArr->ptrVal;
             const std::string &key = (vIdx->type == TzdValue::STRING || vIdx->type == TzdValue::BIGINT || vIdx->type == TzdValue::RATIONAL)
                                          ? vIdx->sVal
                                          : TzdInterpreter::getAsString(*vIdx);
@@ -2716,27 +3080,35 @@ extern "C"
         return instVal;
     }
 
-    void *rt_create_inst_2d(const char *name, double a1, double a2)
+    void *rt_create_inst_sroa(const char *name, int count, const double *vals)
     {
-        static thread_local const char *s_cached2dName = nullptr;
-        static thread_local TzdClassDef *s_cached2dDef = nullptr;
-        if (!s_cached2dDef || s_cached2dName != name)
+        static thread_local const char *s_cachedSroaName = nullptr;
+        static thread_local TzdClassDef *s_cachedSroaDef = nullptr;
+        if (!s_cachedSroaDef || s_cachedSroaName != name)
         {
-            s_cached2dDef = TzdOopManager::getClass(name);
-            s_cached2dName = name;
+            s_cachedSroaDef = TzdOopManager::getClass(name);
+            s_cachedSroaName = name;
         }
         TzdValue *instVal = g_JitPool.next();
         instVal->type = TzdValue::INSTANCE;
-        TzdInstance *in = TzdInstance::create(s_cached2dDef);
+        TzdInstance *in = TzdInstance::create(s_cachedSroaDef);
         instVal->setInstance(in);
-        if (in && in->fieldValues.size() >= 2)
+        if (in && count > 0 && vals)
         {
-            in->fieldValues[0].type = TzdValue::DOUBLE;
-            in->fieldValues[0].dVal = a1;
-            in->fieldValues[1].type = TzdValue::DOUBLE;
-            in->fieldValues[1].dVal = a2;
+            size_t n = (std::min)((size_t)count, in->fieldValues.size());
+            for (size_t i = 0; i < n; ++i)
+            {
+                in->fieldValues[i].type = TzdValue::DOUBLE;
+                in->fieldValues[i].dVal = vals[i];
+            }
         }
         return instVal;
+    }
+
+    void *rt_create_inst_2d(const char *name, double a1, double a2)
+    {
+        double vals[2] = {a1, a2};
+        return rt_create_inst_sroa(name, 2, vals);
     }
 
     void *rt_call_value_fast(void *funcPtr, int argCount, TzdValue *args)
@@ -2864,9 +3236,55 @@ extern "C"
         {
             TzdInstance *in = v->instanceVal;
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
-                return in->fieldValues[fieldIndex].dVal;
+            {
+                const auto &fv = in->fieldValues[fieldIndex];
+                return (fv.type == TzdValue::DOUBLE) ? fv.dVal : (double)fv.lVal;
+            }
         }
         return 0.0;
+    }
+
+    int64_t rt_tzd_get_field_i64(void *inst, int fieldIndex)
+    {
+        TzdValue *v = (TzdValue *)inst;
+        if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
+        {
+            TzdInstance *in = v->instanceVal;
+            if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
+            {
+                const auto &fv = in->fieldValues[fieldIndex];
+                return (fv.type == TzdValue::INT) ? fv.lVal : (int64_t)fv.dVal;
+            }
+        }
+        return 0;
+    }
+
+    void rt_tzd_set_field_i64(void *inst, int fieldIndex, int64_t val)
+    {
+        TzdValue *v = (TzdValue *)inst;
+        if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
+        {
+            TzdInstance *in = v->instanceVal;
+            if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
+            {
+                in->fieldValues[fieldIndex].type = TzdValue::INT;
+                in->fieldValues[fieldIndex].lVal = val;
+            }
+        }
+    }
+
+    void *rt_tzd_get_field_val(void *inst, int fieldIndex)
+    {
+        TzdValue *v = (TzdValue *)inst;
+        if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
+        {
+            TzdInstance *in = v->instanceVal;
+            if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
+            {
+                return &in->fieldValues[fieldIndex];
+            }
+        }
+        return g_JitPool.next();
     }
 
     void rt_tzd_set_field_d(void *inst, int fieldIndex, double val)
@@ -2879,6 +3297,20 @@ extern "C"
             {
                 in->fieldValues[fieldIndex].type = TzdValue::DOUBLE;
                 in->fieldValues[fieldIndex].dVal = val;
+            }
+        }
+    }
+
+    void rt_tzd_set_field_val(void *inst, int fieldIndex, void *val)
+    {
+        TzdValue *v = (TzdValue *)inst;
+        TzdValue *src = (TzdValue *)val;
+        if (v && v->type == TzdValue::INSTANCE && v->instanceVal && src)
+        {
+            TzdInstance *in = v->instanceVal;
+            if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
+            {
+                in->fieldValues[fieldIndex] = *src;
             }
         }
     }
@@ -3804,10 +4236,11 @@ extern "C"
                                          : TzdInterpreter::getAsString(*vIdx);
             if (vArr->ptrVal)
             {
-                auto *m = (TzdFastDoubleMap*)vArr->ptrVal;
+                auto *m = (TzdFastDoubleMap *)vArr->ptrVal;
                 uint32_t h = (vIdx->type == TzdValue::STRING && vIdx->ulVal != 0) ? (uint32_t)vIdx->ulVal : 0;
                 double outVal = 0.0;
-                if (m->find(key, outVal, h)) return outVal;
+                if (m->find(key, outVal, h))
+                    return outVal;
             }
             auto it = vArr->mapVal.find(key);
             if (it != vArr->mapVal.end())
@@ -3898,6 +4331,8 @@ void TzdJitEngine::jitModule(std::unique_ptr<Module> M)
             }
             std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
             s_workerPointers[baseName] = ptr;
+            s_workerPointers[w.substr(0, w.size() - 7)] = ptr;
+            s_workerPointers[w] = ptr;
         }
     }
 }
@@ -3979,6 +4414,10 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
         for (int i = 0; i < argCount; ++i)
         {
             std::string pName = getParamName(pList[i]);
+            if (isExplicitNumericParam(pList[i]))
+            {
+                continue;
+            }
             if (isNonNumericParam(pList[i]) || isParamNonDouble(ctx->block(), pName))
             {
                 hasNonNumericParam = true;
@@ -3986,7 +4425,13 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             }
         }
     }
-    if (argCount >= 0 && !hasNonNumericParam && isBlockReturningDouble(ctx->block()))
+
+    std::string explicitRetType = ctx->typeType() ? ctx->typeType()->getText() : "";
+    bool returnsDouble = !explicitRetType.empty()
+                             ? isExplicitNumericType(explicitRetType)
+                             : isBlockReturningDouble(ctx->block());
+
+    if (argCount >= 0 && !hasNonNumericParam && returnsDouble)
     {
         std::vector<Type *> nativeWorkerArgs;
         for (int i = 0; i < argCount; ++i)
@@ -4093,6 +4538,11 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             for (int i = 0; i < argCount; ++i)
             {
                 std::string pName = getParamName(pList[i]);
+                std::string pType = getParamType(pList[i]);
+                if (!pType.empty() && TzdOopManager::getClass(pType) != nullptr)
+                {
+                    m_varClassTypes[pName] = pType;
+                }
                 s_currentFuncParamNames.push_back(pName);
                 m_declaredLocals.insert(pName);
 
@@ -4103,7 +4553,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
 
                 // Native double version — unbox at entry for fast numeric access + native worker
                 bool isNumeric = isExplicitNumericParam(pList[i]) ||
-                                 (isBlockReturningDouble(ctx->block()) && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctx->block(), pName));
+                                 (returnsDouble && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(ctx->block(), pName));
                 if (isNumeric)
                 {
                     Value *nativeVal = inlineToDoubleFast(argPtr);
@@ -4192,6 +4642,11 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::FunctionDeclarationContext
             for (int i = 0; i < argCount; ++i)
             {
                 std::string pName = getParamName(pList[i]);
+                std::string pType = getParamType(pList[i]);
+                if (!pType.empty() && TzdOopManager::getClass(pType) != nullptr)
+                {
+                    m_varClassTypes[pName] = pType;
+                }
                 s_currentFuncParamNames.push_back(pName);
                 m_declaredLocals.insert(pName);
 
@@ -4273,6 +4728,10 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext *cla
         for (int i = 0; i < argCount; ++i)
         {
             std::string pName = getParamName(pList[i]);
+            if (isExplicitNumericParam(pList[i]))
+            {
+                continue;
+            }
             if (isNonNumericParam(pList[i]) || isParamNonDouble(methodCtx->block(), pName))
             {
                 hasNonNumericParam = true;
@@ -4281,7 +4740,10 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext *cla
         }
     }
 
-    bool returnsDouble = isBlockReturningDouble(methodCtx->block());
+    std::string explicitRetType = methodCtx->typeType() ? methodCtx->typeType()->getText() : "";
+    bool returnsDouble = !explicitRetType.empty()
+                             ? isExplicitNumericType(explicitRetType)
+                             : isBlockReturningDouble(methodCtx->block());
 
     if (argCount > 0 && !hasNonNumericParam && returnsDouble)
     {
@@ -4413,6 +4875,11 @@ void TzdCompiler::compileClassMethod(TzdLangParser::ClassDeclarationContext *cla
             for (int i = 0; i < argCount; ++i)
             {
                 std::string pName = getParamName(pList[i]);
+                std::string pType = getParamType(pList[i]);
+                if (!pType.empty() && TzdOopManager::getClass(pType) != nullptr)
+                {
+                    m_varClassTypes[pName] = pType;
+                }
                 s_currentFuncParamNames.push_back(pName);
                 m_declaredLocals.insert(pName);
                 Value *argVal = m_builder.CreateCall(getRtFunc("rt_get_arg"), {m_builder.getInt32(i + 1)});
@@ -4531,7 +4998,7 @@ void TzdCompiler::compileConstructor(TzdLangParser::ClassDeclarationContext *cla
     m_currentRetPtr = nullptr;
 }
 
-void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLangParser::ParamListContext *params, const std::string &internalName)
+void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLangParser::ParamListContext *params, const std::string &internalName, const std::string &explicitReturnType)
 {
     std::string savedCompilingFunc = s_currentCompilingFuncName;
     std::string baseInternal = internalName;
@@ -4568,6 +5035,10 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
 
+    bool returnsDouble = !explicitReturnType.empty()
+                             ? isExplicitNumericType(explicitReturnType)
+                             : isBlockReturningDouble(block);
+
     // Phase B: Create native double worker for function specialization.
     // Only for functions with parameters — 0-param functions have no benefit.
     Function *nativeWorkerFunc = nullptr;
@@ -4578,6 +5049,10 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
         for (int i = 0; i < argCount; ++i)
         {
             std::string pName = getParamName(pList[i]);
+            if (isExplicitNumericParam(pList[i]))
+            {
+                continue;
+            }
             if (isNonNumericParam(pList[i]) || isParamNonDouble(block, pName))
             {
                 hasNonNumericParam = true;
@@ -4585,7 +5060,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
             }
         }
     }
-    if (argCount > 0 && !hasNonNumericParam && isBlockReturningDouble(block))
+    if (argCount > 0 && !hasNonNumericParam && returnsDouble)
     {
         std::vector<Type *> nativeWorkerArgs;
         for (int i = 0; i < argCount; ++i)
@@ -4693,6 +5168,11 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
             for (int i = 0; i < argCount; ++i)
             {
                 std::string pName = getParamName(pList[i]);
+                std::string pType = getParamType(pList[i]);
+                if (!pType.empty() && TzdOopManager::getClass(pType) != nullptr)
+                {
+                    m_varClassTypes[pName] = pType;
+                }
                 s_currentFuncParamNames.push_back(pName);
                 m_declaredLocals.insert(pName);
 
@@ -4704,7 +5184,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
                 m_namedValues[pName] = boxedAlloc;
 
                 bool isNumeric = isExplicitNumericParam(pList[i]) ||
-                                 (isBlockReturningDouble(block) && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(block, pName));
+                                 (returnsDouble && !isNonNumericParam(pList[i]) && !isParamUsedAsContainer(block, pName));
                 if (pName != "this" && isNumeric)
                 {
                     Value *nativeVal = inlineToDoubleFast(argPtr);
@@ -4792,6 +5272,11 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
             for (int i = 0; i < argCount; ++i)
             {
                 std::string pName = getParamName(pList[i]);
+                std::string pType = getParamType(pList[i]);
+                if (!pType.empty() && TzdOopManager::getClass(pType) != nullptr)
+                {
+                    m_varClassTypes[pName] = pType;
+                }
                 s_currentFuncParamNames.push_back(pName);
                 m_declaredLocals.insert(pName);
 
@@ -4862,7 +5347,8 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block, TzdLa
 // instead of ParamListContext, so we can compile from TzdValue::funcBody + params.
 void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block,
                                        const std::vector<std::string> &paramNames,
-                                       const std::string &internalName)
+                                       const std::string &internalName,
+                                       const std::string &explicitReturnType)
 {
     std::string savedCompilingFunc = s_currentCompilingFuncName;
     std::string baseInternal = internalName;
@@ -4892,6 +5378,10 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block,
     workerFunc->addFnAttr(llvm::Attribute::NoInline);
     s_currentWorkerFunc = workerFunc;
 
+    bool returnsDouble = !explicitReturnType.empty()
+                             ? isExplicitNumericType(explicitReturnType)
+                             : isBlockReturningDouble(block);
+
     // Phase B: Create native double worker for function specialization.
     // Skip if any param is "this" (pointer, not double) — native worker
     // only makes sense for all-numeric self-recursion.
@@ -4905,7 +5395,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block,
             break;
         }
     }
-    if (argCount > 0 && !hasThisParam && isBlockReturningDouble(block))
+    if (argCount > 0 && !hasThisParam && returnsDouble)
     {
         std::vector<Type *> nativeWorkerArgs;
         for (int i = 0; i < argCount; ++i)
@@ -5016,7 +5506,7 @@ void TzdCompiler::compileNamedFunction(TzdLangParser::BlockContext *block,
             m_namedValues[pName] = boxedAlloc;
 
             // Skip "this" — it's an instance pointer, not a numeric value!
-            if (pName != "this" && isBlockReturningDouble(block) && !isParamUsedAsContainer(block, pName))
+            if (pName != "this" && returnsDouble && !isParamUsedAsContainer(block, pName))
             {
                 Value *nativeVal = inlineToDoubleFast(argPtr);
                 AllocaInst *nativeAlloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, pName + "_native");
@@ -5192,9 +5682,14 @@ void TzdCompiler::setupExternalFunctions()
     addFunc("rt_create_null", {});
     addFunc("rt_create_inst", {m_ptrTy});
     addFunc("rt_create_inst_args", {m_ptrTy, m_int32Ty, m_ptrTy});
+    addFunc("rt_create_inst_sroa", {m_ptrTy, m_int32Ty, m_ptrTy});
     addFunc("rt_create_inst_2d", {m_ptrTy, m_doubleTy, m_doubleTy});
     addFunc("rt_tzd_get_field_d", {m_ptrTy, m_int32Ty}, m_doubleTy);
+    addFunc("rt_tzd_get_field_i64", {m_ptrTy, m_int32Ty}, m_builder.getInt64Ty());
+    addFunc("rt_tzd_get_field_val", {m_ptrTy, m_int32Ty}, m_ptrTy);
     addFunc("rt_tzd_set_field_d", {m_ptrTy, m_int32Ty, m_doubleTy}, m_voidTy);
+    addFunc("rt_tzd_set_field_i64", {m_ptrTy, m_int32Ty, m_builder.getInt64Ty()}, m_voidTy);
+    addFunc("rt_tzd_set_field_val", {m_ptrTy, m_int32Ty, m_ptrTy}, m_voidTy);
     addFunc("rt_create_native_val", {m_ptrTy, m_ptrTy});
 
     addFunc("rt_resolve_var", {m_ptrTy});
@@ -5213,6 +5708,14 @@ void TzdCompiler::setupExternalFunctions()
     addFunc("rt_op_div", {m_ptrTy, m_ptrTy});
     addFunc("rt_op_mod", {m_ptrTy, m_ptrTy});
     addFunc("rt_op_pow", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_bitand", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_bitor", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_bitxor", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_bitnot", {m_ptrTy});
+    addFunc("rt_op_shl", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_shr", {m_ptrTy, m_ptrTy});
+    addFunc("rt_op_ushr", {m_ptrTy, m_ptrTy});
+    addFunc("rt_to_int64_fast", {m_ptrTy}, m_builder.getInt64Ty());
     addFunc("rt_op_neg", {m_ptrTy});
     addFunc("rt_op_not", {m_ptrTy});
     addFunc("rt_op_sqrt", {m_ptrTy});
@@ -5362,18 +5865,8 @@ void TzdJitEngine::registerWorkerForSymbol(const std::string &internalName)
         }
         std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
         s_workerPointers[baseName] = ptr;
-    }
-    else if (void *entryPtr = lookupSymbolAsPtr(internalName))
-    {
-        // Fallback: use entry function if worker not found
-        std::string baseName = internalName;
-        size_t lastUnderscore = baseName.find_last_of('_');
-        if (lastUnderscore != std::string::npos && lastUnderscore + 1 < baseName.size() && baseName[lastUnderscore + 1] == 'v')
-        {
-            baseName = baseName.substr(0, lastUnderscore);
-        }
-        std::unique_lock<std::shared_mutex> lock(s_workerPointersMutex);
-        s_workerPointers[baseName] = entryPtr;
+        s_workerPointers[internalName] = ptr;
+        s_workerPointers[workerName] = ptr;
     }
 }
 
@@ -5676,9 +6169,14 @@ void TzdJitEngine::registerRuntimeSymbols()
     bind("rt_to_bool", (void *)&rt_to_bool);
     bind("rt_create_inst", (void *)&rt_create_inst);
     bind("rt_create_inst_args", (void *)&rt_create_inst_args);
+    bind("rt_create_inst_sroa", (void *)&rt_create_inst_sroa);
     bind("rt_create_inst_2d", (void *)&rt_create_inst_2d);
     bind("rt_tzd_get_field_d", (void *)&rt_tzd_get_field_d);
+    bind("rt_tzd_get_field_i64", (void *)&rt_tzd_get_field_i64);
+    bind("rt_tzd_get_field_val", (void *)&rt_tzd_get_field_val);
     bind("rt_tzd_set_field_d", (void *)&rt_tzd_set_field_d);
+    bind("rt_tzd_set_field_i64", (void *)&rt_tzd_set_field_i64);
+    bind("rt_tzd_set_field_val", (void *)&rt_tzd_set_field_val);
     bind("rt_get_member", (void *)&rt_get_member);
     bind("rt_tzd_get_member", (void *)&rt_tzd_get_member);
     bind("rt_print", (void *)&rt_print);
@@ -5689,6 +6187,14 @@ void TzdJitEngine::registerRuntimeSymbols()
     bind("rt_op_div", (void *)&rt_op_div);
     bind("rt_op_mod", (void *)&rt_op_mod);
     bind("rt_op_pow", (void *)&rt_op_pow);
+    bind("rt_op_bitand", (void *)&rt_op_bitand);
+    bind("rt_op_bitor", (void *)&rt_op_bitor);
+    bind("rt_op_bitxor", (void *)&rt_op_bitxor);
+    bind("rt_op_bitnot", (void *)&rt_op_bitnot);
+    bind("rt_op_shl", (void *)&rt_op_shl);
+    bind("rt_op_shr", (void *)&rt_op_shr);
+    bind("rt_op_ushr", (void *)&rt_op_ushr);
+    bind("rt_to_int64_fast", (void *)&rt_to_int64_fast);
     bind("rt_op_neg", (void *)&rt_op_neg);
     bind("rt_op_not", (void *)&rt_op_not);
     bind("rt_op_sqrt", (void *)&rt_op_sqrt);
@@ -5883,7 +6389,8 @@ llvm::orc::ThreadSafeModule TzdCompiler::extractThreadSafeModule()
     // 1. Clean up dead code blocks
     for (auto &F : *m_module)
     {
-        if (F.isDeclaration()) continue;
+        if (F.isDeclaration())
+            continue;
         bool changed = true;
         while (changed)
         {
@@ -5954,6 +6461,11 @@ Value *TzdCompiler::boxToTzdValue(Value *val)
     { // i1 (bool)
         return m_builder.CreateCall(getRtFunc("rt_create_bool"), {val});
     }
+    if (val->getType()->isIntegerTy())
+    {
+        Value *dbl = m_builder.CreateSIToFP(val, m_doubleTy);
+        return m_builder.CreateCall(getRtFunc("rt_create_num"), {dbl});
+    }
     return val;
 }
 
@@ -5962,6 +6474,10 @@ Value *TzdCompiler::toNativeBool(Value *val)
     if (val->getType()->isIntegerTy(1))
     {
         return val;
+    }
+    if (val->getType()->isIntegerTy())
+    {
+        return m_builder.CreateICmpNE(val, ConstantInt::get(val->getType(), 0), "tobool");
     }
     if (val->getType()->isDoubleTy())
     {
@@ -5978,7 +6494,8 @@ std::unique_ptr<llvm::Module> TzdCompiler::getModule()
 {
     for (auto &F : *m_module)
     {
-        if (F.isDeclaration()) continue;
+        if (F.isDeclaration())
+            continue;
         bool changed = true;
         while (changed)
         {
@@ -6049,19 +6566,22 @@ std::any TzdCompiler::visitVariableDeclaration(TzdLangParser::VariableDeclaratio
     }
     if (decl->expression())
     {
-        std::string newClass = getNewExprClassName(decl->expression());
+        std::string newClass = deduceExprClassName(decl->expression(), m_varClassTypes, m_currentClassDef);
+        if (newClass.empty() && decl->typeType())
+        {
+            newClass = decl->typeType()->getText();
+        }
         if (!newClass.empty())
         {
             m_varClassTypes[name] = newClass;
         }
-        else
+    }
+    else if (decl->typeType())
+    {
+        std::string t = decl->typeType()->getText();
+        if (TzdOopManager::getClass(t))
         {
-            std::string rhsText = decl->expression()->getText();
-            auto it = m_varClassTypes.find(rhsText);
-            if (it != m_varClassTypes.end())
-            {
-                m_varClassTypes[name] = it->second;
-            }
+            m_varClassTypes[name] = t;
         }
     }
 
@@ -6073,6 +6593,12 @@ std::any TzdCompiler::visitVariableDeclaration(TzdLangParser::VariableDeclaratio
         {
             m_varFieldAllocas[name] = m_lastNewFieldAllocas;
             m_lastNewFieldAllocas.clear();
+            if (m_varClassTypes.count(name) == 0)
+            {
+                std::string cls = deduceExprClassName(decl->expression(), m_varClassTypes, m_currentClassDef);
+                if (!cls.empty())
+                    m_varClassTypes[name] = cls;
+            }
             if (s_compilingNativeWorker)
             {
                 Value *nullPtr = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
@@ -6091,8 +6617,9 @@ std::any TzdCompiler::visitVariableDeclaration(TzdLangParser::VariableDeclaratio
     Function *curF = m_builder.GetInsertBlock()->getParent();
     bool isTopLevel = (curF && curF->getName() == "main_module_entry");
 
-    if (initVal->getType()->isDoubleTy())
+    if (initVal->getType()->isDoubleTy() || initVal->getType()->isIntegerTy())
     {
+        Value *dVal = castToNativeDouble(initVal);
         Value *alloc = nullptr;
         auto it = m_nativeDoubleLocals.find(name);
         if (it != m_nativeDoubleLocals.end())
@@ -6104,12 +6631,12 @@ std::any TzdCompiler::visitVariableDeclaration(TzdLangParser::VariableDeclaratio
             alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
             m_nativeDoubleLocals[name] = alloc;
         }
-        m_builder.CreateStore(initVal, alloc);
+        m_builder.CreateStore(dVal, alloc);
 
         if (isTopLevel)
         {
             Value *nameStr = m_builder.CreateGlobalStringPtr(name);
-            Value *boxedVal = boxToTzdValue(initVal);
+            Value *boxedVal = boxToTzdValue(dVal);
             m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, boxedVal});
         }
         return std::any();
@@ -6420,6 +6947,13 @@ static bool isIntegerValuedExpr(antlr4::tree::ParseTree *tree, int depth = 0)
     if (auto pre = dynamic_cast<TzdLangParser::PrefixExprContext *>(tree))
     {
         return isIntegerValuedExpr(pre->expression(), depth + 1);
+    }
+    if (dynamic_cast<TzdLangParser::ShiftExprContext *>(tree) ||
+        dynamic_cast<TzdLangParser::BitAndExprContext *>(tree) ||
+        dynamic_cast<TzdLangParser::BitXorExprContext *>(tree) ||
+        dynamic_cast<TzdLangParser::BitOrExprContext *>(tree))
+    {
+        return true;
     }
     std::string id = getExprIdentifier(tree);
     if (!id.empty())
@@ -7561,19 +8095,13 @@ std::any TzdCompiler::visitWhileStmt(TzdLangParser::WhileStmtContext *ctx)
                 loopMD.push_back(nullptr);
                 if (hasNestedLoop)
                 {
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.disable")
-                    }));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.disable")}));
                 }
                 else
                 {
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.enable")
-                    }));
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.count"),
-                        ConstantAsMetadata::get(m_builder.getInt32(8))
-                    }));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.enable")}));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.count"),
+                                                             ConstantAsMetadata::get(m_builder.getInt32(8))}));
                 }
                 MDNode *loopID = MDNode::getDistinct(m_context, loopMD);
                 loopID->replaceOperandWith(0, loopID);
@@ -7614,19 +8142,13 @@ std::any TzdCompiler::visitWhileStmt(TzdLangParser::WhileStmtContext *ctx)
                 loopMD.push_back(nullptr);
                 if (hasNestedLoop)
                 {
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.disable")
-                    }));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.disable")}));
                 }
                 else
                 {
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.enable")
-                    }));
-                    loopMD.push_back(MDNode::get(m_context, {
-                        MDString::get(m_context, "llvm.loop.unroll.count"),
-                        ConstantAsMetadata::get(m_builder.getInt32(8))
-                    }));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.enable")}));
+                    loopMD.push_back(MDNode::get(m_context, {MDString::get(m_context, "llvm.loop.unroll.count"),
+                                                             ConstantAsMetadata::get(m_builder.getInt32(8))}));
                 }
                 MDNode *loopID = MDNode::getDistinct(m_context, loopMD);
                 loopID->replaceOperandWith(0, loopID);
@@ -8063,6 +8585,7 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext *ctx)
     BasicBlock *stepBB = BasicBlock::Create(m_context, "for.step", currentFunc);
     BasicBlock *afterBB = BasicBlock::Create(m_context, "for.after", currentFunc);
 
+    s_loopLevel++;
     m_builder.CreateBr(condBB);
     m_builder.SetInsertPoint(condBB);
 
@@ -8081,12 +8604,10 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext *ctx)
 
     m_builder.SetInsertPoint(bodyBB);
 
-    s_loopLevel++;
     if (ctx->statement())
     {
         visit(ctx->statement());
     }
-    s_loopLevel--;
 
     if (!m_builder.GetInsertBlock()->getTerminator())
     {
@@ -8104,6 +8625,7 @@ std::any TzdCompiler::visitForStmt(TzdLangParser::ForStmtContext *ctx)
     }
 
     m_builder.SetInsertPoint(afterBB);
+    s_loopLevel--;
     m_loopStack.pop_back();
 
     m_namedValues = backupScope;
@@ -8139,15 +8661,45 @@ std::any TzdCompiler::visitIdExpr(TzdLangParser::IdExprContext *ctx)
         Value *val = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
         return std::any((Value *)val);
     }
-    if (m_currentClassDef && m_namedValues.count("this") && m_currentClassDef->findField(name))
+    if (m_namedValues.count("this"))
     {
-        Value *thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"], "this_v");
-        Value *nameStr2 = m_builder.CreateGlobalStringPtr(name);
-        TzdSelector sel = internSelectorConstant(name);
-        GlobalVariable *ic = new GlobalVariable(*m_module, m_builder.getInt64Ty(), false,
-                                                GlobalValue::InternalLinkage, m_builder.getInt64(0), "ic");
-        return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_member_ic"),
-                                                      {thisPtr, m_builder.getInt32((int32_t)sel), nameStr2, ic}));
+        auto fIt = m_varFieldAllocas.find("this");
+        if (fIt != m_varFieldAllocas.end())
+        {
+            auto slotIt = fIt->second.find(name);
+            if (slotIt != fIt->second.end() && slotIt->second)
+            {
+                return std::any((Value *)m_builder.CreateLoad(m_doubleTy, slotIt->second, name));
+            }
+        }
+
+        if (m_currentClassDef && m_currentClassDef->findField(name))
+        {
+            Value *thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"], "this_v");
+            auto it = m_currentClassDef->fieldNameToIndex.find(name);
+            if (it != m_currentClassDef->fieldNameToIndex.end())
+            {
+                ClassField *f = m_currentClassDef->findField(name);
+                bool isFloat = f && (f->type == "float" || f->type == "double");
+                bool isInt = f && (f->type == "int" || f->type == "i64" || f->type == "long");
+                if (isFloat)
+                {
+                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"),
+                                                                  {thisPtr, m_builder.getInt32(it->second)}));
+                }
+                else if (isInt)
+                {
+                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_i64"),
+                                                                  {thisPtr, m_builder.getInt32(it->second)}));
+                }
+            }
+            Value *nameStr2 = m_builder.CreateGlobalStringPtr(name);
+            TzdSelector sel = internSelectorConstant(name);
+            GlobalVariable *ic = new GlobalVariable(*m_module, m_builder.getInt64Ty(), false,
+                                                    GlobalValue::InternalLinkage, m_builder.getInt64(0), "ic");
+            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_member_ic"),
+                                                          {thisPtr, m_builder.getInt32((int32_t)sel), nameStr2, ic}));
+        }
     }
     Value *nameStr = m_builder.CreateGlobalStringPtr(name);
     int line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
@@ -8161,6 +8713,16 @@ std::any TzdCompiler::visitIdExpr(TzdLangParser::IdExprContext *ctx)
 std::any TzdCompiler::visitIntExpr(TzdLangParser::IntExprContext *ctx)
 {
     std::string raw = ctx->getText();
+    size_t digitStart = (raw.size() > 0 && (raw[0] == '-' || raw[0] == '+')) ? 1 : 0;
+    bool isHex = (raw.size() > 2 + digitStart && raw[digitStart] == '0' &&
+                  (raw[digitStart + 1] == 'x' || raw[digitStart + 1] == 'X'));
+    if (!isHex && raw.size() - digitStart > 19)
+    {
+        Value *str = m_builder.CreateGlobalStringPtr(raw);
+        Value *bigintVal = m_builder.CreateCall(getRtFunc("rt_create_bigint"), {str});
+        return std::any((Value *)bigintVal);
+    }
+
     try
     {
         unsigned long long val = std::stoull(raw, nullptr, 0);
@@ -8168,17 +8730,9 @@ std::any TzdCompiler::visitIntExpr(TzdLangParser::IntExprContext *ctx)
     }
     catch (...)
     {
-        try
-        {
-            double val = std::stod(raw);
-            return std::any((Value *)ConstantFP::get(m_doubleTy, val));
-        }
-        catch (...)
-        {
-            Value *str = m_builder.CreateGlobalStringPtr(raw);
-            Value *bigintVal = m_builder.CreateCall(getRtFunc("rt_create_bigint"), {str});
-            return std::any((Value *)bigintVal);
-        }
+        Value *str = m_builder.CreateGlobalStringPtr(raw);
+        Value *bigintVal = m_builder.CreateCall(getRtFunc("rt_create_bigint"), {str});
+        return std::any((Value *)bigintVal);
     }
 }
 
@@ -8212,57 +8766,78 @@ std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext *ctx)
                 Value *B = castAnyToValue(visit(leftAdd->expression(1)), "visitAdditiveExpr.B");
                 Value *C = castAnyToValue(visit(ctx->expression(1)), "visitAdditiveExpr.C");
 
-                // Check if A is pointer, B is double, C is pointer ("prefix_" + i + "_suffix")
-                if (A->getType()->isPointerTy() && B->getType()->isDoubleTy() && C->getType()->isPointerTy())
+                // Check if A is pointer, B is numeric, C is pointer ("prefix_" + i + "_suffix")
+                if (A->getType()->isPointerTy() && (B->getType()->isDoubleTy() || B->getType()->isIntegerTy()) && C->getType()->isPointerTy())
                 {
-                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num_str"), {A, B, C}));
+                    Value *dB = castToNativeDouble(B);
+                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num_str"), {A, dB, C}));
                 }
                 // Check if all 3 are pointers
                 if (A->getType()->isPointerTy() && B->getType()->isPointerTy() && C->getType()->isPointerTy())
                 {
                     return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_3"), {A, B, C}));
                 }
-                // Fallback: evaluate leftAdd then right
-                Value *leftRes = nullptr;
-                if (A->getType()->isPointerTy() && B->getType()->isDoubleTy())
-                {
-                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), {A, B});
-                }
-                else if (A->getType()->isDoubleTy() && B->getType()->isPointerTy())
-                {
-                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), {A, B});
-                }
-                else if (A->getType()->isPointerTy() && B->getType()->isPointerTy())
-                {
-                    leftRes = m_builder.CreateCall(getRtFunc("rt_str_concat"), {A, B});
-                }
-                else
-                {
-                    leftRes = m_builder.CreateFAdd(A, B, "addtmp");
-                }
-
-                if (leftRes->getType()->isPointerTy() && C->getType()->isPointerTy())
-                {
-                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat"), {leftRes, C}));
-                }
-                else if (leftRes->getType()->isPointerTy() && C->getType()->isDoubleTy())
-                {
-                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), {leftRes, C}));
-                }
-                else if (leftRes->getType()->isDoubleTy() && C->getType()->isPointerTy())
-                {
-                    return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), {leftRes, C}));
-                }
-                else
-                {
-                    return std::any((Value *)m_builder.CreateFAdd(leftRes, C, "addtmp"));
-                }
+                auto emitSafeAdd = [&](Value *X, Value *Y) -> Value * {
+                    if (X->getType()->isIntegerTy(64) && Y->getType()->isIntegerTy(64))
+                    {
+                        return m_builder.CreateNSWAdd(X, Y, "addi64");
+                    }
+                    if (X->getType()->isDoubleTy() && Y->getType()->isDoubleTy())
+                    {
+                        return m_builder.CreateFAdd(X, Y, "addtmp");
+                    }
+                    if ((X->getType()->isDoubleTy() || X->getType()->isIntegerTy()) &&
+                        (Y->getType()->isDoubleTy() || Y->getType()->isIntegerTy()) &&
+                        !X->getType()->isPointerTy() && !Y->getType()->isPointerTy())
+                    {
+                        Value *dX = castToNativeDouble(X);
+                        Value *dY = castToNativeDouble(Y);
+                        return m_builder.CreateFAdd(dX, dY, "addtmp");
+                    }
+                    if (X->getType()->isPointerTy() && (Y->getType()->isDoubleTy() || Y->getType()->isIntegerTy()))
+                    {
+                        Value *dY = castToNativeDouble(Y);
+                        if (s_compilingNativeWorker)
+                        {
+                            return m_builder.CreateFAdd(inlineToDoubleFast(X), dY, "addtmp");
+                        }
+                        return m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), {X, dY});
+                    }
+                    if ((X->getType()->isDoubleTy() || X->getType()->isIntegerTy()) && Y->getType()->isPointerTy())
+                    {
+                        Value *dX = castToNativeDouble(X);
+                        if (s_compilingNativeWorker)
+                        {
+                            return m_builder.CreateFAdd(dX, inlineToDoubleFast(Y), "addtmp");
+                        }
+                        return m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), {dX, Y});
+                    }
+                    if (X->getType()->isPointerTy() && Y->getType()->isPointerTy())
+                    {
+                        return m_builder.CreateCall(getRtFunc("rt_str_concat"), {X, Y});
+                    }
+                    Value *boxedX = boxToTzdValue(X);
+                    Value *boxedY = boxToTzdValue(Y);
+                    return m_builder.CreateCall(getRtFunc("rt_op_add"), {boxedX, boxedY});
+                };
+                Value *leftRes = emitSafeAdd(A, B);
+                return std::any((Value *)emitSafeAdd(leftRes, C));
             }
         }
     }
 
     Value *L = castAnyToValue(visit(ctx->expression(0)), "visitAdditiveExpr.L");
     Value *R = castAnyToValue(visit(ctx->expression(1)), "visitAdditiveExpr.R");
+
+    // Both native integers: fast path
+    if (L->getType()->isIntegerTy(64) && R->getType()->isIntegerTy(64))
+    {
+        if (ctx->PLUS())
+        {
+            return std::any((Value *)m_builder.CreateNSWAdd(L, R, "addi64"));
+        }
+        return std::any((Value *)m_builder.CreateNSWSub(L, R, "subi64"));
+    }
 
     // Both doubles: fast path
     if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy())
@@ -8274,23 +8849,43 @@ std::any TzdCompiler::visitAdditiveExpr(TzdLangParser::AdditiveExprContext *ctx)
         return std::any((Value *)m_builder.CreateFSub(L, R, "subtmp"));
     }
 
+    // Mixed numeric fast path
+    if ((L->getType()->isDoubleTy() || L->getType()->isIntegerTy()) &&
+        (R->getType()->isDoubleTy() || R->getType()->isIntegerTy()) &&
+        !L->getType()->isPointerTy() && !R->getType()->isPointerTy())
+    {
+        Value *dL = castToNativeDouble(L);
+        Value *dR = castToNativeDouble(R);
+        if (ctx->PLUS())
+        {
+            return std::any((Value *)m_builder.CreateFAdd(dL, dR, "addtmp"));
+        }
+        return std::any((Value *)m_builder.CreateFSub(dL, dR, "subtmp"));
+    }
+
     if (ctx->PLUS())
     {
-        if (L->getType()->isPointerTy() && R->getType()->isDoubleTy())
+        if (L->getType()->isPointerTy() && (R->getType()->isDoubleTy() || R->getType()->isIntegerTy()))
         {
+            Value *dR = castToNativeDouble(R);
             if (s_compilingNativeWorker)
             {
-                return std::any((Value *)m_builder.CreateFAdd(inlineToDoubleFast(L), R, "addtmp"));
+                return std::any((Value *)m_builder.CreateFAdd(inlineToDoubleFast(L), dR, "addtmp"));
             }
-            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), {L, R}));
+            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_str_num"), {L, dR}));
         }
-        if (L->getType()->isDoubleTy() && R->getType()->isPointerTy())
+        if ((L->getType()->isDoubleTy() || L->getType()->isIntegerTy()) && R->getType()->isPointerTy())
         {
+            Value *dL = castToNativeDouble(L);
             if (s_compilingNativeWorker)
             {
-                return std::any((Value *)m_builder.CreateFAdd(L, inlineToDoubleFast(R), "addtmp"));
+                return std::any((Value *)m_builder.CreateFAdd(dL, inlineToDoubleFast(R), "addtmp"));
             }
-            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), {L, R}));
+            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat_num_str"), {dL, R}));
+        }
+        if (L->getType()->isPointerTy() && R->getType()->isPointerTy())
+        {
+            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_str_concat"), {L, R}));
         }
         Value *boxedL = boxToTzdValue(L);
         Value *boxedR = boxToTzdValue(R);
@@ -8321,7 +8916,7 @@ static bool collectSelfAppendOperands(TzdLangParser::ExpressionContext *expr,
 
 std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *ctx)
 {
-    if (ctx->getStart() && !s_compilingNativeWorker)
+    if (ctx->getStart() && !s_compilingNativeWorker && (s_loopLevel == 0 || jitTrackFrames()))
     {
         m_builder.CreateCall(getRtFunc("rt_set_location"), {m_builder.getInt32(ctx->getStart()->getLine()),
                                                             m_builder.getInt32(ctx->getStart()->getCharPositionInLine())});
@@ -8335,7 +8930,99 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         opText = "*=";
     else if (ctx->DIV_ASSIGN())
         opText = "/=";
-    bool isCompound = (opText == "+=" || opText == "-=" || opText == "*=" || opText == "/=");
+    else if (ctx->MOD_ASSIGN())
+        opText = "%=";
+    else if (ctx->AND_ASSIGN())
+        opText = "&=";
+    else if (ctx->OR_ASSIGN())
+        opText = "|=";
+    else if (ctx->XOR_ASSIGN())
+        opText = "^=";
+    else if (ctx->SHL_ASSIGN())
+        opText = "<<=";
+    else if (ctx->SHR_ASSIGN())
+        opText = ">>=";
+    else if (ctx->USHR_ASSIGN())
+        opText = ">>>=";
+    bool isCompound = (opText != "=");
+
+    auto emitCompoundNative = [&](Value *oldVal, Value *nativeRhs) -> Value *
+    {
+        if (opText == "+=")
+            return m_builder.CreateFAdd(oldVal, castToNativeDouble(nativeRhs));
+        if (opText == "-=")
+            return m_builder.CreateFSub(oldVal, castToNativeDouble(nativeRhs));
+        if (opText == "*=")
+            return m_builder.CreateFMul(oldVal, castToNativeDouble(nativeRhs));
+        if (opText == "/=")
+            return m_builder.CreateFDiv(oldVal, castToNativeDouble(nativeRhs));
+        Value *i64L = castToNativeI64(oldVal);
+        Value *i64R = castToNativeI64(nativeRhs);
+        if (opText == "%=")
+        {
+            Value *rem = m_builder.CreateSRem(i64L, i64R, "rem_i64");
+            return m_builder.CreateSIToFP(rem, m_doubleTy, "rem_d");
+        }
+        if (opText == "&=")
+        {
+            Value *res = m_builder.CreateAnd(i64L, i64R, "and_i64");
+            return m_builder.CreateSIToFP(res, m_doubleTy, "and_d");
+        }
+        if (opText == "|=")
+        {
+            Value *res = m_builder.CreateOr(i64L, i64R, "or_i64");
+            return m_builder.CreateSIToFP(res, m_doubleTy, "or_d");
+        }
+        if (opText == "^=")
+        {
+            Value *res = m_builder.CreateXor(i64L, i64R, "xor_i64");
+            return m_builder.CreateSIToFP(res, m_doubleTy, "xor_d");
+        }
+        Value *shiftAmt = m_builder.CreateAnd(i64R, m_builder.getInt64(63), "shift_amt");
+        if (opText == "<<=")
+        {
+            Value *res = m_builder.CreateShl(i64L, shiftAmt, "shl_i64");
+            return m_builder.CreateSIToFP(res, m_doubleTy, "shl_d");
+        }
+        if (opText == ">>=")
+        {
+            Value *res = m_builder.CreateAShr(i64L, shiftAmt, "ashr_i64");
+            return m_builder.CreateSIToFP(res, m_doubleTy, "ashr_d");
+        }
+        if (opText == ">>>=")
+        {
+            Value *res = m_builder.CreateLShr(i64L, shiftAmt, "lshr_i64");
+            return m_builder.CreateUIToFP(res, m_doubleTy, "lshr_d");
+        }
+        return nativeRhs;
+    };
+
+    auto getCompoundRtFn = [&](const std::string &op) -> const char *
+    {
+        if (op == "+=")
+            return "rt_op_add";
+        if (op == "-=")
+            return "rt_op_sub";
+        if (op == "*=")
+            return "rt_op_mul";
+        if (op == "/=")
+            return "rt_op_div";
+        if (op == "%=")
+            return "rt_op_mod";
+        if (op == "&=")
+            return "rt_op_bitand";
+        if (op == "|=")
+            return "rt_op_bitor";
+        if (op == "^=")
+            return "rt_op_bitxor";
+        if (op == "<<=")
+            return "rt_op_shl";
+        if (op == ">>=")
+            return "rt_op_shr";
+        if (op == ">>>=")
+            return "rt_op_ushr";
+        return "rt_op_add";
+    };
 
     std::string lhsName = ctx->expression(0)->getText();
     if (!isCompound && m_namedValues.count(lhsName))
@@ -8422,9 +9109,7 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
             if (isCompound)
             {
                 Value *oldBoxed = m_builder.CreateCall(getRtFunc("rt_get_index"), {container, boxedIndex});
-                const char *opFn = opText == "+=" ? "rt_op_add" : opText == "-=" ? "rt_op_sub"
-                                                              : opText == "*="   ? "rt_op_mul"
-                                                                                 : "rt_op_div";
+                const char *opFn = getCompoundRtFn(opText);
                 boxedRhs = m_builder.CreateCall(getRtFunc(opFn), {oldBoxed, boxedRhs});
             }
             m_builder.CreateCall(getRtFunc("rt_store_index"), {container, boxedIndex, boxedRhs});
@@ -8554,9 +9239,7 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
                 Value *boxedIndex = boxToTzdValue(index_raw);
                 Value *boxedRhs = boxToTzdValue(rhs);
                 Value *oldBoxed = m_builder.CreateCall(getRtFunc("rt_get_index"), {container, boxedIndex});
-                const char *opFn = opText == "+=" ? "rt_op_add" : opText == "-=" ? "rt_op_sub"
-                                                              : opText == "*="   ? "rt_op_mul"
-                                                                                 : "rt_op_div";
+                const char *opFn = getCompoundRtFn(opText);
                 boxedRhs = m_builder.CreateCall(getRtFunc(opFn), {oldBoxed, boxedRhs});
                 m_builder.CreateCall(getRtFunc("rt_store_index"), {container, boxedIndex, boxedRhs});
                 return boxedRhs;
@@ -8583,14 +9266,7 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         Value *newVal = nativeRhs;
         if (isCompound)
         {
-            if (opText == "+=")
-                newVal = m_builder.CreateFAdd(oldVal, nativeRhs);
-            else if (opText == "-=")
-                newVal = m_builder.CreateFSub(oldVal, nativeRhs);
-            else if (opText == "*=")
-                newVal = m_builder.CreateFMul(oldVal, nativeRhs);
-            else if (opText == "/=")
-                newVal = m_builder.CreateFDiv(oldVal, nativeRhs);
+            newVal = emitCompoundNative(oldVal, nativeRhs);
         }
 
         if (!isCompound && (constIdx || nativeIdx))
@@ -8704,6 +9380,35 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
     if (memberCtx)
     {
         std::string objName = memberCtx->atom()->getText();
+        std::string memberName = memberCtx->IDENTIFIER()->getText();
+
+        // SROA slot store: supports direct (p.x = v) and nested (seg.p1.x = v, this.p1.x = v)
+        std::string rootVar = objName;
+        std::string fieldKey = memberName;
+        size_t firstDot = objName.find('.');
+        if (firstDot != std::string::npos)
+        {
+            rootVar = objName.substr(0, firstDot);
+            fieldKey = objName.substr(firstDot + 1) + "." + memberName;
+        }
+
+        auto fIt = m_varFieldAllocas.find(rootVar);
+        if (fIt != m_varFieldAllocas.end())
+        {
+            auto slotIt = fIt->second.find(fieldKey);
+            if (slotIt != fIt->second.end() && slotIt->second)
+            {
+                Value *nativeRhs = castToNativeDouble(rhs);
+                if (isCompound)
+                {
+                    Value *oldVal = m_builder.CreateLoad(m_doubleTy, slotIt->second, rootVar + "_" + fieldKey);
+                    nativeRhs = emitCompoundNative(oldVal, nativeRhs);
+                }
+                m_builder.CreateStore(nativeRhs, slotIt->second);
+                return nativeRhs;
+            }
+        }
+
         Value *obj = nullptr;
         if (m_namedValues.count(objName))
         {
@@ -8717,7 +9422,6 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
                 obj = boxToTzdValue(obj);
             }
         }
-        std::string memberName = memberCtx->IDENTIFIER()->getText();
 
         std::string targetClass = "";
         if (objName == "this")
@@ -8739,17 +9443,64 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
                 auto it = cls->fieldNameToIndex.find(memberName);
                 if (it != cls->fieldNameToIndex.end())
                 {
-                    Value *nativeRhs = castToNativeDouble(rhs);
-                    if (isCompound)
+                    ClassField *f = cls->findField(memberName);
+                    bool isFloat = f && (f->type == "float" || f->type == "double" || (f->type.empty() && rhs && rhs->getType()->isDoubleTy()));
+                    bool isInt = f && (f->type == "int" || f->type == "i64" || f->type == "long");
+                    if (isFloat)
                     {
-                        Value *oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"), {obj, m_builder.getInt32(it->second)});
-                        if (opText == "+=") nativeRhs = m_builder.CreateFAdd(oldVal, nativeRhs);
-                        else if (opText == "-=") nativeRhs = m_builder.CreateFSub(oldVal, nativeRhs);
-                        else if (opText == "*=") nativeRhs = m_builder.CreateFMul(oldVal, nativeRhs);
-                        else if (opText == "/=") nativeRhs = m_builder.CreateFDiv(oldVal, nativeRhs);
+                        Value *nativeRhs = castToNativeDouble(rhs);
+                        if (isCompound)
+                        {
+                            Value *oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"), {obj, m_builder.getInt32(it->second)});
+                            nativeRhs = emitCompoundNative(oldVal, nativeRhs);
+                        }
+                        m_builder.CreateCall(getRtFunc("rt_tzd_set_field_d"), {obj, m_builder.getInt32(it->second), nativeRhs});
+                        return nativeRhs;
                     }
-                    m_builder.CreateCall(getRtFunc("rt_tzd_set_field_d"), {obj, m_builder.getInt32(it->second), nativeRhs});
-                    return nativeRhs;
+                    else if (isInt)
+                    {
+                        Value *nativeRhs = castToNativeI64(rhs);
+                        if (isCompound)
+                        {
+                            Value *oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_i64"), {obj, m_builder.getInt32(it->second)});
+                            if (opText == "+=")
+                                nativeRhs = m_builder.CreateAdd(oldVal, nativeRhs);
+                            else if (opText == "-=")
+                                nativeRhs = m_builder.CreateSub(oldVal, nativeRhs);
+                            else if (opText == "*=")
+                                nativeRhs = m_builder.CreateMul(oldVal, nativeRhs);
+                            else if (opText == "/=")
+                                nativeRhs = m_builder.CreateSDiv(oldVal, nativeRhs);
+                            else if (opText == "%=")
+                                nativeRhs = m_builder.CreateSRem(oldVal, nativeRhs);
+                            else if (opText == "&=")
+                                nativeRhs = m_builder.CreateAnd(oldVal, nativeRhs);
+                            else if (opText == "|=")
+                                nativeRhs = m_builder.CreateOr(oldVal, nativeRhs);
+                            else if (opText == "^=")
+                                nativeRhs = m_builder.CreateXor(oldVal, nativeRhs);
+                            else if (opText == "<<=")
+                                nativeRhs = m_builder.CreateShl(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                            else if (opText == ">>=")
+                                nativeRhs = m_builder.CreateAShr(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                            else if (opText == ">>>=")
+                                nativeRhs = m_builder.CreateLShr(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                        }
+                        m_builder.CreateCall(getRtFunc("rt_tzd_set_field_i64"), {obj, m_builder.getInt32(it->second), nativeRhs});
+                        return nativeRhs;
+                    }
+                    else
+                    {
+                        Value *boxedRhs = boxToTzdValue(rhs);
+                        if (isCompound)
+                        {
+                            Value *fieldPtr = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_val"), {obj, m_builder.getInt32(it->second)});
+                            const char *opFn = getCompoundRtFn(opText);
+                            boxedRhs = m_builder.CreateCall(getRtFunc(opFn), {fieldPtr, boxedRhs});
+                        }
+                        m_builder.CreateCall(getRtFunc("rt_tzd_set_field_val"), {obj, m_builder.getInt32(it->second), boxedRhs});
+                        return boxedRhs;
+                    }
                 }
             }
         }
@@ -8761,9 +9512,7 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
                                                {obj, m_builder.getInt32((int32_t)sel), nameStr});
         if (isCompound)
         {
-            const char *opFn = opText == "+=" ? "rt_op_add" : opText == "-=" ? "rt_op_sub"
-                                                          : opText == "*="   ? "rt_op_mul"
-                                                                             : "rt_op_div";
+            const char *opFn = getCompoundRtFn(opText);
             boxedRhs = m_builder.CreateCall(getRtFunc(opFn), {fieldPtr, boxedRhs});
         }
         m_builder.CreateCall(getRtFunc("rt_store_field_ptr"), {fieldPtr, boxedRhs});
@@ -8776,45 +9525,37 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
     {
         m_varFieldAllocas[name] = m_lastNewFieldAllocas;
         m_lastNewFieldAllocas.clear();
+        std::string newClass = deduceExprClassName(ctx->expression(1), m_varClassTypes, m_currentClassDef);
+        if (!newClass.empty())
+        {
+            m_varClassTypes[name] = newClass;
+        }
         if (s_compilingNativeWorker)
         {
             return rhs;
         }
     }
 
-    std::string newClass = getNewExprClassName(ctx->expression(1));
+    std::string newClass = deduceExprClassName(ctx->expression(1), m_varClassTypes, m_currentClassDef);
     if (!newClass.empty())
     {
         m_varClassTypes[name] = newClass;
     }
-    else
-    {
-        std::string rhsText = ctx->expression(1)->getText();
-        auto it = m_varClassTypes.find(rhsText);
-        if (it != m_varClassTypes.end())
-        {
-            m_varClassTypes[name] = it->second;
-        }
-    }
 
     if (m_nativeDoubleLocals.count(name))
     {
-        Value *nativeRhs = castToNativeDouble(rhs);
-        Value *newVal = nativeRhs;
+        Value *newVal = nullptr;
         if (isCompound)
         {
             Value *oldVal = m_builder.CreateLoad(m_doubleTy, m_nativeDoubleLocals[name]);
-            if (opText == "+=")
-                newVal = m_builder.CreateFAdd(oldVal, nativeRhs);
-            else if (opText == "-=")
-                newVal = m_builder.CreateFSub(oldVal, nativeRhs);
-            else if (opText == "*=")
-                newVal = m_builder.CreateFMul(oldVal, nativeRhs);
-            else if (opText == "/=")
-                newVal = m_builder.CreateFDiv(oldVal, nativeRhs);
+            newVal = emitCompoundNative(oldVal, rhs);
+        }
+        else
+        {
+            newVal = castToNativeDouble(rhs);
         }
         m_builder.CreateStore(newVal, m_nativeDoubleLocals[name]);
-        if (!m_declaredLocals.count(name))
+        if (!m_declaredLocals.count(name) && (s_loopLevel == 0 || jitTrackFrames()))
         {
             Value *nameStr = m_builder.CreateGlobalStringPtr(name);
             Value *boxedVal = boxToTzdValue(newVal);
@@ -8823,20 +9564,97 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         return newVal;
     }
 
-    if (rhs->getType()->isDoubleTy() &&
+    if (!m_namedValues.count(name) && m_namedValues.count("this"))
+    {
+        auto fIt = m_varFieldAllocas.find("this");
+        if (fIt != m_varFieldAllocas.end())
+        {
+            auto slotIt = fIt->second.find(name);
+            if (slotIt != fIt->second.end() && slotIt->second)
+            {
+                Value *nativeRhs = castToNativeDouble(rhs);
+                if (isCompound)
+                {
+                    Value *oldVal = m_builder.CreateLoad(m_doubleTy, slotIt->second, "this_" + name);
+                    nativeRhs = emitCompoundNative(oldVal, nativeRhs);
+                }
+                m_builder.CreateStore(nativeRhs, slotIt->second);
+                return nativeRhs;
+            }
+        }
+
+        // Fast path for real instance field
+        if (m_currentClassDef)
+        {
+            auto it = m_currentClassDef->fieldNameToIndex.find(name);
+            if (it != m_currentClassDef->fieldNameToIndex.end())
+            {
+                Value *thisPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues["this"]);
+                ClassField *f = m_currentClassDef->findField(name);
+                bool isFloat = f && (f->type == "float" || f->type == "double" || (f->type.empty() && rhs && rhs->getType()->isDoubleTy()));
+                bool isInt = f && (f->type == "int" || f->type == "i64" || f->type == "long");
+                if (isFloat)
+                {
+                    Value *nativeRhs = castToNativeDouble(rhs);
+                    if (isCompound)
+                    {
+                        Value *oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"), {thisPtr, m_builder.getInt32(it->second)});
+                        nativeRhs = emitCompoundNative(oldVal, nativeRhs);
+                    }
+                    m_builder.CreateCall(getRtFunc("rt_tzd_set_field_d"), {thisPtr, m_builder.getInt32(it->second), nativeRhs});
+                    return nativeRhs;
+                }
+                else if (isInt)
+                {
+                    Value *nativeRhs = castToNativeI64(rhs);
+                    if (isCompound)
+                    {
+                        Value *oldVal = m_builder.CreateCall(getRtFunc("rt_tzd_get_field_i64"), {thisPtr, m_builder.getInt32(it->second)});
+                        if (opText == "+=")
+                            nativeRhs = m_builder.CreateAdd(oldVal, nativeRhs);
+                        else if (opText == "-=")
+                            nativeRhs = m_builder.CreateSub(oldVal, nativeRhs);
+                        else if (opText == "*=")
+                            nativeRhs = m_builder.CreateMul(oldVal, nativeRhs);
+                        else if (opText == "/=")
+                            nativeRhs = m_builder.CreateSDiv(oldVal, nativeRhs);
+                        else if (opText == "%=")
+                            nativeRhs = m_builder.CreateSRem(oldVal, nativeRhs);
+                        else if (opText == "&=")
+                            nativeRhs = m_builder.CreateAnd(oldVal, nativeRhs);
+                        else if (opText == "|=")
+                            nativeRhs = m_builder.CreateOr(oldVal, nativeRhs);
+                        else if (opText == "^=")
+                            nativeRhs = m_builder.CreateXor(oldVal, nativeRhs);
+                        else if (opText == "<<=")
+                            nativeRhs = m_builder.CreateShl(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                        else if (opText == ">>=")
+                            nativeRhs = m_builder.CreateAShr(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                        else if (opText == ">>>=")
+                            nativeRhs = m_builder.CreateLShr(oldVal, m_builder.CreateAnd(nativeRhs, m_builder.getInt64(63)));
+                    }
+                    m_builder.CreateCall(getRtFunc("rt_tzd_set_field_i64"), {thisPtr, m_builder.getInt32(it->second), nativeRhs});
+                    return nativeRhs;
+                }
+            }
+        }
+    }
+
+    if ((rhs->getType()->isDoubleTy() || rhs->getType()->isIntegerTy()) &&
         !m_namedValues.count(name) &&
         !m_namedValues.count("this"))
     {
+        Value *dVal = castToNativeDouble(rhs);
         AllocaInst *alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, name + "_native");
-        m_builder.CreateStore(rhs, alloc);
+        m_builder.CreateStore(dVal, alloc);
         m_nativeDoubleLocals[name] = alloc;
         if (!m_declaredLocals.count(name))
         {
             Value *nameStr = m_builder.CreateGlobalStringPtr(name);
-            Value *boxedRhs = boxToTzdValue(rhs);
+            Value *boxedRhs = boxToTzdValue(dVal);
             m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, boxedRhs});
         }
-        return rhs;
+        return dVal;
     }
 
     // ---- boxed local 变量 ----
@@ -8870,8 +9688,7 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         }
         else
         {
-            const char *opFn = opText == "-=" ? "rt_op_sub" : opText == "*=" ? "rt_op_mul"
-                                                                             : "rt_op_div";
+            const char *opFn = getCompoundRtFn(opText);
             Value *oldVal = nullptr;
             if (m_namedValues.count(name))
             {
@@ -8955,7 +9772,7 @@ std::any TzdCompiler::visitPrintFunExpr(TzdLangParser::PrintFunExprContext *ctx)
 
 std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext *ctx)
 {
-    if (ctx->getStart() && !s_compilingNativeWorker)
+    if (ctx->getStart() && !s_compilingNativeWorker && (s_loopLevel == 0 || jitTrackFrames()))
     {
         m_builder.CreateCall(getRtFunc("rt_set_location"), {m_builder.getInt32(ctx->getStart()->getLine()),
                                                             m_builder.getInt32(ctx->getStart()->getCharPositionInLine())});
@@ -8966,28 +9783,98 @@ std::any TzdCompiler::visitNewExpr(TzdLangParser::NewExprContext *ctx)
     auto exprs = ctx->exprList() ? ctx->exprList()->expression() : std::vector<TzdLangParser::ExpressionContext *>();
     int argCount = (int)exprs.size();
 
-    // Fast-path: 2 double arguments constructor (e.g. `new Pt(a * 1.0, b * 1.0)`)
-    if (argCount == 2)
+    // General SROA (Scalar Replacement of Aggregates) for arbitrary N fields and nested objects
+    TzdClassDef *def = TzdOopManager::getClass(className);
+    if (def && (argCount > 0 || !def->fieldIndices.empty()))
     {
-        TzdClassDef *def = TzdOopManager::getClass(className);
-        if (def && def->constructors.size() == 1 && def->constructors[0].paramCount == 2)
+        std::vector<std::string> fieldNames = resolveConstructorFields(def, argCount);
+        std::unordered_map<std::string, AllocaInst *> newSlots;
+        std::vector<Value *> evaluatedDoubles;
+
+        bool allArgsAreDoubles = true;
+        for (int i = 0; i < argCount; ++i)
         {
-            Value *a0 = castToNativeDouble(castAnyToValue(visit(exprs[0]), "new_a0"));
-            Value *a1 = castToNativeDouble(castAnyToValue(visit(exprs[1]), "new_a1"));
+            std::string fieldName = (i < (int)fieldNames.size()) ? fieldNames[i] : ("field_" + std::to_string(i));
+            std::string argText = exprs[i]->getText();
 
-            m_lastNewFieldAllocas.clear();
-            AllocaInst *slot0 = CreateEntryBlockAlloca(m_doubleTy, nullptr, className + "_x_slot");
-            m_builder.CreateStore(a0, slot0);
-            AllocaInst *slot1 = CreateEntryBlockAlloca(m_doubleTy, nullptr, className + "_y_slot");
-            m_builder.CreateStore(a1, slot1);
-            m_lastNewFieldAllocas["x"] = slot0;
-            m_lastNewFieldAllocas["y"] = slot1;
-
-            if (s_compilingNativeWorker)
+            // 1. Check if argument is an existing SROA aggregate variable (nested object composition)
+            auto varIt = m_varFieldAllocas.find(argText);
+            if (varIt != m_varFieldAllocas.end() && !varIt->second.empty())
             {
-                return (Value *)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+                allArgsAreDoubles = false;
+                for (const auto &pair : varIt->second)
+                {
+                    newSlots[fieldName + "." + pair.first] = pair.second;
+                }
+                evaluatedDoubles.push_back(ConstantFP::get(m_doubleTy, 0.0));
+                continue;
             }
-            return (Value *)m_builder.CreateCall(getRtFunc("rt_create_inst_2d"), {name, a0, a1});
+
+            // 2. Evaluate argument expression
+            m_lastNewFieldAllocas.clear();
+            Value *val = castAnyToValue(visit(exprs[i]), "new_arg");
+
+            // 3. Check if evaluating argument produced a newly created SROA aggregate (inline nested `new Sub(...)`)
+            if (!m_lastNewFieldAllocas.empty())
+            {
+                allArgsAreDoubles = false;
+                for (const auto &pair : m_lastNewFieldAllocas)
+                {
+                    newSlots[fieldName + "." + pair.first] = pair.second;
+                }
+                evaluatedDoubles.push_back(ConstantFP::get(m_doubleTy, 0.0));
+                m_lastNewFieldAllocas.clear();
+                continue;
+            }
+
+            // 4. Scalar numeric argument: allocate stack slot and store native double
+            Value *dVal = castToNativeDouble(val);
+            AllocaInst *slot = CreateEntryBlockAlloca(m_doubleTy, nullptr, className + "_" + fieldName + "_slot");
+            m_builder.CreateStore(dVal, slot);
+            newSlots[fieldName] = slot;
+            evaluatedDoubles.push_back(dVal);
+        }
+
+        // Initialize any remaining fields from class default numeric values
+        for (const auto &fPair : def->fieldNameToIndex)
+        {
+            const std::string &fName = fPair.first;
+            int fIdx = fPair.second;
+            if (newSlots.count(fName) == 0)
+            {
+                double d = 0.0;
+                if (fIdx >= 0 && fIdx < (int)def->defaultFieldValues.size())
+                {
+                    const auto &defVal = def->defaultFieldValues[fIdx];
+                    if (defVal.type == TzdValue::DOUBLE || defVal.type == TzdValue::FLOAT)
+                        d = defVal.dVal;
+                    else if (defVal.type == TzdValue::INT || defVal.type == TzdValue::LONG)
+                        d = (double)defVal.lVal;
+                }
+                AllocaInst *slot = CreateEntryBlockAlloca(m_doubleTy, nullptr, className + "_" + fName + "_slot");
+                m_builder.CreateStore(ConstantFP::get(m_doubleTy, d), slot);
+                newSlots[fName] = slot;
+            }
+        }
+
+        m_lastNewFieldAllocas = newSlots;
+
+        if (s_compilingNativeWorker)
+        {
+            // Inside specialized native worker: pure stack scalar replacement without heap allocation!
+            return (Value *)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+        }
+
+        // Outside native worker (or escaped to interpreter): construct instance fast if all fields are numeric
+        if (allArgsAreDoubles && argCount > 0)
+        {
+            Value *valsArray = CreateEntryBlockAlloca(m_doubleTy, m_builder.getInt32(argCount), "sroa_vals");
+            for (int i = 0; i < argCount; ++i)
+            {
+                Value *ptr = m_builder.CreateGEP(m_doubleTy, valsArray, m_builder.getInt32(i));
+                m_builder.CreateStore(evaluatedDoubles[i], ptr);
+            }
+            return (Value *)m_builder.CreateCall(getRtFunc("rt_create_inst_sroa"), {name, m_builder.getInt32(argCount), valsArray});
         }
     }
 
@@ -9032,7 +9919,7 @@ TzdSelector TzdCompiler::internSelectorConstant(const std::string &name)
 
 std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprContext *ctx)
 {
-    if (ctx->getStart() && !s_compilingNativeWorker)
+    if (ctx->getStart() && !s_compilingNativeWorker && (s_loopLevel == 0 || jitTrackFrames()))
     {
         m_builder.CreateCall(getRtFunc("rt_set_location"), {m_builder.getInt32(ctx->getStart()->getLine()),
                                                             m_builder.getInt32(ctx->getStart()->getCharPositionInLine())});
@@ -9040,13 +9927,39 @@ std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprConte
     std::string objName = ctx->atom()->getText();
     std::string memberName = ctx->IDENTIFIER()->getText();
 
-    auto fIt = m_varFieldAllocas.find(objName);
+    // SROA slot lookup: supports direct (p.x) and nested (seg.p1.x, this.p1.x)
+    std::string rootObj = objName;
+    std::string fieldKey = memberName;
+    size_t firstDot = objName.find('.');
+    if (firstDot != std::string::npos)
+    {
+        rootObj = objName.substr(0, firstDot);
+        fieldKey = objName.substr(firstDot + 1) + "." + memberName;
+    }
+
+    auto fIt = m_varFieldAllocas.find(rootObj);
     if (fIt != m_varFieldAllocas.end())
     {
-        auto it = fIt->second.find(memberName);
+        // 1. Direct scalar field match (e.g. "x" or "p1.x")
+        auto it = fIt->second.find(fieldKey);
         if (it != fIt->second.end() && it->second)
         {
-            return (Value *)m_builder.CreateLoad(m_doubleTy, it->second, objName + "_" + memberName);
+            return (Value *)m_builder.CreateLoad(m_doubleTy, it->second, rootObj + "_" + fieldKey);
+        }
+
+        // 2. Sub-aggregate extraction: e.g. `var p = seg.p1;` where `p1` has fields `p1.x`, `p1.y`
+        m_lastNewFieldAllocas.clear();
+        std::string prefix = fieldKey + ".";
+        for (const auto &pair : fIt->second)
+        {
+            if (pair.first.rfind(prefix, 0) == 0)
+            {
+                m_lastNewFieldAllocas[pair.first.substr(prefix.size())] = pair.second;
+            }
+        }
+        if (!m_lastNewFieldAllocas.empty())
+        {
+            return (Value *)ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
         }
     }
 
@@ -9085,8 +9998,24 @@ std::any TzdCompiler::visitMemberAccessExpr(TzdLangParser::MemberAccessExprConte
             auto it = cls->fieldNameToIndex.find(memberName);
             if (it != cls->fieldNameToIndex.end())
             {
-                return (Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"),
-                                                     {obj, m_builder.getInt32(it->second)});
+                ClassField *f = cls->findField(memberName);
+                bool isFloat = f && (f->type == "float" || f->type == "double");
+                bool isInt = f && (f->type == "int" || f->type == "i64" || f->type == "long");
+                if (isFloat)
+                {
+                    return (Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_d"),
+                                                         {obj, m_builder.getInt32(it->second)});
+                }
+                else if (isInt)
+                {
+                    return (Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_i64"),
+                                                         {obj, m_builder.getInt32(it->second)});
+                }
+                else
+                {
+                    return (Value *)m_builder.CreateCall(getRtFunc("rt_tzd_get_field_val"),
+                                                         {obj, m_builder.getInt32(it->second)});
+                }
             }
         }
     }
@@ -9144,16 +10073,14 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext *ctx)
         auto &frame = s_inlineReturnStack.back();
         if (retValRaw)
         {
-            if (retValRaw->getType()->isDoubleTy())
+            if (frame.expectsDouble)
             {
-                m_builder.CreateStore(retValRaw, frame.retNativeDouble);
+                m_builder.CreateStore(castToNativeDouble(retValRaw), frame.retNativeDouble);
             }
             else
             {
                 Value *boxed = boxToTzdValue(retValRaw);
                 m_builder.CreateStore(boxed, frame.retBoxed);
-                Value *dVal = inlineToDoubleFast(boxed);
-                m_builder.CreateStore(dVal, frame.retNativeDouble);
             }
         }
         m_builder.CreateBr(frame.returnBB);
@@ -9168,6 +10095,11 @@ std::any TzdCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext *ctx)
         if (retValRaw && retValRaw->getType()->isDoubleTy())
         {
             m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), {m_currentRetPtr, retValRaw});
+        }
+        else if (retValRaw && retValRaw->getType()->isIntegerTy())
+        {
+            Value *d = castToNativeDouble(retValRaw);
+            m_builder.CreateCall(getRtFunc("rt_store_native_to_ptr"), {m_currentRetPtr, d});
         }
         else if (retValRaw)
         {
@@ -9371,7 +10303,7 @@ std::any TzdCompiler::visitMapLiteralExpr(TzdLangParser::MapLiteralExprContext *
 }
 std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext *ctx)
 {
-    if (ctx->getStart() && !s_compilingNativeWorker)
+    if (ctx->getStart() && !s_compilingNativeWorker && (s_loopLevel == 0 || jitTrackFrames()))
     {
         m_builder.CreateCall(getRtFunc("rt_set_location"), {m_builder.getInt32(ctx->getStart()->getLine()),
                                                             m_builder.getInt32(ctx->getStart()->getCharPositionInLine())});
@@ -9486,15 +10418,29 @@ std::any TzdCompiler::visitMultiplicativeExpr(TzdLangParser::MultiplicativeExprC
     Value *L = std::any_cast<Value *>(visit(ctx->expression(0)));
     Value *R = std::any_cast<Value *>(visit(ctx->expression(1)));
 
+    // Both native integers: fast path
+    if (L->getType()->isIntegerTy(64) && R->getType()->isIntegerTy(64))
+    {
+        if (ctx->MUL())
+            return std::any((Value *)m_builder.CreateNSWMul(L, R, "muli64"));
+        else if (ctx->DIV())
+            return std::any((Value *)m_builder.CreateSDiv(L, R, "divi64"));
+        else
+            return std::any((Value *)m_builder.CreateSRem(L, R, "remi64"));
+    }
+
     // If either operand is a pointer (BIGINT/RATIONAL/string/etc.), use
     // runtime functions which handle all TzdValue types correctly.
-    if (!L->getType()->isDoubleTy() || !R->getType()->isDoubleTy())
+    if (L->getType()->isPointerTy() || R->getType()->isPointerTy())
     {
         Value *boxedL = boxToTzdValue(L);
         Value *boxedR = boxToTzdValue(R);
         const char *fnName = ctx->MUL() ? "rt_op_mul" : (ctx->DIV() ? "rt_op_div" : "rt_op_mod");
         return std::any((Value *)m_builder.CreateCall(getRtFunc(fnName), {boxedL, boxedR}));
     }
+
+    L = castToNativeDouble(L);
+    R = castToNativeDouble(R);
 
     // Both doubles: fast path (no boxing needed)
     Value *res = nullptr;
@@ -9548,9 +10494,288 @@ std::any TzdCompiler::visitPowerExpr(TzdLangParser::PowerExprContext *ctx)
     Value *boxedR = boxToTzdValue(R);
     return (Value *)m_builder.CreateCall(getRtFunc("rt_op_pow"), {boxedL, boxedR});
 }
+std::any TzdCompiler::visitShiftExpr(TzdLangParser::ShiftExprContext *ctx)
+{
+    std::string id0 = getExprIdentifier(ctx->expression(0));
+    std::string id1 = getExprIdentifier(ctx->expression(1));
+    Value *i64L = nullptr;
+    Value *i64R = nullptr;
+
+    if (!id0.empty() && m_shadowI64IndVars.count(id0))
+    {
+        i64L = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id0], id0 + "_i64");
+    }
+    if (!id1.empty() && m_shadowI64IndVars.count(id1))
+    {
+        i64R = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id1], id1 + "_i64");
+    }
+
+    Value *rawL = nullptr;
+    Value *rawR = nullptr;
+    if (!i64L)
+    {
+        rawL = castAnyToValue(visit(ctx->expression(0)), "visitShiftExpr.L");
+    }
+    if (!i64R)
+    {
+        rawR = castAnyToValue(visit(ctx->expression(1)), "visitShiftExpr.R");
+    }
+
+    // If either operand is a pointer (BIGINT, string, etc.), call rt_op_shl/shr/ushr
+    if ((rawL && rawL->getType()->isPointerTy()) || (rawR && rawR->getType()->isPointerTy()))
+    {
+        Value *boxedL = rawL ? boxToTzdValue(rawL) : boxToTzdValue(i64L);
+        Value *boxedR = rawR ? boxToTzdValue(rawR) : boxToTzdValue(i64R);
+        const char *rtFn = ctx->SHL() ? "rt_op_shl" : (ctx->SHR() ? "rt_op_shr" : "rt_op_ushr");
+        return std::any((Value *)m_builder.CreateCall(getRtFunc(rtFn), {boxedL, boxedR}));
+    }
+
+    if (!i64L)
+        i64L = castToNativeI64(rawL);
+    if (!i64R)
+        i64R = castToNativeI64(rawR);
+
+    int64_t constShift = -1;
+    bool hasConstShift = false;
+    if (auto *cR = dyn_cast<ConstantInt>(i64R))
+    {
+        constShift = cR->getSExtValue();
+        hasConstShift = true;
+    }
+    else if (rawR)
+    {
+        if (auto *fpR = dyn_cast<ConstantFP>(rawR))
+        {
+            constShift = (int64_t)fpR->getValueAPF().convertToDouble();
+            hasConstShift = true;
+        }
+    }
+
+    if (ctx->SHL())
+    {
+        if (hasConstShift)
+        {
+            if (constShift >= 62 || constShift < 0)
+            {
+                Value *boxedL = boxToTzdValue(i64L);
+                Value *boxedR = boxToTzdValue(i64R);
+                return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_shl"), {boxedL, boxedR}));
+            }
+            int64_t constBase = 0;
+            bool hasConstBase = false;
+            if (auto *cL = dyn_cast<ConstantInt>(i64L))
+            {
+                constBase = cL->getSExtValue();
+                hasConstBase = true;
+            }
+            else if (rawL)
+            {
+                if (auto *fpL = dyn_cast<ConstantFP>(rawL))
+                {
+                    constBase = (int64_t)fpL->getValueAPF().convertToDouble();
+                    hasConstBase = true;
+                }
+            }
+            if (hasConstBase && constBase != 0 && (uint64_t)std::abs(constBase) > (0x7FFFFFFFFFFFFFFFULL >> constShift))
+            {
+                Value *boxedL = boxToTzdValue(i64L);
+                Value *boxedR = boxToTzdValue(i64R);
+                return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_shl"), {boxedL, boxedR}));
+            }
+        }
+        else
+        {
+            Function *curFunc = m_builder.GetInsertBlock()->getParent();
+            BasicBlock *fastShlBB = BasicBlock::Create(m_context, "shl.fast", curFunc);
+            BasicBlock *slowShlBB = BasicBlock::Create(m_context, "shl.slow", curFunc);
+            BasicBlock *mergeShlBB = BasicBlock::Create(m_context, "shl.merge", curFunc);
+
+            Value *isSafe = m_builder.CreateICmpULT(i64R, m_builder.getInt64(62), "shl_safe");
+            m_builder.CreateCondBr(isSafe, fastShlBB, slowShlBB);
+
+            m_builder.SetInsertPoint(fastShlBB);
+            Value *fastRes = m_builder.CreateShl(i64L, i64R, "shltmp");
+            Value *fastBoxed = boxToTzdValue(fastRes);
+            m_builder.CreateBr(mergeShlBB);
+
+            m_builder.SetInsertPoint(slowShlBB);
+            Value *slowBoxed = m_builder.CreateCall(getRtFunc("rt_op_shl"), {boxToTzdValue(i64L), boxToTzdValue(i64R)});
+            m_builder.CreateBr(mergeShlBB);
+
+            m_builder.SetInsertPoint(mergeShlBB);
+            PHINode *phi = m_builder.CreatePHI(m_ptrTy, 2, "shl_res");
+            phi->addIncoming(fastBoxed, fastShlBB);
+            phi->addIncoming(slowBoxed, slowShlBB);
+            return std::any((Value *)phi);
+        }
+    }
+
+    if (hasConstShift && constShift >= 64)
+    {
+        Value *resI64 = nullptr;
+        if (ctx->SHR())
+        {
+            Value *isNeg = m_builder.CreateICmpSLT(i64L, m_builder.getInt64(0), "isneg");
+            resI64 = m_builder.CreateSelect(isNeg, m_builder.getInt64(-1), m_builder.getInt64(0), "shrtmp");
+        }
+        else // USHR
+        {
+            resI64 = m_builder.getInt64(0);
+        }
+        return std::any((Value *)resI64);
+    }
+
+    Value *shiftAmt = m_builder.CreateAnd(i64R, m_builder.getInt64(63), "shift_amt");
+    Value *resI64 = nullptr;
+    if (ctx->SHL())
+    {
+        resI64 = m_builder.CreateShl(i64L, shiftAmt, "shltmp");
+    }
+    else if (ctx->SHR())
+    {
+        // Arithmetic right shift (preserves sign bit)
+        resI64 = m_builder.CreateAShr(i64L, shiftAmt, "ashrtmp");
+    }
+    else // USHR >>>
+    {
+        // Logical right shift (zero-fill)
+        resI64 = m_builder.CreateLShr(i64L, shiftAmt, "lshrtmp");
+    }
+    return std::any((Value *)resI64);
+}
+std::any TzdCompiler::visitBitAndExpr(TzdLangParser::BitAndExprContext *ctx)
+{
+    std::string id0 = getExprIdentifier(ctx->expression(0));
+    std::string id1 = getExprIdentifier(ctx->expression(1));
+    Value *i64L = nullptr;
+    Value *i64R = nullptr;
+
+    if (!id0.empty() && m_shadowI64IndVars.count(id0))
+    {
+        i64L = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id0], id0 + "_i64");
+    }
+    if (!id1.empty() && m_shadowI64IndVars.count(id1))
+    {
+        i64R = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id1], id1 + "_i64");
+    }
+
+    Value *rawL = nullptr;
+    Value *rawR = nullptr;
+    if (!i64L)
+    {
+        rawL = castAnyToValue(visit(ctx->expression(0)), "visitBitAndExpr.L");
+    }
+    if (!i64R)
+    {
+        rawR = castAnyToValue(visit(ctx->expression(1)), "visitBitAndExpr.R");
+    }
+
+    if ((rawL && rawL->getType()->isPointerTy()) || (rawR && rawR->getType()->isPointerTy()))
+    {
+        Value *boxedL = rawL ? boxToTzdValue(rawL) : boxToTzdValue(i64L);
+        Value *boxedR = rawR ? boxToTzdValue(rawR) : boxToTzdValue(i64R);
+        return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_bitand"), {boxedL, boxedR}));
+    }
+
+    if (!i64L)
+        i64L = castToNativeI64(rawL);
+    if (!i64R)
+        i64R = castToNativeI64(rawR);
+
+    Value *resI64 = m_builder.CreateAnd(i64L, i64R, "andtmp");
+    return std::any((Value *)resI64);
+}
+std::any TzdCompiler::visitBitXorExpr(TzdLangParser::BitXorExprContext *ctx)
+{
+    std::string id0 = getExprIdentifier(ctx->expression(0));
+    std::string id1 = getExprIdentifier(ctx->expression(1));
+    Value *i64L = nullptr;
+    Value *i64R = nullptr;
+
+    if (!id0.empty() && m_shadowI64IndVars.count(id0))
+    {
+        i64L = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id0], id0 + "_i64");
+    }
+    if (!id1.empty() && m_shadowI64IndVars.count(id1))
+    {
+        i64R = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id1], id1 + "_i64");
+    }
+
+    Value *rawL = nullptr;
+    Value *rawR = nullptr;
+    if (!i64L)
+    {
+        rawL = castAnyToValue(visit(ctx->expression(0)), "visitBitXorExpr.L");
+    }
+    if (!i64R)
+    {
+        rawR = castAnyToValue(visit(ctx->expression(1)), "visitBitXorExpr.R");
+    }
+
+    if ((rawL && rawL->getType()->isPointerTy()) || (rawR && rawR->getType()->isPointerTy()))
+    {
+        Value *boxedL = rawL ? boxToTzdValue(rawL) : boxToTzdValue(i64L);
+        Value *boxedR = rawR ? boxToTzdValue(rawR) : boxToTzdValue(i64R);
+        return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_bitxor"), {boxedL, boxedR}));
+    }
+
+    if (!i64L)
+        i64L = castToNativeI64(rawL);
+    if (!i64R)
+        i64R = castToNativeI64(rawR);
+
+    Value *resI64 = m_builder.CreateXor(i64L, i64R, "xortmp");
+    return std::any((Value *)resI64);
+}
+std::any TzdCompiler::visitBitOrExpr(TzdLangParser::BitOrExprContext *ctx)
+{
+    std::string id0 = getExprIdentifier(ctx->expression(0));
+    std::string id1 = getExprIdentifier(ctx->expression(1));
+    Value *i64L = nullptr;
+    Value *i64R = nullptr;
+
+    if (!id0.empty() && m_shadowI64IndVars.count(id0))
+    {
+        i64L = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id0], id0 + "_i64");
+    }
+    if (!id1.empty() && m_shadowI64IndVars.count(id1))
+    {
+        i64R = m_builder.CreateLoad(m_builder.getInt64Ty(), m_shadowI64IndVars[id1], id1 + "_i64");
+    }
+
+    Value *rawL = nullptr;
+    Value *rawR = nullptr;
+    if (!i64L)
+    {
+        rawL = castAnyToValue(visit(ctx->expression(0)), "visitBitOrExpr.L");
+    }
+    if (!i64R)
+    {
+        rawR = castAnyToValue(visit(ctx->expression(1)), "visitBitOrExpr.R");
+    }
+
+    if ((rawL && rawL->getType()->isPointerTy()) || (rawR && rawR->getType()->isPointerTy()))
+    {
+        Value *boxedL = rawL ? boxToTzdValue(rawL) : boxToTzdValue(i64L);
+        Value *boxedR = rawR ? boxToTzdValue(rawR) : boxToTzdValue(i64R);
+        return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_bitor"), {boxedL, boxedR}));
+    }
+
+    if (!i64L)
+        i64L = castToNativeI64(rawL);
+    if (!i64R)
+        i64R = castToNativeI64(rawR);
+
+    Value *resI64 = m_builder.CreateOr(i64L, i64R, "ortmp");
+    return std::any((Value *)resI64);
+}
 std::any TzdCompiler::visitUnaryExpr(TzdLangParser::UnaryExprContext *ctx)
 {
-    Value *V = std::any_cast<Value *>(visit(ctx->expression()));
+    Value *V = castAnyToValue(visit(ctx->expression()), "visitUnaryExpr.V");
+    if (ctx->PLUS())
+    {
+        return std::any(V);
+    }
     if (V->getType()->isDoubleTy())
     {
         if (ctx->MINUS())
@@ -9562,17 +10787,36 @@ std::any TzdCompiler::visitUnaryExpr(TzdLangParser::UnaryExprContext *ctx)
             Value *isZero = m_builder.CreateFCmpOEQ(V, ConstantFP::get(m_doubleTy, 0.0), "notcmp");
             return std::any((Value *)m_builder.CreateUIToFP(isZero, m_doubleTy, "notdbl"));
         }
+        if (ctx->BIT_NOT())
+        {
+            Value *i64V = castToNativeI64(V);
+            Value *notI64 = m_builder.CreateNot(i64V, "nottmp");
+            return std::any((Value *)notI64);
+        }
         if (ctx->GXXX())
         {
             Function *sqrtFunc = Intrinsic::getDeclaration(m_module.get(), Intrinsic::sqrt, {m_doubleTy});
             return std::any((Value *)m_builder.CreateCall(sqrtFunc, {V}, "sqrttmp"));
         }
     }
+    if (ctx->BIT_NOT())
+    {
+        if (V->getType()->isPointerTy())
+        {
+            Value *boxed = boxToTzdValue(V);
+            return std::any((Value *)m_builder.CreateCall(getRtFunc("rt_op_bitnot"), {boxed}));
+        }
+        Value *i64V = castToNativeI64(V);
+        Value *notI64 = m_builder.CreateNot(i64V, "nottmp");
+        return std::any((Value *)notI64);
+    }
     Value *boxed = boxToTzdValue(V);
     if (ctx->MINUS())
         return (Value *)m_builder.CreateCall(getRtFunc("rt_op_neg"), {boxed});
     if (ctx->NOT())
         return (Value *)m_builder.CreateCall(getRtFunc("rt_op_not"), {boxed});
+    if (ctx->BIT_NOT())
+        return (Value *)m_builder.CreateCall(getRtFunc("rt_op_bitnot"), {boxed});
     if (ctx->GXXX())
         return (Value *)m_builder.CreateCall(getRtFunc("rt_op_sqrt"), {boxed});
 
@@ -9636,29 +10880,50 @@ std::any TzdCompiler::visitPostfixExpr(TzdLangParser::PostfixExprContext *ctx)
     }
 
     // =========================================================
+    // 1.5 隐式 this SROA 路径 (Boxed Fallback 之前拦截)
+    // =========================================================
+    if (m_namedValues.count(name) == 0 && m_namedValues.count("this") > 0)
+    {
+        auto fIt = m_varFieldAllocas.find("this");
+        if (fIt != m_varFieldAllocas.end())
+        {
+            auto slotIt = fIt->second.find(name);
+            if (slotIt != fIt->second.end() && slotIt->second)
+            {
+                Value *ptr = slotIt->second;
+                Value *oldVal = m_builder.CreateLoad(m_doubleTy, ptr);
+                Value *one = ConstantFP::get(m_doubleTy, 1.0);
+                Value *newVal = ctx->INC() ? m_builder.CreateFAdd(oldVal, one) : m_builder.CreateFSub(oldVal, one);
+                m_builder.CreateStore(newVal, ptr);
+                return oldVal;
+            }
+        }
+    }
+
+    // =========================================================
     // 2. 普通对象/成员路径 (Boxed Fallback)
     // =========================================================
-    // 只有不是原生变量时，才执行下面的逻辑
-
-    // A. 获取当前值
-    // visit 可能返回 native double (例如 arr[native_i]) 或 pointer
-    // 所以必须调用 boxToTzdValue 确保它是 TzdValue* 指针
     Value *oldValRaw = std::any_cast<Value *>(visit(lhsCtx));
-    Value *oldVal = boxToTzdValue(oldValRaw);
 
-    // B. 准备运行时参数 (装箱的 1.0)
-    Value *one = m_builder.CreateCall(getRtFunc("rt_create_num"), {ConstantFP::get(m_doubleTy, 1.0)});
+    Value *boxedNew = nullptr;
+    if (oldValRaw->getType()->isPointerTy())
+    {
+        Value *one = m_builder.CreateCall(getRtFunc("rt_create_num"), {ConstantFP::get(m_doubleTy, 1.0)});
+        const char *opFunc = ctx->INC() ? "rt_op_add" : "rt_op_sub";
+        boxedNew = m_builder.CreateCall(getRtFunc(opFunc), {oldValRaw, one});
+    }
+    else
+    {
+        Value *nativeOld = inlineToDoubleFast(oldValRaw);
+        Value *one = ConstantFP::get(m_doubleTy, 1.0);
+        Value *newVal = ctx->INC() ? m_builder.CreateFAdd(nativeOld, one) : m_builder.CreateFSub(nativeOld, one);
+        boxedNew = boxToTzdValue(newVal);
+    }
 
-    // C. 调用运行时运算 (rt_op_add / rt_op_sub)
-    const char *opFunc = ctx->INC() ? "rt_op_add" : "rt_op_sub";
-    Value *newVal = m_builder.CreateCall(getRtFunc(opFunc), {oldVal, one});
-
-    // D. 写回逻辑 (Store Back)
-    // 检查是局部对象变量、成员变量还是全局变量
     if (m_namedValues.count(name))
     {
         Value *destPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
-        m_builder.CreateCall(getRtFunc("rt_copy_value"), {destPtr, newVal});
+        m_builder.CreateCall(getRtFunc("rt_copy_value"), {destPtr, boxedNew});
     }
     else if (m_namedValues.count("this") && !m_namedValues.count(name))
     {
@@ -9666,17 +10931,15 @@ std::any TzdCompiler::visitPostfixExpr(TzdLangParser::PostfixExprContext *ctx)
         Value *nameStr = m_builder.CreateGlobalStringPtr(name);
         TzdSelector sel = internSelectorConstant(name);
         m_builder.CreateCall(getRtFunc("rt_tzd_store_member"),
-                             {thisPtr, m_builder.getInt32((int32_t)sel), nameStr, newVal});
+                             {thisPtr, m_builder.getInt32((int32_t)sel), nameStr, boxedNew});
     }
     else
     {
-        // 情况 3: 全局变量
         Value *nameStr = m_builder.CreateGlobalStringPtr(name);
-        m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, newVal});
+        m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, boxedNew});
     }
 
-    // 后缀操作返回旧值 (Boxed)
-    return oldVal;
+    return oldValRaw;
 }
 std::any TzdCompiler::visitPrefixExpr(TzdLangParser::PrefixExprContext *ctx)
 {
@@ -9700,27 +10963,57 @@ std::any TzdCompiler::visitPrefixExpr(TzdLangParser::PrefixExprContext *ctx)
         return newVal; // 前缀返回新值
     }
 
+    // --- [1.5] 隐式 this SROA 优化 ---
+    if (m_namedValues.count(name) == 0 && m_namedValues.count("this") > 0)
+    {
+        auto fIt = m_varFieldAllocas.find("this");
+        if (fIt != m_varFieldAllocas.end())
+        {
+            auto slotIt = fIt->second.find(name);
+            if (slotIt != fIt->second.end() && slotIt->second)
+            {
+                Value *ptr = slotIt->second;
+                Value *oldVal = m_builder.CreateLoad(m_doubleTy, ptr);
+                Value *one = ConstantFP::get(m_doubleTy, 1.0);
+                Value *newVal = ctx->INC() ? m_builder.CreateFAdd(oldVal, one) : m_builder.CreateFSub(oldVal, one);
+                m_builder.CreateStore(newVal, ptr);
+                return newVal;
+            }
+        }
+    }
+
     // --- [2] 安全回退 ---
     Value *oldValRaw = std::any_cast<Value *>(visit(lhsCtx));
-    Value *oldVal = boxToTzdValue(oldValRaw); // [关键修复]
+    Value *boxedNew = nullptr;
+    Value *retVal = nullptr;
+    if (oldValRaw->getType()->isPointerTy())
+    {
+        Value *one = m_builder.CreateCall(getRtFunc("rt_create_num"), {ConstantFP::get(m_doubleTy, 1.0)});
+        const char *opFunc = ctx->INC() ? "rt_op_add" : "rt_op_sub";
+        boxedNew = m_builder.CreateCall(getRtFunc(opFunc), {oldValRaw, one});
+        retVal = boxedNew;
+    }
+    else
+    {
+        Value *nativeOld = inlineToDoubleFast(oldValRaw);
+        Value *one = ConstantFP::get(m_doubleTy, 1.0);
+        Value *newVal = ctx->INC() ? m_builder.CreateFAdd(nativeOld, one) : m_builder.CreateFSub(nativeOld, one);
+        boxedNew = boxToTzdValue(newVal);
+        retVal = newVal;
+    }
 
-    Value *oneBoxed = m_builder.CreateCall(getRtFunc("rt_create_num"), {ConstantFP::get(m_doubleTy, 1.0)});
-    const char *opFunc = ctx->INC() ? "rt_op_add" : "rt_op_sub";
-    Value *newVal = m_builder.CreateCall(getRtFunc(opFunc), {oldVal, oneBoxed});
-
-    // 简化的写回逻辑 (针对普通变量)
     if (m_namedValues.count(name))
     {
         Value *destPtr = m_builder.CreateLoad(m_ptrTy, m_namedValues[name]);
-        m_builder.CreateCall(getRtFunc("rt_copy_value"), {destPtr, newVal});
+        m_builder.CreateCall(getRtFunc("rt_copy_value"), {destPtr, boxedNew});
     }
     else if (dynamic_cast<TzdLangParser::IdExprContext *>(lhsCtx))
     {
         Value *nameStr = m_builder.CreateGlobalStringPtr(name);
-        m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, newVal});
+        m_builder.CreateCall(getRtFunc("rt_store_var"), {nameStr, boxedNew});
     }
 
-    return newVal;
+    return retVal;
 }
 std::any TzdCompiler::visitForInit(TzdLangParser::ForInitContext *ctx)
 {
@@ -9735,7 +11028,25 @@ std::any TzdCompiler::visitRelationalExpr(TzdLangParser::RelationalExprContext *
     Value *L = std::any_cast<Value *>(visit(ctx->expression(0)));
     Value *R = std::any_cast<Value *>(visit(ctx->expression(1)));
 
-    if (L->getType()->isDoubleTy() || R->getType()->isDoubleTy())
+    if (L->getType()->isIntegerTy(64) && R->getType()->isIntegerTy(64))
+    {
+        Value *res = nullptr;
+        if (ctx->GT())
+            res = m_builder.CreateICmpSGT(L, R);
+        else if (ctx->LT())
+            res = m_builder.CreateICmpSLT(L, R);
+        else if (ctx->GE())
+            res = m_builder.CreateICmpSGE(L, R);
+        else if (ctx->LE())
+            res = m_builder.CreateICmpSLE(L, R);
+        else
+            res = m_builder.CreateICmpEQ(L, R);
+        return std::any((Value *)res);
+    }
+
+    if ((L->getType()->isDoubleTy() || L->getType()->isIntegerTy()) &&
+        (R->getType()->isDoubleTy() || R->getType()->isIntegerTy()) &&
+        !L->getType()->isPointerTy() && !R->getType()->isPointerTy())
     {
         Value *dL = castToNativeDouble(L);
         Value *dR = castToNativeDouble(R);
@@ -9765,13 +11076,26 @@ std::any TzdCompiler::visitEqualityExpr(TzdLangParser::EqualityExprContext *ctx)
     Value *L = std::any_cast<Value *>(visit(ctx->expression(0)));
     Value *R = std::any_cast<Value *>(visit(ctx->expression(1)));
 
-    // Native double fast path: direct fcmp, zero heap alloc, zero external calls
-    if (L->getType()->isDoubleTy() && R->getType()->isDoubleTy())
+    // Integer fast path: direct icmp
+    if (L->getType()->isIntegerTy(64) && R->getType()->isIntegerTy(64))
     {
         if (ctx->EEQ())
-            return std::any((Value *)m_builder.CreateFCmpOEQ(L, R, "eqtmp"));
+            return std::any((Value *)m_builder.CreateICmpEQ(L, R, "eqi64"));
         else
-            return std::any((Value *)m_builder.CreateFCmpONE(L, R, "netmp"));
+            return std::any((Value *)m_builder.CreateICmpNE(L, R, "nei64"));
+    }
+
+    // Native double fast path: direct fcmp, zero heap alloc, zero external calls
+    if ((L->getType()->isDoubleTy() || L->getType()->isIntegerTy()) &&
+        (R->getType()->isDoubleTy() || R->getType()->isIntegerTy()) &&
+        !L->getType()->isPointerTy() && !R->getType()->isPointerTy())
+    {
+        Value *dL = castToNativeDouble(L);
+        Value *dR = castToNativeDouble(R);
+        if (ctx->EEQ())
+            return std::any((Value *)m_builder.CreateFCmpOEQ(dL, dR, "eqtmp"));
+        else
+            return std::any((Value *)m_builder.CreateFCmpONE(dL, dR, "netmp"));
     }
 
     // Fallback: boxed path for string/object comparison
@@ -10172,15 +11496,20 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
 
     // 递归函数不应被内联到其他函数中，保持其在自身 native worker 中运行
     bool isCalleeRecursive = false;
-    std::function<void(antlr4::tree::ParseTree *)> checkRec = [&](antlr4::tree::ParseTree *node) {
-        if (!node || isCalleeRecursive) return;
-        if (auto call = dynamic_cast<TzdLangParser::CallExprContext *>(node)) {
-            if (call->atom() && call->atom()->getText() == funcName) {
+    std::function<void(antlr4::tree::ParseTree *)> checkRec = [&](antlr4::tree::ParseTree *node)
+    {
+        if (!node || isCalleeRecursive)
+            return;
+        if (auto call = dynamic_cast<TzdLangParser::CallExprContext *>(node))
+        {
+            if (call->atom() && call->atom()->getText() == funcName)
+            {
                 isCalleeRecursive = true;
                 return;
             }
         }
-        for (size_t i = 0; i < node->children.size(); ++i) {
+        for (size_t i = 0; i < node->children.size(); ++i)
+        {
             checkRec(node->children[i]);
         }
     };
@@ -10192,10 +11521,13 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
 
     // AST 内联展开目前仅支持纯数值返回的函数（返回类型为 double）
     // 返回对象/this/字符串/void 的函数走标准调用分发，避免返回值退化为 0.0
-    if (!isBlockReturningDouble(calleeVal.funcBody))
-    {
-        return false;
-    }
+    bool returnsDouble = !calleeVal.returnType.empty()
+                             ? isExplicitNumericType(calleeVal.returnType)
+                             : isBlockReturningDouble(calleeVal.funcBody);
+    // if (!returnsDouble)
+    //{
+    //     return false;
+    // }
 
     // --- 执行 AST 级直接内联 ---
     TzdJitEngine::recordInlinedCall();
@@ -10203,6 +11535,35 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
     s_currentInlineDepth++;
 
     // 1. 在调用方上下文中计算实参
+    auto getAggregateSlots = [&](const std::string &varOrPath) -> std::unordered_map<std::string, AllocaInst *>
+    {
+        auto it = m_varFieldAllocas.find(varOrPath);
+        if (it != m_varFieldAllocas.end())
+        {
+            return it->second;
+        }
+        size_t dot = varOrPath.find('.');
+        if (dot != std::string::npos)
+        {
+            std::string root = varOrPath.substr(0, dot);
+            std::string subPrefix = varOrPath.substr(dot + 1) + ".";
+            auto rIt = m_varFieldAllocas.find(root);
+            if (rIt != m_varFieldAllocas.end())
+            {
+                std::unordered_map<std::string, AllocaInst *> subMap;
+                for (const auto &pair : rIt->second)
+                {
+                    if (pair.first.rfind(subPrefix, 0) == 0)
+                    {
+                        subMap[pair.first.substr(subPrefix.size())] = pair.second;
+                    }
+                }
+                return subMap;
+            }
+        }
+        return {};
+    };
+
     std::vector<Value *> evaluatedArgs;
     evaluatedArgs.reserve(exprs.size());
     for (size_t i = 0; i < exprs.size(); ++i)
@@ -10211,7 +11572,7 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
         s_inTailPosition = false;
         std::string argText = exprs[i]->getText();
         Value *argVal = nullptr;
-        if (s_compilingNativeWorker && m_varFieldAllocas.count(argText))
+        if (s_compilingNativeWorker && !getAggregateSlots(argText).empty())
         {
             argVal = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
         }
@@ -10232,16 +11593,21 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
     auto savedClassDef = m_currentClassDef;
     auto savedVarFieldAllocas = m_varFieldAllocas;
 
-    if (!receiverVarName.empty() && m_varFieldAllocas.count(receiverVarName))
+    if (!receiverVarName.empty())
     {
-        m_varFieldAllocas["this"] = m_varFieldAllocas[receiverVarName];
+        auto slots = getAggregateSlots(receiverVarName);
+        if (!slots.empty())
+        {
+            m_varFieldAllocas["this"] = slots;
+        }
     }
     for (size_t i = 0; i < exprs.size(); ++i)
     {
         std::string argText = exprs[i]->getText();
-        if (m_varFieldAllocas.count(argText) && i < calleeVal.params.size())
+        auto slots = getAggregateSlots(argText);
+        if (!slots.empty() && i < calleeVal.params.size())
         {
-            m_varFieldAllocas[calleeVal.params[i]] = m_varFieldAllocas[argText];
+            m_varFieldAllocas[calleeVal.params[i]] = slots;
         }
     }
 
@@ -10270,23 +11636,35 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
 
         if (i < exprs.size())
         {
-            std::string argExprText = exprs[i]->getText();
-            auto it = savedVarClassTypes.find(argExprText);
-            if (it != savedVarClassTypes.end())
+            std::string cls = deduceExprClassName(exprs[i], savedVarClassTypes, savedClassDef);
+            if (!cls.empty())
             {
-                m_varClassTypes[pName] = it->second;
+                m_varClassTypes[pName] = cls;
             }
-            else if (i < calleeVal.paramTypes.size() && !calleeVal.paramTypes[i].empty())
+            else
             {
-                m_varClassTypes[pName] = calleeVal.paramTypes[i];
+                std::string argExprText = exprs[i]->getText();
+                auto it = savedVarClassTypes.find(argExprText);
+                if (it != savedVarClassTypes.end())
+                {
+                    m_varClassTypes[pName] = it->second;
+                }
+                else if (i < calleeVal.paramTypes.size() && !calleeVal.paramTypes[i].empty())
+                {
+                    m_varClassTypes[pName] = calleeVal.paramTypes[i];
+                }
             }
         }
 
         Value *arg = evaluatedArgs[i];
-        if (arg->getType()->isDoubleTy())
+        bool isParamNumericType = (i < calleeVal.paramTypes.size()) &&
+                                  (calleeVal.paramTypes[i] == "int" || calleeVal.paramTypes[i] == "float" ||
+                                   calleeVal.paramTypes[i] == "double" || calleeVal.paramTypes[i] == "number");
+        if (arg->getType()->isDoubleTy() || isParamNumericType)
         {
+            Value *dArg = castToNativeDouble(arg);
             AllocaInst *alloc = CreateEntryBlockAlloca(m_doubleTy, nullptr, mangled + "_d");
-            m_builder.CreateStore(arg, alloc);
+            m_builder.CreateStore(dArg, alloc);
             m_nativeDoubleLocals[pName] = alloc;
         }
         else
@@ -10302,9 +11680,8 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
     AllocaInst *retNativeDouble = CreateEntryBlockAlloca(m_doubleTy, nullptr, "inl_ret_d");
     AllocaInst *retBoxed = CreateEntryBlockAlloca(m_ptrTy, nullptr, "inl_ret_boxed");
     m_builder.CreateStore(ConstantFP::get(m_doubleTy, 0.0), retNativeDouble);
-    m_builder.CreateStore(ConstantPointerNull::get(cast<PointerType>(m_ptrTy)), retBoxed);
-
-    s_inlineReturnStack.push_back({inlineRetBB, retNativeDouble, retBoxed});
+    m_builder.CreateStore(m_builder.CreateCall(getRtFunc("rt_create_null")), retBoxed);
+    s_inlineReturnStack.push_back({inlineRetBB, retNativeDouble, retBoxed, returnsDouble});
 
     bool savedTail = s_inTailPosition;
     s_inTailPosition = false; // 被内联函数体绝不继承调用方的尾调用状态！
@@ -10352,8 +11729,16 @@ bool TzdCompiler::tryInlineFunction(const std::string &funcName,
 
     // 8. 汇合点加载返回值
     m_builder.SetInsertPoint(inlineRetBB);
-    Value *resD = m_builder.CreateLoad(m_doubleTy, retNativeDouble, "inl_res_d");
-    result = resD;
+    if (returnsDouble)
+    {
+        Value *resD = m_builder.CreateLoad(m_doubleTy, retNativeDouble, "inl_res_d");
+        result = resD;
+    }
+    else
+    {
+        Value *resBox = m_builder.CreateLoad(m_ptrTy, retBoxed, "inl_res_ptr");
+        result = resBox;
+    }
     return true;
 }
 
@@ -10383,14 +11768,14 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext *ctx)
     if (funcName == "range" && argCount >= 1 && argCount <= 3)
     {
         Value *arg0 = (argCount >= 2)
-            ? castToNativeDouble(castAnyToValue(visit(exprs[0]), "range_arg0"))
-            : ConstantFP::get(m_doubleTy, 0.0);
+                          ? castToNativeDouble(castAnyToValue(visit(exprs[0]), "range_arg0"))
+                          : ConstantFP::get(m_doubleTy, 0.0);
         Value *arg1 = (argCount == 1)
-            ? castToNativeDouble(castAnyToValue(visit(exprs[0]), "range_arg1"))
-            : castToNativeDouble(castAnyToValue(visit(exprs[1]), "range_arg1"));
+                          ? castToNativeDouble(castAnyToValue(visit(exprs[0]), "range_arg1"))
+                          : castToNativeDouble(castAnyToValue(visit(exprs[1]), "range_arg1"));
         Value *arg2 = (argCount >= 3)
-            ? castToNativeDouble(castAnyToValue(visit(exprs[2]), "range_arg2"))
-            : ConstantFP::get(m_doubleTy, 1.0);
+                          ? castToNativeDouble(castAnyToValue(visit(exprs[2]), "range_arg2"))
+                          : ConstantFP::get(m_doubleTy, 1.0);
         Value *rangeRes = m_builder.CreateCall(getRtFunc("rt_fast_range"), {arg0, arg1, arg2});
         return std::any((Value *)rangeRes);
     }
@@ -10448,11 +11833,34 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext *ctx)
         return std::any((Value *)nativeCall);
     }
 
-    Function *directNativeWorker = m_module->getFunction(funcName + "_worker_native");
+    std::string nativeTargetName = funcName;
+    if (g_CurrentInterpreter)
+    {
+        for (auto scopeIt = g_CurrentInterpreter->scopes.rbegin(); scopeIt != g_CurrentInterpreter->scopes.rend(); ++scopeIt)
+        {
+            auto it = scopeIt->find(funcName);
+            if (it != scopeIt->end() && it->second.type == TzdValue::FUNCTION && !it->second.jitInternalName.empty())
+            {
+                nativeTargetName = it->second.jitInternalName;
+                break;
+            }
+        }
+    }
+
+    Function *directNativeWorker = m_module->getFunction(nativeTargetName + "_worker_native");
+    if (!directNativeWorker && nativeTargetName != funcName)
+    {
+        directNativeWorker = m_module->getFunction(funcName + "_worker_native");
+    }
     if (!directNativeWorker)
     {
-        std::string nativeWorkerName = funcName + "_worker_native";
+        std::string nativeWorkerName = nativeTargetName + "_worker_native";
         auto *info = TzdJitEngine::getJittedFunction(nativeWorkerName);
+        if (!info && nativeTargetName != funcName)
+        {
+            nativeWorkerName = funcName + "_worker_native";
+            info = TzdJitEngine::getJittedFunction(nativeWorkerName);
+        }
         if (info && info->paramCount == argCount)
         {
             std::vector<Type *> nativeArgs(argCount, m_doubleTy);
@@ -10480,7 +11888,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext *ctx)
         return std::any((Value *)nativeCall);
     }
 
-    if (ctx->getStart() && !s_compilingNativeWorker)
+    if (ctx->getStart() && !s_compilingNativeWorker && (s_loopLevel == 0 || jitTrackFrames()))
     {
         m_builder.CreateCall(getRtFunc("rt_set_location"), {m_builder.getInt32(ctx->getStart()->getLine()),
                                                             m_builder.getInt32(ctx->getStart()->getCharPositionInLine())});
@@ -10501,7 +11909,7 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext *ctx)
         else if (m_varClassTypes.count(objText))
         {
             targetClass = m_varClassTypes[objText];
-            if (s_compilingNativeWorker && m_varFieldAllocas.count(objText))
+            if (s_compilingNativeWorker && (m_varFieldAllocas.count(objText) || objText.find('.') != std::string::npos))
             {
                 receiverVal = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
             }
@@ -10520,11 +11928,17 @@ std::any TzdCompiler::visitCallExpr(TzdLangParser::CallExprContext *ctx)
         }
         else
         {
-            std::string newClass = getNewExprClassName(memberCtx->atom());
-            if (!newClass.empty())
+            targetClass = deduceExprClassName(memberCtx->atom(), m_varClassTypes, m_currentClassDef);
+            if (!targetClass.empty())
             {
-                targetClass = newClass;
-                receiverVal = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.newReceiver");
+                if (s_compilingNativeWorker)
+                {
+                    receiverVal = ConstantPointerNull::get(cast<PointerType>(m_ptrTy));
+                }
+                else
+                {
+                    receiverVal = castAnyToValue(visit(memberCtx->atom()), "visitCallExpr.deducedReceiver");
+                }
             }
         }
 
@@ -10995,6 +12409,22 @@ Value *TzdCompiler::castToNativeDouble(Value *val)
 
     // 3. 只有当它是 TzdValue* 指针时，inline GEP+Load dVal
     return inlineToDoubleFast(val);
+}
+
+Value *TzdCompiler::castToNativeI64(Value *val)
+{
+    if (!val)
+        return m_builder.getInt64(0);
+    if (val->getType()->isIntegerTy(64))
+        return val;
+    if (val->getType()->isIntegerTy(1))
+        return m_builder.CreateZExt(val, m_builder.getInt64Ty(), "bool2i64");
+    if (val->getType()->isIntegerTy())
+        return m_builder.CreateSExt(val, m_builder.getInt64Ty(), "int2i64");
+    if (val->getType()->isDoubleTy())
+        return m_builder.CreateFPToSI(val, m_builder.getInt64Ty(), "dbl2i64");
+
+    return m_builder.CreateCall(getRtFunc("rt_to_int64_fast"), {val}, "to_i64");
 }
 
 // Inline rt_store_native_to_ptr: directly write type=DOUBLE and dVal=val via GEP

@@ -305,6 +305,13 @@ const KEYWORDS = new Set([
   "protected",
   "Runtime",
   "extends",
+  "double",
+  "long",
+  "char",
+  "byte",
+  "short",
+  "any",
+  "object",
 ]);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -520,6 +527,9 @@ function extractClassDefs(tree, text, uri) {
                 pl && typeof pl.param === "function" ? pl.param().length : 0;
               const isStatic =
                 md instanceof TzdLangParser.MethodStaticDeclContext;
+              const tt =
+                typeof md.typeType === "function" ? md.typeType() : null;
+              const returnType = tt ? tt.getText() : "";
 
               let bodyText = "";
               const b = typeof md.block === "function" ? md.block() : null;
@@ -532,6 +542,7 @@ function extractClassDefs(tree, text, uri) {
                 kind: "method",
                 isStatic,
                 signature,
+                returnType,
                 argsCount,
                 bodyText,
                 location: {
@@ -685,10 +696,11 @@ function extractClassDefs(tree, text, uri) {
                 continue;
               }
               m = lineStr.match(
-                /^\s*(?:(?:public|private|protected|static|abstract)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/,
+                /^\s*(?:(?:public|private|protected|static|abstract)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)(?:\s*->\s*([a-zA-Z_]\w*(?:\[\])?))?/,
               );
               if (m) {
                 const col = lineStr.indexOf(m[1]);
+                const returnType = m[3] || "";
                 const args = m[2]
                   .split(",")
                   .map((x) => x.trim())
@@ -720,6 +732,7 @@ function extractClassDefs(tree, text, uri) {
                     /^\s*static\b/.test(lineStr) ||
                     /\bstatic\s+fun\b/.test(lineStr),
                   signature: m[2],
+                  returnType,
                   argsCount: args.length,
                   bodyText: bodyLines.join("\n"),
                   location: {
@@ -835,11 +848,12 @@ function extractTopLevelFunctions(text, uri) {
     // 只有处于顶层全局作用域 (braceDepth === 0) 时，声明的函数才是真正的全局函数
     if (braceDepth === 0) {
       const m = cleanLine.match(
-        /^\s*(?:(?:public|private|protected|static|abstract|native)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/
+        /^\s*(?:(?:public|private|protected|static|abstract|native)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)(?:\s*->\s*([a-zA-Z_]\w*(?:\[\])?))?/
       );
       if (m) {
         const fnName = m[1];
         const paramStr = m[2];
+        const returnType = m[3] || "";
         const col = rawLine.indexOf(fnName);
         const args = paramStr
           .split(",")
@@ -849,6 +863,7 @@ function extractTopLevelFunctions(text, uri) {
         const fnDef = {
           name: fnName,
           signature: paramStr,
+          returnType: returnType,
           argsCount: args.length,
           location: {
             uri,
@@ -1097,10 +1112,10 @@ function extractVisibleLocals(text) {
     );
     if (m) locals.set(m[2], { kind: "variable", type: m[1], line: i });
 
-    // 3. 函数声明自身及参数 (如 fun aaa(x, y), static fun apply(op: function, val))
-    m = line.match(/\bfun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/);
+    // 3. 函数声明自身及参数 (如 fun aaa(x, y), static fun apply(op: function, val), fun(int val) -> int)
+    m = line.match(/\bfun(?:\s+([a-zA-Z_]\w*))?\s*\((.*?)\)/);
     if (m) {
-      locals.set(m[1], { kind: "function", line: i });
+      if (m[1]) locals.set(m[1], { kind: "function", line: i });
       m[2].split(",").forEach((arg) => {
         const info = extractParamInfo(arg);
         if (info) locals.set(info.name, { kind: "parameter", type: info.type, line: i });
@@ -1674,7 +1689,7 @@ function buildCompletions(text, line, col, docUri) {
             if (member.kind === "method") {
               const retType = member.returnType ||
                 inferMethodReturnType(member, targetType, docUri, text) || "";
-              const retLabel = retType && !["void","null"].includes(retType) ? ` → ${retType}` : "";
+              const retLabel = retType && !["null"].includes(retType) ? ` -> ${retType}` : "";
               const docComment = extractDocComment(text, member.location?.range?.start?.line);
               items.push({
                 label: member.name,
@@ -1755,9 +1770,11 @@ function buildCompletions(text, line, col, docUri) {
       if (m.kind === "constructor" || seenM.has(m.name)) continue;
       seenM.add(m.name);
       if (m.kind === "method") {
+        const retType = m.returnType || inferMethodReturnType(m, currentClass.className, docUri, text) || "";
+        const retLabel = retType ? ` -> ${retType}` : "";
         items.push({ label: m.name, kind: 2 /*Method*/,
           insertTextFormat: 2, insertText: `${m.name}($0)`,
-          detail: `fun ${m.name}(${m.signature || ""})`,
+          detail: `fun ${m.name}(${m.signature || ""})${retLabel}`,
           sortText: "0" });
       } else {
         items.push({ label: m.name, kind: 5 /*Field*/,
@@ -1794,13 +1811,14 @@ function buildCompletions(text, line, col, docUri) {
   for (const [fn, defs] of globalFunctionsCache.entries()) {
     const firstDef = defs && defs[0];
     const sig = firstDef ? firstDef.signature : "";
+    const retLabel = firstDef && firstDef.returnType ? ` -> ${firstDef.returnType}` : "";
     const doc = firstDef ? firstDef.docComment : undefined;
     items.push({
       label: fn,
       kind: 3 /*Function*/,
       insertTextFormat: 2,
       insertText: `${fn}($0)`,
-      detail: `fun ${fn}(${sig || ""})`,
+      detail: `fun ${fn}(${sig || ""})${retLabel}`,
       documentation: doc ? { kind: "markdown", value: doc } : undefined,
       sortText: "2",
     });
@@ -1874,8 +1892,9 @@ connection.onSignatureHelp((params) => {
     return {
       signatures: members.map((m) => {
         const doc = extractDocComment(text, m.location?.range?.start?.line);
+        const retPart = m.returnType ? ` -> ${m.returnType}` : "";
         return {
-          label: `fun ${m.name}(${m.signature || ""})`,
+          label: `fun ${m.name}(${m.signature || ""})${retPart}`,
           documentation: doc
             ? { kind: "markdown", value: doc }
             : `${className ? className + "." : ""}${m.name}`,
@@ -1954,17 +1973,19 @@ connection.onSignatureHelp((params) => {
     // 直接正则扫描全局 fun fnName(...)
     const lines2 = text.split("\n");
     const funRegex = new RegExp(
-      `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${fnName}\\s*\\(([^)]*)\\)`,
+      `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${fnName}\\s*\\(([^)]*)\\)(?:\\s*->\\s*([a-zA-Z_]\\w*(?:\\[\\])?))?`,
     );
     for (let i = 0; i < lines2.length; i++) {
       const fm = funRegex.exec(lines2[i]);
       if (fm) {
         const docStr = extractDocComment(text, i);
         const sig = fm[1].trim();
+        const retType = fm[2] ? fm[2].trim() : "";
+        const retPart = retType ? ` -> ${retType}` : "";
         return {
           signatures: [
             {
-              label: `fun ${fnName}(${sig})`,
+              label: `fun ${fnName}(${sig})${retPart}`,
               documentation: docStr
                 ? { kind: "markdown", value: docStr }
                 : `fun ${fnName}`,
@@ -2039,7 +2060,7 @@ connection.onHover((params) => {
             member.returnType ||
             inferMethodReturnType(member, hoverTargetClass, params.textDocument.uri, text) ||
             "";
-          const retPart = retType && !["void", "null"].includes(retType) ? `: ${retType}` : "";
+          const retPart = retType && !["null"].includes(retType) ? ` -> ${retType}` : "";
           let mdValue = `\`\`\`tzdlang\n${member.isStatic ? "static " : ""}fun ${member.name}(${member.signature || ""})${retPart}\n\`\`\``;
           if (docComment) mdValue += `\n\n---\n${docComment}`;
           return { contents: { kind: MarkupKind.Markdown, value: mdValue } };
@@ -2124,7 +2145,8 @@ connection.onHover((params) => {
     const fns = globalFunctionsCache.get(word);
     if (fns && fns.length > 0) {
       const f = fns[0];
-      let md = `\`\`\`tzdlang\nfun ${word}(${f.signature || ""})\n\`\`\``;
+      const retPart = f.returnType ? ` -> ${f.returnType}` : "";
+      let md = `\`\`\`tzdlang\nfun ${word}(${f.signature || ""})${retPart}\n\`\`\``;
       if (f.docComment) md += `\n\n---\n${f.docComment}`;
       return { contents: { kind: MarkupKind.Markdown, value: md } };
     }
@@ -2253,6 +2275,10 @@ function checkUndeclared(text, docUri) {
           ).test(cleanLine)
         )
           continue;
+        if (/->\s*[a-zA-Z_]\w*/.test(cleanLine)) {
+          const retTypeMatch = cleanLine.match(/->\s*([a-zA-Z_]\w*)/);
+          if (retTypeMatch && retTypeMatch[1] === name) continue;
+        }
 
         let col = origLine.indexOf(name, match.index);
         diags.push(
@@ -2509,10 +2535,10 @@ function findDefinition(docUri, text, line, col) {
     const l = lines[i];
     const fnMatch =
       l.match(
-        /\b(?:(?:public|private|protected|static|abstract)\s+)*fun\s+([a-zA-Z_]\w*)\s*\((.*?)\)/,
+        /\b(?:(?:public|private|protected|static|abstract)\s+)*fun(?:\s+([a-zA-Z_]\w*))?\s*\((.*?)\)(?:\s*->\s*[a-zA-Z_]\w*(?:\[\])?)?/,
       ) || l.match(/^\s*[A-Z]\w*\s*\((.*?)\)/);
     if (fnMatch) {
-      const paramStr = fnMatch[2] || fnMatch[1];
+      const paramStr = fnMatch[2] !== undefined ? fnMatch[2] : fnMatch[1];
       const paramIdx = l.indexOf(paramStr);
       const pParts = paramStr.split(",");
       let pOffset = paramIdx;
@@ -2534,7 +2560,7 @@ function findDefinition(docUri, text, line, col) {
 
   // ⭐ 5. 本地函数精准正则匹配 (支持 static fun, public fun 等修饰符)
   const fnPattern = new RegExp(
-    `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${escaped}\\s*\\(([^)]*)\\)`,
+    `^\\s*(?:(?:public|private|protected|static|abstract)\\s+)*fun\\s+${escaped}\\s*\\(([^)]*)\\)(?:\\s*->\\s*[a-zA-Z_]\\w*(?:\\[\\])?)?`,
   );
   let fallbackLoc = null;
   for (let i = 0; i < lines.length; i++) {

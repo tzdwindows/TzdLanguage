@@ -14,20 +14,23 @@ public:
   enum {
     T__0 = 1, T__1 = 2, T__2 = 3, T__3 = 4, T__4 = 5, T__5 = 6, T__6 = 7, 
     T__7 = 8, T__8 = 9, T__9 = 10, T__10 = 11, T__11 = 12, T__12 = 13, T__13 = 14, 
-    T__14 = 15, T__15 = 16, KW_VAR = 17, KW_CONST = 18, KW_LET = 19, KW_STATIC = 20, 
-    KW_ABSTRACT = 21, KW_ENUM = 22, KW_IN = 23, KW_SUPER = 24, KW_NATIVE = 25, 
-    KW_IMPORT = 26, KW_PRINT = 27, KW_CLASS = 28, KW_EXTENDS = 29, KW_PUBLIC = 30, 
-    KW_PRIVATE = 31, KW_PROTECTED = 32, KW_FUN = 33, KW_RET = 34, KW_IF = 35, 
-    KW_ELSE = 36, KW_WHILE = 37, KW_FOR = 38, KW_BREAK = 39, KW_CONTINUE = 40, 
-    KW_SWITCH = 41, KW_CASE = 42, KW_DEFAULT = 43, KW_NEW = 44, KW_TRUE = 45, 
-    KW_FALSE = 46, KW_NULL = 47, KW_THROW = 48, KW_TRY = 49, KW_CATCH = 50, 
-    T_INT = 51, T_FLOAT = 52, T_STRING = 53, T_BOOL = 54, T_VOID = 55, T_PTR = 56, 
-    T_FUNCTION = 57, INC = 58, DEC = 59, GXXX = 60, PLUS = 61, MINUS = 62, 
-    MUL = 63, DIV = 64, MOD = 65, NOT = 66, GE = 67, LE = 68, GT = 69, LT = 70, 
-    EEQ = 71, NEQ = 72, AND = 73, OR = 74, ASSIGN = 75, PLUS_ASSIGN = 76, 
-    MIN_ASSIGN = 77, MUL_ASSIGN = 78, DIV_ASSIGN = 79, IDENTIFIER = 80, 
-    INTEGER = 81, FLOAT = 82, STRING = 83, LINE_COMMENT = 84, BLOCK_COMMENT = 85, 
-    WS = 86
+    T__14 = 15, KW_VAR = 16, KW_CONST = 17, KW_LET = 18, KW_STATIC = 19, 
+    KW_ABSTRACT = 20, KW_ENUM = 21, KW_IN = 22, KW_SUPER = 23, KW_NATIVE = 24, 
+    KW_IMPORT = 25, KW_PRINT = 26, KW_CLASS = 27, KW_EXTENDS = 28, KW_PUBLIC = 29, 
+    KW_PRIVATE = 30, KW_PROTECTED = 31, KW_FUN = 32, KW_RET = 33, KW_IF = 34, 
+    KW_ELSE = 35, KW_WHILE = 36, KW_FOR = 37, KW_BREAK = 38, KW_CONTINUE = 39, 
+    KW_SWITCH = 40, KW_CASE = 41, KW_DEFAULT = 42, KW_NEW = 43, KW_TRUE = 44, 
+    KW_FALSE = 45, KW_NULL = 46, KW_THROW = 47, KW_TRY = 48, KW_CATCH = 49, 
+    T_INT = 50, T_FLOAT = 51, T_STRING = 52, T_BOOL = 53, T_VOID = 54, T_PTR = 55, 
+    T_FUNCTION = 56, INC = 57, DEC = 58, GXXX = 59, USHR_ASSIGN = 60, SHR_ASSIGN = 61, 
+    SHL_ASSIGN = 62, USHR = 63, SHR = 64, SHL = 65, AND_ASSIGN = 66, OR_ASSIGN = 67, 
+    XOR_ASSIGN = 68, MOD_ASSIGN = 69, PLUS_ASSIGN = 70, MIN_ASSIGN = 71, 
+    MUL_ASSIGN = 72, DIV_ASSIGN = 73, EEQ = 74, NEQ = 75, GE = 76, LE = 77, 
+    AND = 78, OR = 79, POW = 80, BIT_NOT = 81, BIT_AND = 82, BIT_OR = 83, 
+    BIT_XOR = 84, ARROW = 85, PLUS = 86, MINUS = 87, MUL = 88, DIV = 89, 
+    MOD = 90, NOT = 91, GT = 92, LT = 93, ASSIGN = 94, IDENTIFIER = 95, 
+    INTEGER = 96, FLOAT = 97, STRING = 98, LINE_COMMENT = 99, BLOCK_COMMENT = 100, 
+    WS = 101
   };
 
   enum {
@@ -500,6 +503,8 @@ public:
     antlr4::tree::TerminalNode *IDENTIFIER();
     BlockContext *block();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -512,6 +517,8 @@ public:
     antlr4::tree::TerminalNode *IDENTIFIER();
     BlockContext *block();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -524,6 +531,8 @@ public:
     antlr4::tree::TerminalNode *KW_FUN();
     antlr4::tree::TerminalNode *IDENTIFIER();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -594,6 +603,8 @@ public:
     BlockContext *block();
     AnnotationUsageContext *annotationUsage();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -611,6 +622,8 @@ public:
     antlr4::tree::TerminalNode *IDENTIFIER();
     AnnotationUsageContext *annotationUsage();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
     NativeAttrListContext *nativeAttrList();
 
 
@@ -792,6 +805,17 @@ public:
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
 
+  class  BitAndExprContext : public ExpressionContext {
+  public:
+    BitAndExprContext(ExpressionContext *ctx);
+
+    std::vector<ExpressionContext *> expression();
+    ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *BIT_AND();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
   class  RelationalExprContext : public ExpressionContext {
   public:
     RelationalExprContext(ExpressionContext *ctx);
@@ -817,6 +841,13 @@ public:
     antlr4::tree::TerminalNode *MIN_ASSIGN();
     antlr4::tree::TerminalNode *MUL_ASSIGN();
     antlr4::tree::TerminalNode *DIV_ASSIGN();
+    antlr4::tree::TerminalNode *MOD_ASSIGN();
+    antlr4::tree::TerminalNode *AND_ASSIGN();
+    antlr4::tree::TerminalNode *OR_ASSIGN();
+    antlr4::tree::TerminalNode *XOR_ASSIGN();
+    antlr4::tree::TerminalNode *SHL_ASSIGN();
+    antlr4::tree::TerminalNode *SHR_ASSIGN();
+    antlr4::tree::TerminalNode *USHR_ASSIGN();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -830,13 +861,26 @@ public:
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
 
+  class  BitOrExprContext : public ExpressionContext {
+  public:
+    BitOrExprContext(ExpressionContext *ctx);
+
+    std::vector<ExpressionContext *> expression();
+    ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *BIT_OR();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
   class  UnaryExprContext : public ExpressionContext {
   public:
     UnaryExprContext(ExpressionContext *ctx);
 
     ExpressionContext *expression();
+    antlr4::tree::TerminalNode *PLUS();
     antlr4::tree::TerminalNode *MINUS();
     antlr4::tree::TerminalNode *NOT();
+    antlr4::tree::TerminalNode *BIT_NOT();
     antlr4::tree::TerminalNode *GXXX();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -891,6 +935,7 @@ public:
 
     std::vector<ExpressionContext *> expression();
     ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *POW();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -949,6 +994,30 @@ public:
 
     TypeTypeContext *typeType();
     ExpressionContext *expression();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
+  class  ShiftExprContext : public ExpressionContext {
+  public:
+    ShiftExprContext(ExpressionContext *ctx);
+
+    std::vector<ExpressionContext *> expression();
+    ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *SHL();
+    antlr4::tree::TerminalNode *SHR();
+    antlr4::tree::TerminalNode *USHR();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
+  class  BitXorExprContext : public ExpressionContext {
+  public:
+    BitXorExprContext(ExpressionContext *ctx);
+
+    std::vector<ExpressionContext *> expression();
+    ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *BIT_XOR();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -1030,6 +1099,8 @@ public:
     antlr4::tree::TerminalNode *KW_FUN();
     BlockContext *block();
     ParamListContext *paramList();
+    antlr4::tree::TerminalNode *ARROW();
+    TypeTypeContext *typeType();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };

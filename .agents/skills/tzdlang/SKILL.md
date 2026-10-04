@@ -88,15 +88,18 @@ var Rational fraction = 1 / 3;
 ## 3. Operators & Control Flow
 
 ### 3.1 Operators
-- Arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (Power operator, e.g. `2 ^ 10 == 1024`).
+- Arithmetic: `+`, `-`, `*`, `/`, `%`, `**` (Power operator, e.g. `2 ** 10 == 1024`).
+- Unary: `+` (identity), `-` (negate), `!` (logical NOT), `~` (bitwise NOT / 1's complement).
+- Bitwise: `&` (AND), `|` (OR), `^` (XOR), `~` (NOT), `<<` (Left Shift), `>>` (Arithmetic Right Shift), `>>>` (Unsigned/Logical Right Shift).
+- Compound Assignments: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`.
+- Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Logical: `&&`, `||`, `!`
+- Ternary: `condition ? exprTrue : exprFalse`
+- Precedence: Adheres strictly to standard C language precedence hierarchies.
 - String concatenation: The `+` operator automatically coerces numbers to strings when concatenated with a string:
   ```tzd
   var msg = "Count is: " + toString(count) + "!";
   ```
-- Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
-- Logical: `&&`, `||`, `!`
-- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
-- Ternary: `condition ? exprTrue : exprFalse`
 
 ### 3.2 If / Else
 ```tzd
@@ -157,22 +160,39 @@ try {
 
 ## 4. Functions & Lambdas
 
-### 4.1 Function Declarations
-Defined using keyword `fun`:
+### 4.1 Function Declarations & Return Type Syntax (`-> Type`)
+Functions are defined using the `fun` keyword. TzdLang supports explicit return types via arrow notation `-> Type`:
 ```tzd
+// Standard dynamic function:
 fun add(a, b) {
     return a + b;
 }
 
-// Typed parameters and return type:
-fun float multiply(float x, float y) {
-    return x * y;
+// Explicit return type (recommended for optimal JIT performance):
+fun addTyped(int a, int b) -> int {
+    return a + b;
+}
+
+fun calculateMagnitude(double x, double y) -> double {
+    return x * x + y * y;
+}
+
+fun greet(string name) -> string {
+    return "Hello, " + name;
+}
+
+fun logStatus(string msg) -> void {
+    print("[LOG] " + msg);
 }
 ```
 
-### 4.2 First-class Functions & Closures
+> [!TIP]
+> **JIT Acceleration Advantage**: Supplying explicit return types like `-> int`, `-> float`, `-> double`, or `-> long` immediately instructs the JIT engine to bypass full AST traversal of the function body. The JIT directly generates an unboxed fast-calling-convention worker (`_worker_native`) passing arguments in hardware registers and returning via XMM0 / RAX, completely eliminating boxing overhead and enabling instant AST inlining!
+
+### 4.2 First-class Functions, Lambdas & Closures
+Lambdas can also declare explicit return types:
 ```tzd
-var square = fun(n) {
+var square = fun(int n) -> int {
     return n * n;
 };
 print(toString(square(5))); // 25
@@ -181,9 +201,9 @@ print(toString(square(5))); // 25
 ### 4.3 High-Performance Recursive Functions (JIT Optimized)
 TzdLanguage LLVM JIT compiles purely numeric functions to unboxed native machine code with zero memory allocations per recursion step:
 ```tzd
-fun fib(n) {
-    if (n <= 2) {
-        return 1.0;
+fun fib(int n) -> int {
+    if (n <= 1) {
+        return n;
     }
     return fib(n - 1) + fib(n - 2);
 }
@@ -238,7 +258,7 @@ class Employee : Person {
 ### 5.3 Static Methods
 ```tzd
 class MathUtil {
-    static fun clamp(val, low, high) {
+    static fun clamp(double val, double low, double high) -> double {
         if (val < low) return low;
         if (val > high) return high;
         return val;

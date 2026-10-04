@@ -1,0 +1,83 @@
+// Comprehensive test suite for Arbitrary-Precision BigInt Bitwise & Arithmetic operations in TzdLang
+
+fun assert(cond, msg) {
+    if (!cond) {
+        print("[FAIL] " + msg);
+        exit(1);
+    }
+}
+
+print("=== 1. BigInt Literals & Basic Arbitrary-Precision Arithmetic ===");
+var a = 123456789012345678901234567890;
+var b = 987654321098765432109876543210;
+
+print("a = " + toString(a));
+print("b = " + toString(b));
+
+var add_res = a + b;
+print("a + b = " + toString(add_res));
+assert(toString(add_res) == "1111111110111111111011111111100", "BigInt addition failed");
+
+var sub_res = b - a;
+print("b - a = " + toString(sub_res));
+assert(toString(sub_res) == "864197532086419753208641975320", "BigInt subtraction failed");
+
+var mul_res = a * 2;
+print("a * 2 = " + toString(mul_res));
+assert(toString(mul_res) == "246913578024691357802469135780", "BigInt multiply failed");
+
+print("\n=== 2. Arbitrary-Precision Bitwise Operations (BigInt) ===");
+// Verify bitwise operations on large numbers
+var x = 1152921504606846976; // 2^60
+var y = 2305843009213693952; // 2^61
+var xy_or = x | y;
+print("2^60 | 2^61 = " + toString(xy_or));
+assert(xy_or == 3458764513820540928, "BigInt OR failed");
+
+var xy_and = xy_or & x;
+print("(2^60 | 2^61) & 2^60 = " + toString(xy_and));
+assert(xy_and == x, "BigInt AND failed");
+
+var xy_xor = xy_or ^ x;
+print("(2^60 | 2^61) ^ 2^60 = " + toString(xy_xor));
+assert(xy_xor == y, "BigInt XOR failed");
+
+// Test large bit shifting (> 64 bits)
+var one = 1;
+var big_shift = one << 70;
+print("1 << 70 = " + toString(big_shift));
+assert(toString(big_shift) == "1180591620717411303424", "1 << 70 failed");
+
+var shift_back = big_shift >> 70;
+print("(1 << 70) >> 70 = " + toString(shift_back));
+assert(shift_back == 1, "(1 << 70) >> 70 failed");
+
+var shift_partial = big_shift >> 10;
+print("(1 << 70) >> 10 = " + toString(shift_partial) + " (expected 2^60: 1152921504606846976)");
+assert(shift_partial == 1152921504606846976, "Shift partial failed");
+
+print("\n=== 3. BigInt Bitwise Inversion (Two's Complement ~) ===");
+// In two's complement, ~N = -(N + 1)
+var not_big = ~a;
+print("~a = " + toString(not_big));
+assert(not_big == -(a + 1), "BigInt NOT ~a failed");
+
+print("\n=== 4. BigInt Compound Assignment Operators ===");
+var c = 100000000000000000000; // 10^20
+c += 50000000000000000000;
+print("c += 5*10^19 -> " + toString(c));
+assert(toString(c) == "150000000000000000000", "+= failed on BigInt");
+
+c <<= 10;
+print("c <<= 10 -> " + toString(c));
+assert(toString(c) == "153600000000000000000000", "<<= failed on BigInt");
+
+c >>= 10;
+print("c >>= 10 -> " + toString(c));
+assert(toString(c) == "150000000000000000000", ">>= failed on BigInt");
+
+c &= 0;
+print("c &= 0 -> " + toString(c));
+assert(c == 0, "&= 0 failed on BigInt");
+
+print("\n[SUCCESS] All BigInt bitwise and arbitrary-precision calculations passed!");

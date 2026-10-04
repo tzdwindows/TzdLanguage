@@ -1085,10 +1085,44 @@ std::any TzdBytecodeCompiler::visitPowerExpr(TzdLangParser::PowerExprContext* ct
     return std::any();
 }
 
+std::any TzdBytecodeCompiler::visitShiftExpr(TzdLangParser::ShiftExprContext* ctx) {
+    visit(ctx->expression(0));
+    visit(ctx->expression(1));
+    if (ctx->SHL()) emit(OpCode::SHL);
+    else if (ctx->SHR()) emit(OpCode::SHR);
+    else emit(OpCode::USHR);
+    return std::any();
+}
+
+std::any TzdBytecodeCompiler::visitBitAndExpr(TzdLangParser::BitAndExprContext* ctx) {
+    visit(ctx->expression(0));
+    visit(ctx->expression(1));
+    emit(OpCode::BIT_AND);
+    return std::any();
+}
+
+std::any TzdBytecodeCompiler::visitBitXorExpr(TzdLangParser::BitXorExprContext* ctx) {
+    visit(ctx->expression(0));
+    visit(ctx->expression(1));
+    emit(OpCode::BIT_XOR);
+    return std::any();
+}
+
+std::any TzdBytecodeCompiler::visitBitOrExpr(TzdLangParser::BitOrExprContext* ctx) {
+    visit(ctx->expression(0));
+    visit(ctx->expression(1));
+    emit(OpCode::BIT_OR);
+    return std::any();
+}
+
 std::any TzdBytecodeCompiler::visitUnaryExpr(TzdLangParser::UnaryExprContext* ctx) {
     visit(ctx->expression());
-    if (ctx->MINUS()) emit(OpCode::NEG);
+    if (ctx->PLUS()) {
+        // unary plus: no-op
+    }
+    else if (ctx->MINUS()) emit(OpCode::NEG);
     else if (ctx->NOT()) emit(OpCode::NOT);
+    else if (ctx->BIT_NOT()) emit(OpCode::BIT_NOT);
     else if (ctx->GXXX()) {
         // gxxx = square root; approximate via POW of 0.5.
         emit(OpCode::PUSH_DOUBLE, addConstant(0.5));
@@ -1156,6 +1190,13 @@ std::any TzdBytecodeCompiler::visitAssignmentExpr(
     else if (ctx->MIN_ASSIGN()) compoundOp = OpCode::SUB;
     else if (ctx->MUL_ASSIGN()) compoundOp = OpCode::MUL;
     else if (ctx->DIV_ASSIGN()) compoundOp = OpCode::DIV;
+    else if (ctx->MOD_ASSIGN()) compoundOp = OpCode::MOD;
+    else if (ctx->AND_ASSIGN()) compoundOp = OpCode::BIT_AND;
+    else if (ctx->OR_ASSIGN()) compoundOp = OpCode::BIT_OR;
+    else if (ctx->XOR_ASSIGN()) compoundOp = OpCode::BIT_XOR;
+    else if (ctx->SHL_ASSIGN()) compoundOp = OpCode::SHL;
+    else if (ctx->SHR_ASSIGN()) compoundOp = OpCode::SHR;
+    else if (ctx->USHR_ASSIGN()) compoundOp = OpCode::USHR;
 
     // --- Index assignment: arr[i] = v ---
     if (auto idx = dynamic_cast<TzdLangParser::IndexExprContext*>(lhs)) {
@@ -1788,6 +1829,13 @@ static const char* opName(OpCode op) {
     case OpCode::AND: return "AND";
     case OpCode::OR: return "OR";
     case OpCode::NOT: return "NOT";
+    case OpCode::BIT_AND: return "BIT_AND";
+    case OpCode::BIT_OR: return "BIT_OR";
+    case OpCode::BIT_XOR: return "BIT_XOR";
+    case OpCode::BIT_NOT: return "BIT_NOT";
+    case OpCode::SHL: return "SHL";
+    case OpCode::SHR: return "SHR";
+    case OpCode::USHR: return "USHR";
     case OpCode::JMP: return "JMP";
     case OpCode::JMP_FALSE: return "JMP_F";
     case OpCode::JMP_TRUE: return "JMP_T";
@@ -2387,6 +2435,56 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                 }
                 TzdValue a; pop(a);
                 pushBool(!TzdInterpreter::isTruthy(a));
+                ++ip; break;
+            }
+
+            // ---- Bitwise ----
+            case OpCode::BIT_AND: {
+                TzdValue b, a; pop(b); pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt(valA & valB);
+                ++ip; break;
+            }
+            case OpCode::BIT_OR: {
+                TzdValue b, a; pop(b); pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt(valA | valB);
+                ++ip; break;
+            }
+            case OpCode::BIT_XOR: {
+                TzdValue b, a; pop(b); pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt(valA ^ valB);
+                ++ip; break;
+            }
+            case OpCode::BIT_NOT: {
+                TzdValue a; pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                pushInt(~valA);
+                ++ip; break;
+            }
+            case OpCode::SHL: {
+                TzdValue b, a; pop(b); pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt(valA << (valB & 63));
+                ++ip; break;
+            }
+            case OpCode::SHR: {
+                TzdValue b, a; pop(b); pop(a);
+                int64_t valA = TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt(valA >> (valB & 63));
+                ++ip; break;
+            }
+            case OpCode::USHR: {
+                TzdValue b, a; pop(b); pop(a);
+                uint64_t valA = (uint64_t)TzdInterpreter::getAsInt64Internal(a);
+                int64_t valB = TzdInterpreter::getAsInt64Internal(b);
+                pushInt((int64_t)(valA >> (valB & 63)));
                 ++ip; break;
             }
 

@@ -1,4 +1,4 @@
-// Generated from C:/Users/tzdwindows 7/source/repos/TzdTools/Grammar/TzdLang.g4 by ANTLR 4.13.1
+// Generated from Grammar/TzdLang.g4 by ANTLR 4.13.1
 // jshint ignore: start
 import antlr4 from 'antlr4';
 
@@ -306,6 +306,12 @@ export default class TzdLangVisitor extends antlr4.tree.ParseTreeVisitor {
 	}
 
 
+	// Visit a parse tree produced by TzdLangParser#BitAndExpr.
+	visitBitAndExpr(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
 	// Visit a parse tree produced by TzdLangParser#RelationalExpr.
 	visitRelationalExpr(ctx) {
 	  return this.visitChildren(ctx);
@@ -320,6 +326,12 @@ export default class TzdLangVisitor extends antlr4.tree.ParseTreeVisitor {
 
 	// Visit a parse tree produced by TzdLangParser#AtomExpr.
 	visitAtomExpr(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
+	// Visit a parse tree produced by TzdLangParser#BitOrExpr.
+	visitBitOrExpr(ctx) {
 	  return this.visitChildren(ctx);
 	}
 
@@ -390,6 +402,18 @@ export default class TzdLangVisitor extends antlr4.tree.ParseTreeVisitor {
 	}
 
 
+	// Visit a parse tree produced by TzdLangParser#ShiftExpr.
+	visitShiftExpr(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
+	// Visit a parse tree produced by TzdLangParser#BitXorExpr.
+	visitBitXorExpr(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
 	// Visit a parse tree produced by TzdLangParser#BoolTrueExpr.
 	visitBoolTrueExpr(ctx) {
 	  return this.visitChildren(ctx);
@@ -450,6 +474,12 @@ export default class TzdLangVisitor extends antlr4.tree.ParseTreeVisitor {
 	}
 
 
+	// Visit a parse tree produced by TzdLangParser#MapLiteralExpr.
+	visitMapLiteralExpr(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
 	// Visit a parse tree produced by TzdLangParser#NewExpr.
 	visitNewExpr(ctx) {
 	  return this.visitChildren(ctx);
@@ -494,6 +524,24 @@ export default class TzdLangVisitor extends antlr4.tree.ParseTreeVisitor {
 
 	// Visit a parse tree produced by TzdLangParser#exprList.
 	visitExprList(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
+	// Visit a parse tree produced by TzdLangParser#mapEntryList.
+	visitMapEntryList(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
+	// Visit a parse tree produced by TzdLangParser#mapEntry.
+	visitMapEntry(ctx) {
+	  return this.visitChildren(ctx);
+	}
+
+
+	// Visit a parse tree produced by TzdLangParser#mapKey.
+	visitMapKey(ctx) {
 	  return this.visitChildren(ctx);
 	}
 
