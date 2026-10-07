@@ -1,0 +1,29 @@
+// test_import_nn.tzd - 测试标准库导入与类继承 AOT 原生编译
+import "torch/Module.tzd";
+
+class CustomLayer extends Module {
+    var ptr _weights;
+
+    CustomLayer(size) {
+        super("CustomLayer");
+        this._weights = torch_ones(size);
+    }
+
+    fun forward(x) {
+        return x + this._weights;
+    }
+}
+
+fun main() {
+    print("========================================");
+    print("  TzdLang AOT 模块导入与类继承原生测试");
+    print("========================================");
+
+    var layer = new CustomLayer(5);
+    var res = layer.forward(10);
+
+    print("layer._name: " + layer._name);
+    print("layer.forward(10): " + str(res));
+    print("========================================");
+    print("模块导入与类继承原生 AOT 测试顺利通过！");
+}

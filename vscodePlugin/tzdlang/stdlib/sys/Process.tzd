@@ -1,0 +1,67 @@
+/**
+ * TzdLang 系统标准库 - Process, Env, System
+ */
+
+class ProcessResult {
+    var int exitCode;
+    var string stdout;
+    var string stderr;
+    var bool ok;
+
+    ProcessResult(rawMap) {
+        if (rawMap != null) {
+            this.exitCode = rawMap["exitCode"];
+            this.stdout = rawMap["stdout"];
+            this.stderr = rawMap["stderr"];
+            this.ok = rawMap["ok"];
+        } else {
+            this.exitCode = -1;
+            this.stdout = "";
+            this.stderr = "Execution failed";
+            this.ok = false;
+        }
+    }
+
+    fun isOk() {
+        return this.ok;
+    }
+}
+
+class Process {
+    static fun run(commandLine) {
+        var raw = sys_exec(commandLine);
+        return new ProcessResult(raw);
+    }
+
+    static fun exec(commandLine) {
+        return Process.run(commandLine);
+    }
+
+    static fun pid() {
+        return sys_pid();
+    }
+}
+
+class Env {
+    static fun get(key) {
+        return sys_get_env(key);
+    }
+
+    static fun set(key, val) {
+        return sys_set_env(key, val);
+    }
+}
+
+class System {
+    static fun os() {
+        return sys_os_name();
+    }
+
+    static fun cpuCount() {
+        return sys_cpu_count();
+    }
+
+    static fun memory() {
+        return sys_memory_info();
+    }
+}

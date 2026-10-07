@@ -1,0 +1,124 @@
+// bench_compare.tzd - Multi-operation benchmark for TzdLang vs Java comparison
+
+// 1. Loop sum (1M iterations)
+fun sumLoop(n) {
+    var s = 0;
+    var i = 0;
+    while (i < n) { s = s + i; i = i + 1; }
+    return s;
+}
+
+// 2. Nested loop (n^2 iterations, matrix sum)
+fun nestedLoop(n) {
+    var s = 0;
+    var i = 0;
+    while (i < n) {
+        var j = 0;
+        while (j < n) {
+            s = s + i * j;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+// 3. Fibonacci (recursive)
+fun fib(n) {
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+// 4. Ackermann (deep recursion)
+fun ackermann(m, n) {
+    if (m == 0) return n + 1;
+    if (n == 0) return ackermann(m - 1, 1);
+    return ackermann(m - 1, ackermann(m, n - 1));
+}
+
+// 5. GCD (tail-recursive)
+fun gcd(a, b) {
+    if (b == 0) return a;
+    return gcd(b, a % b);
+}
+
+// 6. Prime counting (sieve-like)
+fun countPrimes(n) {
+    var count = 0;
+    var i = 2;
+    while (i < n) {
+        var isPrime = 1;
+        var j = 2;
+        while (j * j <= i) {
+            if (i % j == 0) { isPrime = 0; break; }
+            j = j + 1;
+        }
+        if (isPrime == 1) { count = count + 1; }
+        i = i + 1;
+    }
+    return count;
+}
+
+// 7. Function call overhead (non-recursive, 1M calls)
+fun noop(x) { return x + 1; }
+fun callOverhead(n) {
+    var s = 0;
+    var i = 0;
+    while (i < n) { s = noop(s); i = i + 1; }
+    return s;
+}
+
+// 8. Floating-point heavy (Newton's method sqrt)
+fun newtonSqrt(n, iter) {
+    var x = n;
+    var i = 0;
+    while (i < iter) {
+        x = (x + n / x) * 0.5;
+        i = i + 1;
+    }
+    return x;
+}
+
+fun main() {
+    print("=== TzdLang Benchmark ===");
+
+    var t1 = clock();
+    var r1 = sumLoop(1000000);
+    var t2 = clock();
+    print("sumLoop(1M)=" + toString(r1) + "  time=" + toString((t2-t1)/1000.0) + "s");
+
+    var t3 = clock();
+    var r2 = nestedLoop(1000);
+    var t4 = clock();
+    print("nestedLoop(1k)=" + toString(r2) + "  time=" + toString((t4-t3)/1000.0) + "s");
+
+    var t5 = clock();
+    var r3 = fib(35);
+    var t6 = clock();
+    print("fib(35)=" + toString(r3) + "  time=" + toString((t6-t5)/1000.0) + "s");
+
+    var t7 = clock();
+    var r4 = ackermann(3, 6);
+    var t8 = clock();
+    print("ackermann(3,6)=" + toString(r4) + "  time=" + toString((t8-t7)/1000.0) + "s");
+
+    var t9 = clock();
+    var r5 = gcd(1000003, 999999);
+    var t10 = clock();
+    print("gcd=" + toString(r5) + "  time=" + toString((t10-t9)/1000.0) + "s");
+
+    var t11 = clock();
+    var r6 = countPrimes(10000);
+    var t12 = clock();
+    print("primes(10k)=" + toString(r6) + "  time=" + toString((t12-t11)/1000.0) + "s");
+
+    var t13 = clock();
+    var r7 = callOverhead(1000000);
+    var t14 = clock();
+    print("callOverhead(1M)=" + toString(r7) + "  time=" + toString((t14-t13)/1000.0) + "s");
+
+    var t15 = clock();
+    var r8 = newtonSqrt(2.0, 20);
+    var t16 = clock();
+    print("newtonSqrt(2.0,20)=" + toString(r8) + "  time=" + toString((t16-t15)/1000.0) + "s");
+}

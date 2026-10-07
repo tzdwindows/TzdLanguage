@@ -1,0 +1,143 @@
+// Test suite for C bitwise operators, compound assignments, power, and JIT hardware CPU instructions in TzdLang
+
+fun assert(cond, msg) {
+    if (!cond) {
+        print("[FAIL] " + msg);
+        exit(1);
+    }
+}
+
+print("=== 1. Basic Bitwise Operations ===");
+var a = 12; // 1100
+var b = 10; // 1010
+
+var and_res = a & b;
+print("12 & 10 = " + toString(and_res) + " (expected 8)");
+assert(and_res == 8, "Bitwise AND failed");
+
+var or_res = a | b;
+print("12 | 10 = " + toString(or_res) + " (expected 14)");
+assert(or_res == 14, "Bitwise OR failed");
+
+var xor_res = a ^ b;
+print("12 ^ 10 = " + toString(xor_res) + " (expected 6)");
+assert(xor_res == 6, "Bitwise XOR failed");
+
+var not_res = ~0;
+print("~0 = " + toString(not_res) + " (expected -1)");
+assert(not_res == -1, "Bitwise NOT ~0 failed");
+
+var not_five = ~5;
+print("~5 = " + toString(not_five) + " (expected -6)");
+assert(not_five == -6, "Bitwise NOT ~5 failed");
+
+var shl_res = 1 << 10;
+print("1 << 10 = " + toString(shl_res) + " (expected 1024)");
+assert(shl_res == 1024, "Shift Left failed");
+
+var shr_res = 1024 >> 4;
+print("1024 >> 4 = " + toString(shr_res) + " (expected 64)");
+assert(shr_res == 64, "Shift Right failed");
+
+var shr_neg = -16 >> 2;
+print("-16 >> 2 = " + toString(shr_neg) + " (expected -4)");
+assert(shr_neg == -4, "Arithmetic Shift Right failed");
+
+var ushr_neg = -1 >>> 60;
+print("-1 >>> 60 = " + toString(ushr_neg) + " (expected 15)");
+assert(ushr_neg == 15, "Logical Shift Right failed");
+
+var unary_plus = +42;
+print("+42 = " + toString(unary_plus));
+assert(unary_plus == 42, "Unary plus failed");
+
+var pow_res = 2 ** 10;
+print("2 ** 10 = " + toString(pow_res) + " (expected 1024)");
+assert(pow_res == 1024, "Power operator ** failed");
+
+print("\n=== 2. Compound Assignment Operators ===");
+var v = 12;
+v &= 10;
+print("v &= 10 -> " + toString(v) + " (expected 8)");
+assert(v == 8, "&= failed");
+
+v |= 3;
+print("v |= 3 -> " + toString(v) + " (expected 11)");
+assert(v == 11, "|= failed");
+
+v ^= 1;
+print("v ^= 1 -> " + toString(v) + " (expected 10)");
+assert(v == 10, "^= failed");
+
+v <<= 3;
+print("v <<= 3 -> " + toString(v) + " (expected 80)");
+assert(v == 80, "<<= failed");
+
+v >>= 2;
+print("v >>= 2 -> " + toString(v) + " (expected 20)");
+assert(v == 20, ">>= failed");
+
+v %= 7;
+print("v %= 7 -> " + toString(v) + " (expected 6)");
+assert(v == 6, "%= failed");
+
+var u = -1;
+u >>>= 60;
+print("-1 >>>= 60 -> " + toString(u) + " (expected 15)");
+assert(u == 15, ">>>= failed");
+
+print("\n=== 3. OOP & Complex Storage Bitwise Operations ===");
+class BitFlags {
+    var int flags;
+    BitFlags(f) {
+        this.flags = f;
+    }
+    fun set(mask) {
+        this.flags |= mask;
+    }
+    fun clear(mask) {
+        this.flags &= ~mask;
+    }
+    fun toggle(mask) {
+        this.flags ^= mask;
+    }
+    fun has(mask) {
+        return (this.flags & mask) == mask;
+    }
+}
+
+var bf = new BitFlags(0);
+bf.set(1 | 4 | 16);
+print("BitFlags after set(1|4|16): " + toString(bf.flags) + " (expected 21)");
+assert(bf.has(1), "Flags should have 1");
+assert(bf.has(4), "Flags should have 4");
+assert(bf.has(16), "Flags should have 16");
+assert(!bf.has(2), "Flags should NOT have 2");
+
+bf.toggle(4);
+print("BitFlags after toggle(4): " + toString(bf.flags) + " (expected 17)");
+assert(!bf.has(4), "Flags should not have 4");
+
+bf.clear(1);
+print("BitFlags after clear(1): " + toString(bf.flags) + " (expected 16)");
+assert(bf.flags == 16, "Flags should be 16");
+
+print("\n=== 4. JIT CPU Single-Cycle Instruction Benchmark (XorShift32) ===");
+fun xorshift_loop(iterations) {
+    var x = 2463534242;
+    for (var i = 0; i < iterations; i = i + 1) {
+        x ^= (x << 13);
+        x ^= (x >> 17);
+        x ^= (x << 5);
+    }
+    return x;
+}
+
+var start = clock();
+var res = xorshift_loop(1000000);
+var end = clock();
+var elapsed_ms = end - start;
+print("1,000,000 xorshift iterations result: " + toString(res));
+print("Elapsed time: " + toString(elapsed_ms) + " ms (" + toString(elapsed_ms / 1000) + " s)");
+
+print("\n[SUCCESS] All bitwise operators and CPU hardware JIT tests passed!");

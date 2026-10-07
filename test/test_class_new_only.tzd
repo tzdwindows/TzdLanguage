@@ -1,0 +1,10 @@
+class Box {
+    var int val;
+    Box(v) {
+        this.val = v;
+    }
+}
+print("before new");
+var b = new Box(42);
+print("after new");
+print("done");

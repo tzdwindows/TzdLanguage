@@ -1,0 +1,15 @@
+// probeM2: inside function + literal string key, n=1000
+fun litPhase(n) {
+    var m = {};
+    var i = 0;
+    while (i < n) {
+        m["k"] = i;
+        i = i + 1;
+    }
+    var v = m["k"];
+    print("function literal key n=1000 ok, m[k]=" + toString(v));
+    return 0;
+}
+
+litPhase(1000);
+print("=== done ===");

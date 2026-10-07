@@ -1,0 +1,44 @@
+/**
+ * TzdLang 集合标准库 - Queue 先进先出队列
+ */
+
+class Queue {
+    var ptr items;
+
+    Queue() {
+        this.items = [ ];
+    }
+
+    fun enqueue(item) {
+        this.items = push(this.items, item);
+        return this;
+    }
+
+    fun dequeue() {
+        if (this.isEmpty()) return null;
+        var first = this.items[0];
+        this.items = slice(this.items, 1, this.size());
+        return first;
+    }
+
+    fun peek() {
+        if (this.isEmpty()) return null;
+        return this.items[0];
+    }
+
+    fun size() {
+        return len(this.items);
+    }
+
+    fun isEmpty() {
+        return this.size() == 0;
+    }
+
+    fun clear() {
+        this.items = [ ];
+    }
+
+    fun toArray() {
+        return this.items;
+    }
+}

@@ -1,0 +1,51 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+var count = 0;
+var count0 = 0;
+var chkTriggered = false;
+
+var win = new Window("Test Events", 400, 300, 100, 100);
+
+var btn = win.addButton("Click Test", 20, 20, 120, 32);
+btn.onClick(fun(h) {
+    print("[Event Triggered] Button clicked! Handle: " + h);
+    count = count + 1;
+});
+
+var btn0 = win.addButton("Click Zero Arg", 20, 65, 120, 32);
+btn0.onClick(fun() {
+    print("[Event Triggered] 0-argument callback executed successfully!");
+    count0 = count0 + 1;
+});
+
+var chk = win.addCheckBox("Toggle Me", 20, 110, 150, 26);
+chk.onChange(fun(h) {
+    print("[Event Triggered] Checkbox toggled via onChange!");
+    chkTriggered = true;
+});
+
+win.show();
+App.pollEvents();
+
+print("[Testing] Performing click on btn (1-arg callback)...");
+btn.performClick();
+App.pollEvents();
+
+print("[Testing] Performing click on btn0 (0-arg callback)...");
+btn0.performClick();
+App.pollEvents();
+
+print("[Testing] Performing click on chk (checkbox onChange)...");
+chk.performClick();
+App.pollEvents();
+
+print("[Result] count = " + count + ", count0 = " + count0 + ", chkTriggered = " + chkTriggered);
+if (count == 1 && count0 == 1 && chkTriggered == true) {
+    print("=== ALL EVENT TESTS PASSED! ===");
+} else {
+    print("=== EVENT TEST FAILED! ===");
+}
+
+win.close();

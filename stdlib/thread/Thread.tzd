@@ -1,0 +1,277 @@
+/**
+ * TzdLang 线程核心标准库 - Thread 类
+ * 支持线程生命周期管理、状态追踪、堆栈追踪、事件审计日志、直接邮箱通信与调试
+ */
+
+class Thread {
+    var any id;
+    var any name;
+    var any target;
+    var any args;
+    var any native_handle;
+
+    Thread() {
+        this.target = null;
+        this.name = "";
+        this.args = null;
+        this.native_handle = null;
+        this.id = 0;
+    }
+
+    Thread(target) {
+        this.target = target;
+        this.name = "";
+        this.args = null;
+        this.native_handle = null;
+        this.id = 0;
+    }
+
+    Thread(target, name) {
+        this.target = target;
+        this.name = name;
+        this.args = null;
+        this.native_handle = null;
+        this.id = 0;
+    }
+
+    Thread(target, name, args) {
+        this.target = target;
+        this.name = name;
+        this.args = args;
+        this.native_handle = null;
+        this.id = 0;
+    }
+
+    fun initHandle(tid, tname, thandle) {
+        this.id = tid;
+        this.name = tname;
+        this.native_handle = thandle;
+        return this;
+    }
+
+    fun start() {
+        if (this.native_handle == null) {
+            var threadName = this.name;
+            if (threadName == null) {
+                threadName = "";
+            }
+            this.native_handle = sys_thread_start(this.target, this.args, threadName);
+            if (this.native_handle != null) {
+                var info = sys_thread_get_info(this.native_handle);
+                if (info != null && info["id"] != null) {
+                    this.id = info["id"];
+                }
+            }
+        }
+        return this;
+    }
+
+    fun join() {
+        return this.joinTimeout(-1);
+    }
+
+    fun joinTimeout(timeoutMs) {
+        if (this.native_handle != null) {
+            return sys_thread_join(this.native_handle, timeoutMs);
+        }
+        if (this.id != 0) {
+            return sys_thread_join(this.id, timeoutMs);
+        }
+        return true;
+    }
+
+    fun detach() {
+        if (this.native_handle != null) {
+            sys_thread_detach(this.native_handle);
+        } else if (this.id != 0) {
+            sys_thread_detach(this.id);
+        }
+    }
+
+    fun isAlive() {
+        if (this.native_handle != null) {
+            return sys_thread_is_alive(this.native_handle);
+        }
+        if (this.id != 0) {
+            return sys_thread_is_alive(this.id);
+        }
+        return false;
+    }
+
+    fun getId() {
+        return this.id;
+    }
+
+    fun getName() {
+        return this.name;
+    }
+
+    fun getHandle() {
+        if (this.native_handle != null) {
+            return this.native_handle;
+        }
+        return this.id;
+    }
+
+    fun getState() {
+        var h = this.getHandle();
+        if (h == null || h == 0) {
+            return "NEW";
+        }
+        var info = sys_thread_get_info(h);
+        if (info == null) {
+            return "TERMINATED";
+        }
+        return info["state_str"];
+    }
+
+    fun getInfo() {
+        var h = this.getHandle();
+        if (h == null || h == 0) {
+            return null;
+        }
+        return sys_thread_get_info(h);
+    }
+
+    fun getStackTrace() {
+        var h = this.getHandle();
+        if (h == null || h == 0) {
+            return [ ];
+        }
+        return sys_thread_get_stack(h);
+    }
+
+    fun getResult() {
+        var h = this.getHandle();
+        if (h == null || h == 0) {
+            return null;
+        }
+        return sys_thread_get_result(h);
+    }
+
+    fun getError() {
+        var h = this.getHandle();
+        if (h == null || h == 0) {
+            return null;
+        }
+        return sys_thread_get_error(h);
+    }
+
+    fun pause() {
+        var h = this.getHandle();
+        if (h != null && h != 0) {
+            sys_thread_pause(h);
+        }
+    }
+
+    fun resume() {
+        var h = this.getHandle();
+        if (h != null && h != 0) {
+            sys_thread_resume(h);
+        }
+    }
+
+    fun send(msg) {
+        var h = this.getHandle();
+        if (h != null && h != 0) {
+            return sys_thread_send(h, msg);
+        }
+        return false;
+    }
+
+    fun log(msg) {
+        sys_thread_log(msg);
+    }
+
+    // --- 静态方法 ---
+
+    static fun current() {
+        var tid = sys_thread_current_id();
+        var t = new Thread(null);
+        var info = sys_thread_get_info(tid);
+        var tname = "";
+        if (info != null && info["name"] != null) {
+            tname = info["name"];
+        }
+        t.initHandle(tid, tname, tid);
+        return t;
+    }
+
+    static fun currentId() {
+        return sys_thread_current_id();
+    }
+
+    static fun sleep(ms) {
+        sys_thread_sleep(ms);
+    }
+
+    static fun yield() {
+        sys_thread_yield();
+    }
+
+    static fun receive() {
+        return sys_thread_receive(-1);
+    }
+
+    static fun receiveTimeout(timeoutMs) {
+        return sys_thread_receive(timeoutMs);
+    }
+
+    static fun tryReceive() {
+        return sys_thread_try_receive();
+    }
+
+    static fun mailboxSize() {
+        return sys_thread_mailbox_size();
+    }
+
+    static fun getAllThreads() {
+        return sys_thread_all_info();
+    }
+
+    static fun list() {
+        return sys_thread_list();
+    }
+
+    static fun find(id) {
+        var info = sys_thread_get_info(id);
+        if (info == null) {
+            return null;
+        }
+        var t = new Thread(null);
+        var tname = info["name"];
+        if (tname == null) {
+            tname = "";
+        }
+        t.initHandle(id, tname, id);
+        return t;
+    }
+
+    static fun dumpAll() {
+        return sys_thread_dump_all();
+    }
+
+    static fun printDump() {
+        print(sys_thread_dump_all());
+    }
+
+    static fun getLogs() {
+        return sys_thread_get_logs(0, 100);
+    }
+
+    static fun getLogsLimit(limit) {
+        return sys_thread_get_logs(0, limit);
+    }
+
+    static fun getThreadLogs(threadId, limit) {
+        return sys_thread_get_logs(threadId, limit);
+    }
+
+    static fun clearLogs() {
+        sys_thread_clear_logs();
+    }
+
+    static fun detectDeadlocks() {
+        return sys_thread_detect_deadlock();
+    }
+}

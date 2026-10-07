@@ -1,0 +1,81 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("Custom Styled UI Theme", 680, 500, 140, 140);
+    
+    var themeOpts = {
+        "bg": "#181824",
+        "fg": "#F0F0F5",
+        "accent": "#7C5CFC",
+        "buttonBg": "#252538",
+        "buttonHover": "#35354F",
+        "buttonPressed": "#1A1A28",
+        "buttonFg": "#FFFFFF",
+        "buttonBorder": "#7C5CFC",
+        "buttonRadius": 10,
+        "inputBg": "#202030",
+        "inputFg": "#FFFFFF",
+        "inputBorder": "#4E4E6B",
+        "headerBg": "#1F1F2E",
+        "headerFg": "#F0F0F5",
+        "headerBorder": "#333348",
+        "titlebar": "macos"
+    };
+
+    win.setStyle("custom", themeOpts);
+
+    var gb = win.addGroupBox(" 自定义主题引擎配置 (Cyberpunk Dark) ", 25, 15, 630, 420);
+
+    var lblTheme = win.addLabel("自定义样式字典: 支持背景、强调色、圆角、红绿灯自由定制", 45, 50, 450, 24);
+    var txtCustom = win.addTextBox("Custom Theme JSON Dictionary", 45, 85, 260, 28, false);
+
+    var btn1 = win.addButton("次要操作", 45, 130, 110, 32);
+    var btnAccent = win.addButton("紫色强调按钮", 175, 130, 130, 32);
+    btnAccent.setPrimary(true);
+
+    var chk = win.addCheckBox("应用自定义圆角 (Radius = 10px)", 45, 180, 260, 24);
+    chk.setChecked(true);
+
+    var combo = win.addComboBox(350, 85, 260, 160);
+    combo.addItem("主色调: #7C5CFC (Electric Violet)");
+    combo.addItem("底色: #181824 (Obsidian Dark)");
+    combo.addItem("红绿灯顶栏: macOS 风格联动");
+    combo.setSelectedIndex(0);
+
+    var listbox = win.addListBox(350, 130, 260, 120);
+    listbox.addItem("1. setStyle('custom', options)");
+    listbox.addItem("2. 跨平台 GDI+ 矢量抗锯齿平滑渲染");
+    listbox.addItem("3. 动态属性变更与全量重绘响应");
+    listbox.setSelectedIndex(0);
+
+    var lblProgress = win.addLabel("定制主题进度指示: 90%", 45, 230, 200, 24);
+    var pbar = win.addProgressBar(45, 260, 350, 26, 0, 100);
+    pbar.setProgress(90);
+
+    var slider = win.addSlider(45, 300, 350, 35, 0, 100);
+    slider.setValue(90);
+
+    var btnAction = win.addButton("更新进度 (+10%)", 430, 295, 140, 34);
+    btnAction.setPrimary(true);
+    btnAction.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("定制主题进度指示: " + cur + "%");
+    });
+
+    win.show();
+    App.sleep(250);
+    for (var i = 0; i < 30; i = i + 1) {
+        App.pollEvents();
+    }
+
+    win.saveScreenshot("screenshots/ui_custom_style.png");
+    print("[Success] Custom style screenshot saved to screenshots/ui_custom_style.png");
+    win.close();
+}
+
+main();

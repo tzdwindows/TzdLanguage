@@ -1,0 +1,45 @@
+/**
+ * TzdLang 文件系统标准库 - File 文件操作
+ */
+
+class File {
+    static fun readAllText(path) {
+        return readFile(path);
+    }
+
+    static fun writeAllText(path, content) {
+        return writeFile(path, content);
+    }
+
+    static fun appendAllText(path, content) {
+        return appendFile(path, content);
+    }
+
+    static fun readLines(path) {
+        return readLines(path);
+    }
+
+    static fun writeLines(path, linesArray) {
+        return writeLines(path, linesArray);
+    }
+
+    static fun exists(path) {
+        return fileExists(path);
+    }
+
+    static fun delete(path) {
+        return removeFile(path);
+    }
+
+    static fun copy(src, dest) {
+        return copyFile(src, dest);
+    }
+
+    static fun move(src, dest) {
+        return moveFile(src, dest);
+    }
+
+    static fun size(path) {
+        return fileSize(path);
+    }
+}

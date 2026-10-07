@@ -1,0 +1,118 @@
+/**
+ * TzdLang 线程同步标准库 - Atomic 原子变量
+ * 提供 AtomicInt 与 AtomicBool 线程安全原子读写与 CAS 操作
+ */
+
+class AtomicInt {
+    var any id;
+
+    AtomicInt() {
+        this.id = sys_atomic_create(0);
+    }
+
+    AtomicInt(initialVal) {
+        this.id = sys_atomic_create(initialVal);
+    }
+
+    fun get() {
+        return sys_atomic_get(this.id);
+    }
+
+    fun load() {
+        return sys_atomic_get(this.id);
+    }
+
+    fun set(val) {
+        sys_atomic_set(this.id, val);
+    }
+
+    fun store(val) {
+        sys_atomic_set(this.id, val);
+    }
+
+    fun add(delta) {
+        return sys_atomic_add(this.id, delta);
+    }
+
+    fun fetchAdd(delta) {
+        return sys_atomic_add(this.id, delta);
+    }
+
+    fun increment() {
+        return sys_atomic_add(this.id, 1);
+    }
+
+    fun decrement() {
+        return sys_atomic_add(this.id, -1);
+    }
+
+    fun compareAndSet(expected, desired) {
+        return sys_atomic_cas(this.id, expected, desired);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_atomic_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}
+
+class AtomicBool {
+    var any id;
+
+    AtomicBool() {
+        this.id = sys_atomic_create(0);
+    }
+
+    AtomicBool(initialVal) {
+        var n = 0;
+        if (initialVal) {
+            n = 1;
+        }
+        this.id = sys_atomic_create(n);
+    }
+
+    fun get() {
+        return sys_atomic_get(this.id) != 0;
+    }
+
+    fun load() {
+        return sys_atomic_get(this.id) != 0;
+    }
+
+    fun set(val) {
+        var n = 0;
+        if (val) {
+            n = 1;
+        }
+        sys_atomic_set(this.id, n);
+    }
+
+    fun store(val) {
+        var n = 0;
+        if (val) {
+            n = 1;
+        }
+        sys_atomic_set(this.id, n);
+    }
+
+    fun compareAndSet(expected, desired) {
+        var expInt = 0;
+        if (expected) {
+            expInt = 1;
+        }
+        var desInt = 0;
+        if (desired) {
+            desInt = 1;
+        }
+        return sys_atomic_cas(this.id, expInt, desInt);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_atomic_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}

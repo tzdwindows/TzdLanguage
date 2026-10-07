@@ -1,0 +1,62 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("High-Contrast Monochrome Style", 680, 500, 120, 120);
+    win.setStyle("windows");
+    win.setTheme("monochrome");
+
+    var gb = win.addGroupBox(" 黑白高对比度主题 (Monochrome) ", 25, 15, 630, 420);
+
+    var lbl = win.addLabel("系统模式: 极简纯粹黑白高对比度", 45, 50, 300, 24);
+    var txt = win.addTextBox("Monochrome Minimalist UI", 45, 85, 260, 28, false);
+
+    var btn1 = win.addButton("常规按钮", 45, 130, 110, 32);
+    var btn2 = win.addButton("突出主要操作", 175, 130, 130, 32);
+    btn2.setPrimary(true);
+
+    var chk = win.addCheckBox("高对比度辅助功能开启", 45, 180, 220, 24);
+    chk.setChecked(true);
+
+    var combo = win.addComboBox(350, 85, 260, 160);
+    combo.addItem("纯白底色 / 纯黑文字 (#FFFFFF / #000000)");
+    combo.addItem("黑白反显悬停高亮");
+    combo.addItem("标准无障碍 WCAG AAA 级对比");
+    combo.setSelectedIndex(0);
+
+    var listbox = win.addListBox(350, 130, 260, 120);
+    listbox.addItem("1. 强边界线框 (1px Solid Black)");
+    listbox.addItem("2. 纯黑悬停填充翻转反显");
+    listbox.addItem("3. 跨系统统一纯色调渲染");
+    listbox.setSelectedIndex(0);
+
+    var lblProgress = win.addLabel("黑白模式进度展示: 80%", 45, 230, 200, 24);
+    var pbar = win.addProgressBar(45, 260, 350, 26, 0, 100);
+    pbar.setProgress(80);
+
+    var slider = win.addSlider(45, 300, 350, 35, 0, 100);
+    slider.setValue(80);
+
+    var btnAction = win.addButton("执行操作 (+10%)", 430, 295, 140, 34);
+    btnAction.setPrimary(true);
+    btnAction.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("黑白模式进度展示: " + cur + "%");
+    });
+
+    win.show();
+    App.sleep(250);
+    for (var i = 0; i < 30; i = i + 1) {
+        App.pollEvents();
+    }
+
+    win.saveScreenshot("screenshots/ui_monochrome.png");
+    print("[Success] Monochrome style screenshot saved to screenshots/ui_monochrome.png");
+    win.close();
+}
+
+main();

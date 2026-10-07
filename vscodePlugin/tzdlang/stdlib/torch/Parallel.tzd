@@ -1,0 +1,113 @@
+// ============================================================================
+// Parallel.tzd - Model Parallelism, Pipeline & Sharding (Category 7)
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Init.tzd";
+
+class ColumnParallelLinear extends Module {
+    var int in_features;
+    var int out_features_per_partition;
+    var int world_size;
+
+    ColumnParallelLinear(in_features, out_features, world_size) {
+        super("ColumnParallelLinear");
+        this.in_features = in_features;
+        this.world_size = 1;
+        if (world_size != null) { this.world_size = world_size; }
+        this.out_features_per_partition = out_features / this.world_size;
+
+        var w = torch_zeros(this.out_features_per_partition, in_features);
+        var b = torch_zeros(this.out_features_per_partition);
+        initXavier(w);
+        initZeros(b);
+
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        return torch_linear(x, this._params["weight"], this._params["bias"]);
+    }
+}
+
+class RowParallelLinear extends Module {
+    var int in_features_per_partition;
+    var int out_features;
+    var int world_size;
+
+    RowParallelLinear(in_features, out_features, world_size) {
+        super("RowParallelLinear");
+        this.world_size = 1;
+        if (world_size != null) { this.world_size = world_size; }
+        this.in_features_per_partition = in_features / this.world_size;
+        this.out_features = out_features;
+
+        var w = torch_zeros(out_features, this.in_features_per_partition);
+        var b = torch_zeros(out_features);
+        initXavier(w);
+        initZeros(b);
+
+        this.registerParameter("weight", w);
+        this.registerParameter("bias", b);
+    }
+
+    fun forward(x) {
+        var partial = torch_linear(x, this._params["weight"], null);
+        return torch_add(partial, this._params["bias"]);
+    }
+}
+
+class PipelineStage extends Module {
+    var int stage_id;
+    var ptr module;
+
+    PipelineStage(stage_id, module) {
+        super("PipelineStage");
+        this.stage_id = stage_id;
+        this.module = module;
+        this.registerModule("stage_module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+}
+
+class PipelineParallel extends Module {
+    var ptr stages;
+
+    PipelineParallel(stages) {
+        super("PipelineParallel");
+        this.stages = stages;
+        for (var i = 0; i < len(stages); i = i + 1) {
+            this.registerModule("stage_" + i, stages[i]);
+        }
+    }
+
+    fun forward(x) {
+        var cur_x = x;
+        for (var i = 0; i < len(this.stages); i = i + 1) {
+            var st = this.stages[i];
+            cur_x = st.forward(cur_x);
+        }
+        return cur_x;
+    }
+}
+
+class ShardedDataParallel extends Module {
+    var ptr module;
+    var int sharding_degree;
+
+    ShardedDataParallel(module, sharding_degree) {
+        super("ShardedDataParallel");
+        this.module = module;
+        this.sharding_degree = 1;
+        if (sharding_degree != null) { this.sharding_degree = sharding_degree; }
+        this.registerModule("module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+}

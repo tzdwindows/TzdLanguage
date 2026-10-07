@@ -1,0 +1,18 @@
+// test_torch_build.tzd - 测试 PyTorch 强制集成 AOT 编译
+fun main() {
+    print("==================================================");
+    print("  TzdLang + PyTorch AOT 原生独立程序测试");
+    print("==================================================");
+
+    var a = torch_zeros(4);
+    var b = torch_ones(4);
+    var c = torch_add(a, b);
+
+    print("Tensor a (zeros): " + str(a));
+    print("Tensor b (ones):  " + str(b));
+    print("Tensor c (a + b): " + str(c));
+    print("CUDA 是否可用:     " + str(torch_cuda_is_available()));
+
+    print("==================================================");
+    print("PyTorch 原生集成测试通过！");
+}

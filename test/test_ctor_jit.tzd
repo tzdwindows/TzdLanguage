@@ -1,0 +1,34 @@
+// Test if constructor JIT kicks in after threshold
+class Point {
+    var float x;
+    var float y;
+    Point(x, y) { this.x = x; this.y = y; }
+}
+
+fun main() {
+    print("=== Constructor JIT Test ===");
+
+    // Phase 1: cold (first 100 calls, AST interpreter)
+    var t1 = clock();
+    var s1 = 0.0;
+    var i1 = 0;
+    while (i1 < 100) { var p = new Point(i1 * 1.0, i1 * 2.0); s1 = s1 + p.x; i1 = i1 + 1; }
+    var t2 = clock();
+    print("phase1(100)=" + toString(s1) + " time=" + toString((t2-t1)) + "ms");
+
+    // Phase 2: should trigger JIT submission, then run 400 more
+    var t3 = clock();
+    var s2 = 0.0;
+    var i2 = 0;
+    while (i2 < 400) { var p = new Point(i2 * 1.0, i2 * 2.0); s2 = s2 + p.x; i2 = i2 + 1; }
+    var t4 = clock();
+    print("phase2(400)=" + toString(s2) + " time=" + toString((t4-t3)) + "ms");
+
+    // Phase 3: JIT should be compiled by now
+    var t5 = clock();
+    var s3 = 0.0;
+    var i3 = 0;
+    while (i3 < 10000) { var p = new Point(i3 * 1.0, i3 * 2.0); s3 = s3 + p.x; i3 = i3 + 1; }
+    var t6 = clock();
+    print("phase3(10000)=" + toString(s3) + " time=" + toString((t6-t5)) + "ms");
+}

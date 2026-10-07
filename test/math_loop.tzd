@@ -1,0 +1,14 @@
+fun runBenchmark() {
+    var start = clock();
+    var sum = 0;
+    var i = 0;
+    while (i < 100000) {
+        sum = sum + i;
+        i = i + 1;
+    }
+    var end = clock();
+    print("Tzd sum: " + sum);
+    print("Tzd Time: " + ((end - start) / 1000.0) + " s");
+}
+
+runBenchmark();

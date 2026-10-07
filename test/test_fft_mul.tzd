@@ -1,0 +1,74 @@
+// test_fft_mul.tzd - Test FFT-based BIGINT multiplication
+fun main() {
+    print("=== FFT BIGINT Multiplication Test ===");
+
+    // 1. Correctness: multiply two large numbers and verify
+    var a = 10 ^ 5000;  // 5001-digit number
+    var b = 10 ^ 5000;  // 5001-digit number
+    var t1 = clock();
+    var c = a * b;      // Should use FFT (both > 4096 digits)
+    var t2 = clock();
+    print("FFT mul (10^5000 * 10^5000): " + toString((t2-t1)) + "ms, digits=" + toString(len(toString(c))));
+
+    // Verify: 10^5000 * 10^5000 = 10^10000 (10001 digits)
+    var expected = 10 ^ 10000;
+    if (c == expected) {
+        print("CORRECT: 10^5000 * 10^5000 = 10^10000");
+    } else {
+        print("ERROR: result mismatch!");
+    }
+
+    // 2. Benchmark: FFT vs Karatsuba at different sizes
+    // 4096 digits (Karatsuba threshold)
+    var x1 = 10 ^ 4096;
+    var y1 = 10 ^ 4096;
+    var t3 = clock();
+    var z1 = x1 * y1;
+    var t4 = clock();
+    print("mul 4096-digit: " + toString(t4-t3) + "ms digits=" + toString(len(toString(z1))));
+
+    // 8192 digits (FFT threshold)
+    var x2 = 10 ^ 8192;
+    var y2 = 10 ^ 8192;
+    var t5 = clock();
+    var z2 = x2 * y2;
+    var t6 = clock();
+    print("mul 8192-digit: " + toString(t6-t5) + "ms digits=" + toString(len(toString(z2))));
+
+    // 16384 digits
+    var x3 = 10 ^ 16384;
+    var y3 = 10 ^ 16384;
+    var t7 = clock();
+    var z3 = x3 * y3;
+    var t8 = clock();
+    print("mul 16384-digit: " + toString(t8-t7) + "ms digits=" + toString(len(toString(z3))));
+
+    // 32768 digits
+    var x4 = 10 ^ 32768;
+    var y4 = 10 ^ 32768;
+    var t9 = clock();
+    var z4 = x4 * y4;
+    var t10 = clock();
+    print("mul 32768-digit: " + toString(t10-t9) + "ms digits=" + toString(len(toString(z4))));
+
+    // 65536 digits
+    var x5 = 10 ^ 65536;
+    var y5 = 10 ^ 65536;
+    var t11 = clock();
+    var z5 = x5 * y5;
+    var t12 = clock();
+    print("mul 65536-digit: " + toString(t12-t11) + "ms digits=" + toString(len(toString(z5))));
+
+    // 3. Verify correctness with non-power-of-10 numbers
+    var p = 2 ^ 5000;  // 1506-digit number
+    var q = 2 ^ 5000;
+    var pq = p * q;    // 2^10000
+    var check = 2 ^ 10000;
+    if (pq == check) {
+        print("CORRECT: 2^5000 * 2^5000 = 2^10000");
+    } else {
+        print("ERROR: 2^5000 * 2^5000 mismatch!");
+    }
+
+    print("=== FFT test complete ===");
+}

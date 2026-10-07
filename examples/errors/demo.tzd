@@ -1,0 +1,12 @@
+import "thread/Thread.tzd";
+import "core/Error.tzd";
+
+class TestError{
+    TestError(){
+        
+    }
+    
+};
+
+TestError erro = new TestError();
+erro.ccc("asdasd");

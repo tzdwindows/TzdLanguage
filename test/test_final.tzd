@@ -1,0 +1,61 @@
+fun factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+fun fib(n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+class Point {
+    var float x;
+    var float y;
+    Point(x, y) { this.x = x; this.y = y; }
+    fun distSq(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        return dx * dx + dy * dy;
+    }
+}
+
+class Counter {
+    var int count;
+    Counter() { this.count = 0; }
+    fun recurse(n) {
+        if (n <= 0) { return this.count; }
+        this.count = this.count + 1;
+        return this.recurse(n - 1);
+    }
+}
+
+print("=== FINAL VERIFICATION ===");
+
+print("[1] factorial(10) = " + toString(factorial(10)));
+print("[2] factorial(15) = " + toString(factorial(15)));
+print("[3] fib(15) = " + toString(fib(15)));
+print("[4] fib(20) = " + toString(fib(20)));
+
+var p1 = new Point(0.0, 0.0);
+var p2 = new Point(3.0, 4.0);
+print("[5] Point distSq = " + toString(p1.distSq(p2)));
+
+var c = new Counter();
+print("[6] Counter recurse(50) = " + toString(c.recurse(50)));
+var c2 = new Counter();
+print("[7] Counter recurse(100) = " + toString(c2.recurse(100)));
+
+print("[8] comb(10,3) = " + toString(comb(10, 3)));
+print("[9] cbrt(27) = " + toString(cbrt(27)));
+print("[10] base64 = " + base64Encode("TzdLang"));
+
+var s1 = setCreate(1, 2, 3);
+var s2 = setCreate(3, 4, 5);
+print("[11] setUnion = " + toString(setSize(setUnion(s1, s2))));
+print("[12] setIntersect = " + toString(setSize(setIntersect(s1, s2))));
+
+print("[13] levenshtein = " + toString(levenshtein("hello", "world")));
+print("[14] now = " + toString(now()));
+
+print("=== ALL TESTS PASSED ===");
+exit;

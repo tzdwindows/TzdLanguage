@@ -1,0 +1,51 @@
+import "torch/All.tzd";
+
+class CudaClassifier extends Module {
+    var ptr fc1;
+    var ptr fc2;
+
+    CudaClassifier() {
+        super("CudaClassifier");
+        this.fc1 = new Linear(16, 32);
+        this.fc2 = new Linear(32, 4);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+    }
+
+    fun forward(x) {
+        var f1 = this.fc1;
+        var f2 = this.fc2;
+        var h = f1.forward(x);
+        h = torch_relu(h);
+        var res = f2.forward(h);
+        return res;
+    }
+}
+
+print("1. Creating CudaClassifier...");
+var model = new CudaClassifier();
+print("2. numParams: " + toString(model.numParams()));
+print("3. Calling model.cuda()...");
+model.cuda();
+print("4. model.cuda() SUCCESS!");
+
+var batchX = torch_to_cuda(torch_randn(8, 16));
+var target = torch_to_cuda(torch_zeros(8, 4));
+
+print("5. Forward pass...");
+var pred = model.forward(batchX);
+print("6. Pred dev: " + torch_get_device(pred));
+
+print("7. MSE Loss...");
+var loss = torch_mse_loss(pred, target);
+print("8. Loss: " + toString(torch_scalar_value(loss)));
+
+print("9. Backward...");
+model.zeroGrad();
+torch_backward(loss);
+print("10. Backward SUCCESS!");
+
+print("11. Adam step...");
+var opt = adam(model, 0.01, null, null, null);
+torch_optim_step(opt);
+print("12. Optimizer step SUCCESS!");

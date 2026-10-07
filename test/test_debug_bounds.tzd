@@ -1,0 +1,17 @@
+﻿import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    App.setStyle("macos");
+    var win = new Window("Debug", 680, 500, 150, 120);
+    var gbControls = win.addGroupBox("macOS Controls", 20, 20, 310, 210);
+    var btnNormal = win.addButton("标准按钮", 38, 98, 100, 30);
+    var btnPrimary = win.addButton("确认提交", 148, 98, 110, 30);
+    btnPrimary.setPrimary(true);
+    print("Normal bounds: " + btnNormal.getBounds());
+    print("Primary bounds: " + btnPrimary.getBounds());
+    print("GB bounds: " + gbControls.getBounds());
+    win.close();
+}
+main();

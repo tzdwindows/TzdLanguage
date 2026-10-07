@@ -1,0 +1,87 @@
+/**
+ * TzdLang UI 标准库 - 原生系统对话框
+ */
+
+class Dialog {
+    static fun alert(title, message, iconType) {
+        var t = "提示";
+        if (title != null) t = title;
+        var m = "";
+        if (message != null) m = message;
+        var ic = "info";
+        if (iconType != null) ic = iconType;
+        return ui_alert(t, m, ic);
+    }
+
+    static fun info(title, message) {
+        return Dialog.alert(title, message, "info");
+    }
+
+    static fun warn(title, message) {
+        return Dialog.alert(title, message, "warn");
+    }
+
+    static fun error(title, message) {
+        return Dialog.alert(title, message, "error");
+    }
+
+    static fun confirm(title, message) {
+        var t = "确认";
+        if (title != null) t = title;
+        var m = "";
+        if (message != null) m = message;
+        return ui_confirm(t, m);
+    }
+
+    static fun prompt(title, message, defaultVal) {
+        var t = "输入";
+        if (title != null) t = title;
+        var m = "请输入内容:";
+        if (message != null) m = message;
+        var def = "";
+        if (defaultVal != null) def = defaultVal;
+        return ui_prompt(t, m, def);
+    }
+
+    static fun openFile(title, filter, defaultDir) {
+        var t = "打开文件";
+        if (title != null) t = title;
+        var flt = "All Files (*.*)\0*.*\0";
+        if (filter != null) flt = filter;
+        var dir = "";
+        if (defaultDir != null) dir = defaultDir;
+        return ui_open_file(t, flt, dir);
+    }
+
+    static fun saveFile(title, filter, defaultName, defaultDir) {
+        var t = "保存文件";
+        if (title != null) t = title;
+        var flt = "All Files (*.*)\0*.*\0";
+        if (filter != null) flt = filter;
+        var name = "";
+        if (defaultName != null) name = defaultName;
+        var dir = "";
+        if (defaultDir != null) dir = defaultDir;
+        return ui_save_file(t, flt, name, dir);
+    }
+
+    static fun chooseFolder(title, defaultDir) {
+        var t = "选择文件夹";
+        if (title != null) t = title;
+        var dir = "";
+        if (defaultDir != null) dir = defaultDir;
+        return ui_choose_folder(t, dir);
+    }
+
+    static fun chooseColor(parent) {
+        var h = null;
+        if (parent != null) {
+            if (parent.handle != null) {
+                h = parent.handle;
+            } else {
+                h = parent;
+            }
+        }
+        return ui_choose_color(h);
+    }
+}

@@ -1,0 +1,21 @@
+fun main() {
+  print("s");
+  var a1 = 10 ^ 4096; var b1 = 3 ^ 2580; var a2 = 10 ^ 4096; var b2 = 3 ^ 2580;
+  var nr1 = a1 * a2; var dr1 = b1 * b2;
+  print("4k ok");
+  var c1 = 10 ^ 8192; var c2 = 3 ^ 5160; var c3 = 10 ^ 8192; var c4 = 3 ^ 5160;
+  var nr2 = c1 * c3; var dr2 = c2 * c4;
+  print("8k ok");
+  var d1v = 10 ^ 16384; var d2v = 3 ^ 10320; var d3v = 10 ^ 16384; var d4v = 3 ^ 10320;
+  var nr3 = d1v * d3v; var dr3 = d2v * d4v;
+  print("16k ok");
+  var e1 = 10 ^ 32768; var e2 = 3 ^ 20640; var e3 = 10 ^ 32768; var e4 = 3 ^ 20640;
+  var nr4 = e1 * e3; var dr4 = e2 * e4;
+  print("32k ok");
+  var f1 = 10 ^ 65536; var f2 = 3 ^ 41280; var f3 = 10 ^ 65536; var f4 = 3 ^ 41280;
+  print("65k powers ok");
+  var nr5 = f1 * f3;
+  print("65k num ok");
+  var dr5 = f2 * f4;
+  print("65k den ok");
+}

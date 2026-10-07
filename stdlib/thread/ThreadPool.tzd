@@ -1,0 +1,103 @@
+/**
+ * TzdLang 线程池标准库 - ThreadPool
+ * 支持固定容量工作线程池管理并发任务分发与执行
+ */
+
+import "stdlib/thread/Thread.tzd";
+import "stdlib/thread/Channel.tzd";
+import "stdlib/thread/Atomic.tzd";
+
+fun _tzdThreadPoolWorker(taskQueue, stopSignal) {
+    while (!stopSignal.get() && !taskQueue.isClosed()) {
+        var task = taskQueue.receiveTimeout(100);
+        if (task != null) {
+            var actionFunc = task["func"];
+            var taskArgs = task["args"];
+            try {
+                if (taskArgs == null || len(taskArgs) == 0) {
+                    actionFunc();
+                } else if (len(taskArgs) == 1) {
+                    actionFunc(taskArgs[0]);
+                } else if (len(taskArgs) == 2) {
+                    actionFunc(taskArgs[0], taskArgs[1]);
+                } else {
+                    actionFunc(taskArgs);
+                }
+            } catch (err) {
+                Thread.log("Task execution error: " + toString(err));
+            }
+        }
+    }
+}
+
+class ThreadPool {
+    var int numWorkers;
+    var any taskQueue;
+    var any workers;
+    var any stopSignal;
+    var bool running;
+
+    ThreadPool() {
+        this.initPool(4);
+    }
+
+    ThreadPool(numWorkers) {
+        this.initPool(numWorkers);
+    }
+
+    fun initPool(workerCount) {
+        this.numWorkers = workerCount;
+        this.taskQueue = new Channel(100);
+        this.stopSignal = new AtomicBool(false);
+        this.workers = [ ];
+        this.running = true;
+
+        for (var i = 0; i < workerCount; i = i + 1) {
+            var worker = new Thread(_tzdThreadPoolWorker, "ThreadPoolWorker-" + toString(i), [this.taskQueue, this.stopSignal]);
+            worker.start();
+            this.workers = push(this.workers, worker);
+        }
+    }
+
+    fun submit(taskFunc) {
+        if (!this.running) {
+            return false;
+        }
+        var task = {
+            "func": taskFunc,
+            "args": [ ]
+        };
+        return this.taskQueue.send(task);
+    }
+
+    fun submitWithArgs(taskFunc, args) {
+        if (!this.running) {
+            return false;
+        }
+        var task = {
+            "func": taskFunc,
+            "args": args
+        };
+        return this.taskQueue.send(task);
+    }
+
+    fun shutdown() {
+        this.running = false;
+        if (this.stopSignal != null) {
+            this.stopSignal.set(true);
+        }
+        if (this.taskQueue != null) {
+            this.taskQueue.close();
+        }
+        for (var i = 0; i < len(this.workers); i = i + 1) {
+            var w = this.workers[i];
+            w.joinTimeout(1000);
+        }
+        if (this.taskQueue != null) {
+            this.taskQueue.destroy();
+        }
+        if (this.stopSignal != null) {
+            this.stopSignal.destroy();
+        }
+    }
+}

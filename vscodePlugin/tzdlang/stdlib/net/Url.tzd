@@ -1,0 +1,66 @@
+/**
+ * TzdLang 网络标准库 - URL 解析与编解码
+ */
+
+class Url {
+    var string protocol;
+    var string host;
+    var int port;
+    var string path;
+    var string query;
+    var string fragment;
+
+    Url() {
+        this.protocol = "http";
+        this.host = "";
+        this.port = 80;
+        this.path = "/";
+        this.query = "";
+        this.fragment = "";
+    }
+
+    static fun parse(urlString) {
+        var u = new Url();
+        var raw = net_url_parse(urlString);
+        if (raw != null) {
+            u.protocol = raw["protocol"];
+            u.host = raw["host"];
+            u.port = raw["port"];
+            u.path = raw["path"];
+            u.query = raw["query"];
+            u.fragment = raw["fragment"];
+        }
+        return u;
+    }
+
+    static fun encode(str) {
+        return net_url_encode(str);
+    }
+
+    static fun decode(str) {
+        return net_url_decode(str);
+    }
+
+    fun toString() {
+        var s = this.protocol + "://" + this.host;
+        if (this.port != 80) {
+            if (this.port != 443) {
+                if (this.port > 0) {
+                    s = s + ":" + this.port;
+                }
+            }
+        }
+        s = s + this.path;
+        if (this.query != null && this.query != "") {
+            if (len(this.query) > 0 && this.query[0] != "?") {
+                s = s + "?" + this.query;
+            } else {
+                s = s + this.query;
+            }
+        }
+        if (this.fragment != null && this.fragment != "") {
+            s = s + "#" + this.fragment;
+        }
+        return s;
+    }
+}

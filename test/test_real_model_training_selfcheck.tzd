@@ -1,0 +1,399 @@
+// ============================================================================
+// test_real_model_training_selfcheck.tzd
+// 全面真实模型训练自检套件 (Real Model Training Pre-flight Self-Check Suite)
+// 目的：在执行正式大规模真实模型训练前，自主验证各模型架构与训练闭环的正确性：
+// 1. 自动微分与优化器权重更新真实性 (Autograd & Optimizer Weight Update)
+// 2. 非线性深度多层感知机 (Deep MLP) 拟合与收敛性 (Non-linear Curve Convergence)
+// 3. 卷积神经网络 (CNN + BatchNorm + Pooling) 视觉管线训练 (Vision CNN Pipeline)
+// 4. 循环神经网络 (LSTM/RNN) 时序反向传播 (BPTT Recurrent Sequence Pipeline)
+// 5. Transformer 多头自注意力机制 (Multi-Head Attention & Masking)
+// 6. 模型权重检查点持久化与精确重载 (Checkpoint Save/Load Bit-Exact Reload)
+// 7. 连续迭代显存/内存张量生命周期稳定性 (Memory & Tensor Lifecycle Stability)
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+import "torch/Transformer.tzd";
+import "torch/RNN.tzd";
+
+var passCount = 0;
+var failCount = 0;
+
+fun assertTrue(name, cond) {
+    if (cond) {
+        passCount = passCount + 1;
+        print("  [PASS] " + name);
+    } else {
+        failCount = failCount + 1;
+        print("  [FAIL] " + name + " - assertion failed (expected true)");
+    }
+}
+
+fun assertClose(name, actual, expected, tol) {
+    var diff = actual - expected;
+    if (diff < 0) { diff = 0 - diff; }
+    if (diff <= tol) {
+        passCount = passCount + 1;
+        print("  [PASS] " + name + " (val=" + toFixed(actual, 5) + " ~ exp=" + toFixed(expected, 5) + ")");
+    } else {
+        failCount = failCount + 1;
+        print("  [FAIL] " + name + " - expected ~" + toString(expected) + " got " + toString(actual) + " (diff=" + toString(diff) + ", tol=" + toString(tol) + ")");
+    }
+}
+
+print("====================================================================");
+print("  TzdLanguage PyTorch 真实模型训练预检与全功能自检套件");
+print("====================================================================");
+print("");
+
+// ============================================================================
+// [Check 1] 自动微分与优化器权重更新真实性自检
+// ============================================================================
+print("[Check 1/7] 自动微分与优化器真实权重更新自检...");
+{
+    torch_manual_seed(42);
+    var layer = new Linear(2, 1);
+    var wTensor = layer._params["weight"];
+    var bTensor = layer._params["bias"];
+    
+    // 记录初始参数快照
+    var w0 = torch_item(wTensor, 0);
+    var b0 = torch_item(bTensor, 0);
+    
+    var x = torch_reshape(torch_tensor(1.0, 2.0), 1, 2);
+    var target = torch_reshape(torch_tensor(5.0), 1, 1);
+    var lossFn = new MSELoss();
+    var optim = torch_optimizer_create("adam", layer.parameters(), 0.05);
+
+    torch_optim_zero_grad(optim);
+    var pred = layer.forward(x);
+    var loss = lossFn.forward(pred, target);
+    var lossVal = torch_scalar_value(loss);
+    assertTrue("前向损失计算为有效正数", lossVal > 0.0);
+
+    torch_backward(loss);
+    var wGrad = torch_grad(wTensor);
+    assertTrue("反向传播后权重梯度成功生成", torch_is_tensor(wGrad));
+    var gradNorm = torch_scalar_value(torch_norm_t(wGrad));
+    assertTrue("梯度范数非零且非 NaN", gradNorm > 0.0001);
+
+    torch_optim_step(optim);
+    var w1 = torch_item(wTensor, 0);
+    var b1 = torch_item(bTensor, 0);
+    var wDiff = w1 - w0;
+    if (wDiff < 0) { wDiff = 0 - wDiff; }
+    assertTrue("优化器 step() 实际推进权重参数产生物理更新", wDiff > 0.0001);
+
+    torch_optim_zero_grad(optim);
+    var wGradZero = torch_grad(wTensor);
+    var zeroNorm = 0.0;
+    if (wGradZero != null) {
+        zeroNorm = torch_scalar_value(torch_norm_t(wGradZero));
+    }
+    assertClose("zero_grad() 成功将梯度张量归零", zeroNorm, 0.0, 0.00001);
+}
+print("  -> Check 1 完成\n");
+
+// ============================================================================
+// [Check 2] 深度多层非线性感知机 (Deep MLP) 拟合与收敛性自检
+// ============================================================================
+print("[Check 2/7] 深度多层非线性感知机 (Deep MLP) 拟合与收敛自检 (XOR 非线性问题)...");
+class DeepMLP extends Module {
+    var ptr fc1;
+    var ptr fc2;
+    var ptr fc3;
+
+    DeepMLP() {
+        super("DeepMLP");
+        this.fc1 = new Linear(2, 16);
+        this.fc2 = new Linear(16, 8);
+        this.fc3 = new Linear(8, 1);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+        this.registerModule("fc3", this.fc3);
+    }
+
+    fun forward(x) {
+        var l1 = this.fc1;
+        var h1 = torch_relu(l1.forward(x));
+        var l2 = this.fc2;
+        var h2 = torch_relu(l2.forward(h1));
+        var l3 = this.fc3;
+        var res = torch_sigmoid(l3.forward(h2));
+        return res;
+    }
+}
+
+var mlp = new DeepMLP();
+var mlpOptim = torch_optimizer_create("adam", mlp.parameters(), 0.05);
+var mlpLossFn = new MSELoss();
+
+// XOR 经典非线性数据集: (0,0)->0, (0,1)->1, (1,0)->1, (1,1)->0
+var xData = torch_reshape(torch_tensor(0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0), 4, 2);
+var yData = torch_reshape(torch_tensor(0.0, 1.0, 1.0, 0.0), 4, 1);
+
+var initialMlpLoss = 0.0;
+var finalMlpLoss = 0.0;
+
+for (var epoch = 0; epoch < 100; epoch = epoch + 1) {
+    torch_optim_zero_grad(mlpOptim);
+    var pred = mlp.forward(xData);
+    var loss = mlpLossFn.forward(pred, yData);
+    torch_backward(loss);
+    torch_optim_step(mlpOptim);
+    var curLoss = torch_scalar_value(loss);
+    if (epoch == 0) {
+        initialMlpLoss = curLoss;
+    }
+    finalMlpLoss = curLoss;
+}
+
+print("  MLP Initial Loss: " + toFixed(initialMlpLoss, 5));
+print("  MLP Final Loss:   " + toFixed(finalMlpLoss, 5));
+assertTrue("非线性网络损失严格单调显著下降", finalMlpLoss < initialMlpLoss * 0.2);
+assertTrue("非线性 XOR 拟合收敛到高精度", finalMlpLoss < 0.05);
+
+// 验证推断输出
+mlp.eval();
+var testPred = mlp.forward(xData);
+var p0 = torch_item(testPred, 0); // 期望 ~0.0
+var p1 = torch_item(testPred, 1); // 期望 ~1.0
+var p2 = torch_item(testPred, 2); // 期望 ~1.0
+var p3 = torch_item(testPred, 3); // 期望 ~0.0
+assertTrue("XOR (0,0) 预测输出趋近 0", p0 < 0.25);
+assertTrue("XOR (0,1) 预测输出趋近 1", p1 > 0.75);
+assertTrue("XOR (1,0) 预测输出趋近 1", p2 > 0.75);
+assertTrue("XOR (1,1) 预测输出趋近 0", p3 < 0.25);
+print("  -> Check 2 完成\n");
+
+// ============================================================================
+// [Check 3] 卷积视觉模型 (CNN + BatchNorm + Pooling) 训练自检
+// ============================================================================
+print("[Check 3/7] 卷积神经网络 (CNN + BatchNorm + Pooling) 视觉训练管线自检...");
+class MiniCNN extends Module {
+    var ptr conv;
+    var ptr bn;
+    var ptr pool;
+    var ptr fc;
+
+    MiniCNN() {
+        super("MiniCNN");
+        this.conv = new Conv2d(1, 4, 3, 1, 1);
+        this.bn = new BatchNorm2d(4);
+        this.pool = new MaxPool2d(2, 2);
+        this.fc = new Linear(4 * 2 * 2, 2);
+        this.registerModule("conv", this.conv);
+        this.registerModule("bn", this.bn);
+        this.registerModule("pool", this.pool);
+        this.registerModule("fc", this.fc);
+    }
+
+    fun forward(x) {
+        var c = this.conv;
+        var h = c.forward(x);
+        var b = this.bn;
+        h = b.forward(h);
+        h = torch_relu(h);
+        var p = this.pool;
+        h = p.forward(h);
+        h = torch_flatten(h, 1, -1);
+        var f = this.fc;
+        return f.forward(h);
+    }
+}
+
+var cnn = new MiniCNN();
+var cnnOptim = torch_optimizer_create("adamw", cnn.parameters(), 0.02);
+var cnnLossFn = new MSELoss();
+
+// 构造 2 张 1 通道 4x4 输入图像
+var cnnInput = torch_randn(2, 1, 4, 4);
+var cnnTarget = torch_tensor(1.0, 0.0, 0.0, 1.0);
+cnnTarget = torch_reshape(cnnTarget, 2, 2);
+
+var cnnInitLoss = 0.0;
+var cnnFinalLoss = 0.0;
+
+for (var ep = 0; ep < 30; ep = ep + 1) {
+    torch_optim_zero_grad(cnnOptim);
+    var cnnOut = cnn.forward(cnnInput);
+    var cnnLoss = cnnLossFn.forward(cnnOut, cnnTarget);
+    torch_backward(cnnLoss);
+    torch_optim_step(cnnOptim);
+    var cLoss = torch_scalar_value(cnnLoss);
+    if (ep == 0) { cnnInitLoss = cLoss; }
+    cnnFinalLoss = cLoss;
+}
+
+print("  CNN Initial Loss: " + toFixed(cnnInitLoss, 5));
+print("  CNN Final Loss:   " + toFixed(cnnFinalLoss, 5));
+assertTrue("CNN 视觉模型经卷积+归一化+全连接后 Loss 稳定下降", cnnFinalLoss < cnnInitLoss);
+
+// 测试 eval 模式下 BatchNorm 切换冻结均值与方差
+cnn.eval();
+var evalOut = cnn.forward(cnnInput);
+assertTrue("CNN eval 模式前向推理成功输出预期形状 [2, 2]", torch_shape_str(evalOut) == "[2, 2]");
+print("  -> Check 3 完成\n");
+
+// ============================================================================
+// [Check 4] 循环序列模型 (LSTM) 时序反向传播自检
+// ============================================================================
+print("[Check 4/7] 循环神经网络 (LSTM) 时序反向传播 (BPTT) 自检...");
+{
+    torch_manual_seed(101);
+    var inputDim = 4;
+    var hiddenDim = 8;
+    var cell = new LSTMCell(inputDim, hiddenDim);
+    var proj = new Linear(hiddenDim, 1);
+
+    var allParams = range(0, 0, 1);
+    var cellParams = cell.parameters();
+    for (var pi = 0; pi < len(cellParams); pi = pi + 1) {
+        allParams = push(allParams, cellParams[pi]);
+    }
+    var projParams = proj.parameters();
+    for (var pji = 0; pji < len(projParams); pji = pji + 1) {
+        allParams = push(allParams, projParams[pji]);
+    }
+
+    var rnnOptim = torch_optimizer_create("adam", allParams, 0.05);
+    var rnnLossFn = new MSELoss();
+
+    var seqSteps = 3;
+    var batchSize = 1;
+    var xSeq = range(0, 0, 1);
+    xSeq = push(xSeq, torch_randn(batchSize, inputDim));
+    xSeq = push(xSeq, torch_randn(batchSize, inputDim));
+    xSeq = push(xSeq, torch_randn(batchSize, inputDim));
+    var seqTarget = torch_reshape(torch_tensor(2.5), batchSize, 1);
+
+    var rnnInitLoss = 0.0;
+    var rnnFinalLoss = 0.0;
+
+    for (var rEp = 0; rEp < 25; rEp = rEp + 1) {
+        torch_optim_zero_grad(rnnOptim);
+        var h = torch_zeros(batchSize, hiddenDim);
+        var c = torch_zeros(batchSize, hiddenDim);
+
+        for (var step = 0; step < seqSteps; step = step + 1) {
+            var stepInput = xSeq[step];
+            var hcIn = range(0, 0, 1);
+            hcIn = push(hcIn, h);
+            hcIn = push(hcIn, c);
+            var hc = cell.forward(stepInput, hcIn);
+            h = hc[0];
+            c = hc[1];
+        }
+
+        var finalPred = proj.forward(h);
+        var lossRnn = rnnLossFn.forward(finalPred, seqTarget);
+        torch_backward(lossRnn);
+        torch_optim_step(rnnOptim);
+
+        var curLossR = torch_scalar_value(lossRnn);
+        if (rEp == 0) { rnnInitLoss = curLossR; }
+        rnnFinalLoss = curLossR;
+    }
+
+    print("  LSTM Initial Loss: " + toFixed(rnnInitLoss, 5));
+    print("  LSTM Final Loss:   " + toFixed(rnnFinalLoss, 5));
+    assertTrue("LSTM 多步 BPTT 时序反向传播后 Loss 明显收敛", rnnFinalLoss < rnnInitLoss * 0.5);
+}
+print("  -> Check 4 完成\n");
+
+// ============================================================================
+// [Check 5] Transformer 多头自注意力机制 (MultiheadAttention) 自检
+// ============================================================================
+print("[Check 5/7] Transformer 多头自注意力机制与掩码计算自检...");
+{
+    torch_manual_seed(777);
+    var dModel = 8;
+    var nHeads = 2;
+    var seqLen = 4;
+    var mha = new MultiheadAttention(dModel, nHeads, 0.0);
+    var mhaOptim = torch_optimizer_create("adam", mha.parameters(), 0.02);
+
+    var qkv = torch_randn(1, seqLen, dModel);
+    var spMask = sparseAttentionMask(seqLen, 2);
+    assertTrue("稀疏注意力掩码形状为 [4, 4]", torch_shape_str(spMask) == "[4, 4]");
+
+    torch_optim_zero_grad(mhaOptim);
+    var mhaResult = mha.forward(qkv, qkv, qkv, spMask);
+    assertTrue("MultiheadAttention 输出维度保持 [1, 4, 8]", torch_shape_str(mhaResult) == "[1, 4, 8]");
+
+    var lossTensor = torch_sum(torch_mul(mhaResult, mhaResult));
+    var mhaLossVal = torch_scalar_value(lossTensor);
+    torch_backward(lossTensor);
+    torch_optim_step(mhaOptim);
+    assertTrue("Transformer 多头自注意力完成反向传播与优化器单步更新", mhaLossVal > 0.0);
+}
+print("  -> Check 5 完成\n");
+
+// ============================================================================
+// [Check 6] 模型权重检查点持久化与精确重载自检
+// ============================================================================
+print("[Check 6/7] 模型权重检查点保存、加载与精确一致性自检...");
+{
+    var modelFile = "selfcheck_checkpoint.tzdmodel";
+    var sd = mlp.stateDict();
+    torch_save_state_dict(sd, modelFile);
+
+    var loadedSd = torch_load_state_dict(modelFile);
+    var freshMlp = new DeepMLP();
+    freshMlp.loadStateDict(loadedSd);
+
+    mlp.eval();
+    freshMlp.eval();
+
+    var sampleInput = torch_reshape(torch_tensor(0.5, 0.5), 1, 2);
+    var outOriginal = mlp.forward(sampleInput);
+    var outReloaded = freshMlp.forward(sampleInput);
+
+    var origVal = torch_scalar_value(outOriginal);
+    var reloadVal = torch_scalar_value(outReloaded);
+    assertClose("重载后模型输出与原模型 100% 精确一致", reloadVal, origVal, 0.000001);
+}
+print("  -> Check 6 完成\n");
+
+// ============================================================================
+// [Check 7] 连续迭代内存与张量生命周期稳定性自检
+// ============================================================================
+print("[Check 7/7] 连续训练迭代内存与张量生命周期自检...");
+{
+    torch_gc();
+    var baseTensorCount = torch_num_tensors();
+
+    var benchModel = new Linear(4, 2);
+    var benchOptim = torch_optimizer_create("sgd", benchModel.parameters(), 0.01);
+    var benchLoss = new MSELoss();
+    var bInput = torch_randn(2, 4);
+    var bTarget = torch_randn(2, 2);
+
+    for (var iter = 0; iter < 100; iter = iter + 1) {
+        trainStep(benchModel, bInput, bTarget, benchOptim, benchLoss);
+    }
+
+    torch_gc();
+    var finalTensorCount = torch_num_tensors();
+    print("  初始张量数: " + toString(baseTensorCount) + ", 100次迭代后张量数: " + toString(finalTensorCount));
+    // 允许因模型常驻参数占用的少量稳定张量，杜绝线性泄漏
+    assertTrue("100次迭代循环后无内存/张量无界泄漏", finalTensorCount <= baseTensorCount + 25);
+}
+print("  -> Check 7 完成\n");
+
+// ============================================================================
+// 汇总自检报告
+// ============================================================================
+print("====================================================================");
+print("  自检完成！测试统计报告：");
+print("    Passed: " + toString(passCount));
+print("    Failed: " + toString(failCount));
+print("    Total:  " + toString(passCount + failCount));
+if (failCount == 0) {
+    print("  >>> [SUCCESS] 全部 7 大真实训练自检项 100% 通过！引擎可安全进入正式模型训练！ <<<");
+} else {
+    print("  >>> [ERROR] 存在自检失败项，请检查具体失败条目！ <<<");
+}
+print("====================================================================");

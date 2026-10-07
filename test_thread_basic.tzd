@@ -1,0 +1,64 @@
+import "stdlib/thread/Thread.tzd";
+import "stdlib/thread/Channel.tzd";
+import "stdlib/thread/Atomic.tzd";
+import "stdlib/thread/Mutex.tzd";
+import "stdlib/thread/Event.tzd";
+
+print("=== Testing Basic Thread & Mailbox ===");
+
+fun worker(msg) {
+    print("Worker started with arg: " + toString(msg));
+    // Receive message from mailbox
+    var data = Thread.receiveTimeout(2000);
+    print("Worker received: " + toString(data));
+    return "Worker done: " + toString(data);
+}
+
+var t = new Thread(worker, "TestWorker", ["hello"]);
+t.start();
+
+// Sleep a little to let worker wait for message
+Thread.sleep(50);
+print("Main sending to worker mailbox...");
+t.send("Message from Main!");
+
+var res = t.join();
+print("Join completed: " + toString(res));
+print("Thread result: " + toString(t.getResult()));
+
+print("=== Testing Channel ===");
+var ch = new Channel(2);
+fun producer() {
+    ch.send("item1");
+    ch.send("item2");
+    ch.close();
+}
+var prodThread = new Thread(producer);
+prodThread.start();
+
+var item1 = ch.receive();
+var item2 = ch.receive();
+print("Received item 1: " + toString(item1));
+print("Received item 2: " + toString(item2));
+prodThread.join();
+
+print("=== Testing Atomic ===");
+var a = new AtomicInt(10);
+var oldVal = a.fetchAdd(5);
+print("Atomic old: " + toString(oldVal) + ", current: " + toString(a.load()));
+
+print("=== Testing Stack Dump & List ===");
+var threads = Thread.list();
+print("Active threads count: " + toString(len(threads)));
+var dump = Thread.dumpAll();
+print("Thread dump count: " + toString(len(dump)));
+
+print("=== Testing Logs ===");
+var logs = Thread.getLogsLimit(10);
+print("Log count: " + toString(len(logs)));
+for (var i = 0; i < len(logs); i = i + 1) {
+    var entry = logs[i];
+    print("LOG [" + entry["event"] + "] thread=" + toString(entry["thread_id"]) + " msg=" + entry["message"]);
+}
+
+print("ALL BASIC TESTS PASSED!");

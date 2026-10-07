@@ -1,0 +1,79 @@
+import "ui/Window.tzd";
+import "ui/App.tzd";
+
+// Headless test for UI error handling logic
+App.setShowErrorDialog(false); // disable GUI message box in automated test
+
+var win = new Window("UI Error Test", 400, 300, 100, 100);
+
+var errorCaught = false;
+var caughtMsg = "";
+var caughtLine = 0;
+var caughtCol = 0;
+var caughtType = "";
+
+win.onError(fun(err) {
+    print("[Test OnError Caught] type=" + err.errorType + ", msg=" + err.message + ", line=" + err.line + ", col=" + err.column);
+    errorCaught = true;
+    caughtMsg = err.message;
+    caughtLine = err.line;
+    caughtCol = err.column;
+    caughtType = err.errorType;
+});
+
+var btn = win.addButton("触发未定义变量错误", 40, 40, 200, 35);
+btn.onClick(fun(h) {
+    // 故意触发未定义标识符错误
+    var nonExistent = undefinedVariable123 + 456;
+});
+
+// 模拟点击按钮
+ui_perform_click(btn.handle);
+
+// 处理事件队列
+for (var i = 0; i < 10; i = i + 1) {
+    App.poll();
+    sleep(20);
+}
+
+if (!errorCaught) {
+    print("FAILED: Window.onError did not catch the error!");
+    throw "TEST_ASSERTION_FAILED";
+} else {
+    print("SUCCESS: Error properly intercepted!");
+    print("  Message: " + caughtMsg);
+    print("  Line: " + caughtLine);
+    print("  Column: " + caughtCol);
+    print("  Type: " + caughtType);
+}
+
+// Test custom throw
+var throwCaught = false;
+var throwMsg = "";
+win.onError(fun(err) {
+    print("[Test Custom Throw Caught] msg=" + err.message);
+    throwCaught = true;
+    throwMsg = err.message;
+});
+
+var btnThrow = win.addButton("触发自定义抛出", 40, 90, 200, 35);
+btnThrow.onClick(fun(h) {
+    throw "用户自定义业务错误：订单已过期";
+});
+
+ui_perform_click(btnThrow.handle);
+
+for (var j = 0; j < 10; j = j + 1) {
+    App.poll();
+    sleep(20);
+}
+
+if (!throwCaught || throwMsg != "用户自定义业务错误：订单已过期") {
+    print("FAILED: Custom throw not caught properly! throwMsg=" + throwMsg);
+    throw "TEST_ASSERTION_FAILED";
+} else {
+    print("SUCCESS: Custom throw intercepted with accurate message: " + throwMsg);
+}
+
+win.close();
+print("ALL UI ERROR HANDLING TESTS PASSED!");

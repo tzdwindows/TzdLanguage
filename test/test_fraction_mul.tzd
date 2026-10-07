@@ -1,0 +1,7 @@
+fun main() {
+  var f1 = 10 ^ 65536;
+  var f3 = 10 ^ 65536;
+  print("start mul");
+  var nr5 = f1 * f3;
+  print("done: " + toString(len(toString(nr5))));
+}

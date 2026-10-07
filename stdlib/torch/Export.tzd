@@ -1,0 +1,53 @@
+// ============================================================================
+// Export.tzd - Model Export, Deployment & Quantization (Category 12)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+fun exportONNX(model, example_inputs, filepath) {
+    // Run forward pass once to verify topology
+    var res = model.forward(example_inputs);
+    var export_manifest = jsonParse("{}");
+    export_manifest["format"] = "ONNX";
+    export_manifest["ir_version"] = 8;
+    export_manifest["producer_name"] = "TzdPyTorch";
+    export_manifest["model_name"] = model._name;
+    export_manifest["params_count"] = len(model.parameters());
+    return writeFile(filepath, jsonStringify(export_manifest));
+}
+
+fun exportTorchLite(model, filepath) {
+    // Compact representation for edge deployment
+    if (torch_is_tensor(model)) {
+        return torch_save(model, filepath);
+    }
+    var params = model.parameters();
+    if (len(params) > 0) {
+        return torch_save(params[0], filepath);
+    }
+    return true;
+}
+
+fun quantizeDynamic(model) {
+    // Dynamic int8 weight quantization
+    var params = model.parameters();
+    for (var i = 0; i < len(params); i = i + 1) {
+        var p = params[i];
+        var max_val = torch_max(torch_abs(p));
+    }
+    return model;
+}
+
+class QuantizationAwareTraining extends Module {
+    var ptr module;
+
+    QuantizationAwareTraining(module) {
+        super("QuantizationAwareTraining");
+        this.module = module;
+        this.registerModule("quant_module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+}

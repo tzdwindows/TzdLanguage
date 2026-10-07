@@ -1,0 +1,7 @@
+// Test 1: Undefined function call
+fun testUndefCall() {
+    print("Calling undefined function...");
+    notExistFun(1, 2);
+}
+
+testUndefCall();

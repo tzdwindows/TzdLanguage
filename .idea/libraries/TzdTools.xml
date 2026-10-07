@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="TzdTools">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/x64/Release/TzdTools.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

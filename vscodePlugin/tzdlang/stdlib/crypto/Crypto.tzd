@@ -1,0 +1,83 @@
+/**
+ * TzdLang 加密与哈希标准库 - MD5, SHA256, Base64, Hex, UUID
+ */
+
+class Md5 {
+    static fun hash(str) {
+        return crypto_md5(str);
+    }
+}
+
+class Sha256 {
+    static fun hash(str) {
+        return crypto_sha256(str);
+    }
+}
+
+class Sha512 {
+    static fun hash(str) {
+        return crypto_sha512(str);
+    }
+}
+
+class Base64 {
+    static fun encode(str) {
+        return crypto_base64_encode(str);
+    }
+
+    static fun decode(str) {
+        return crypto_base64_decode(str);
+    }
+}
+
+class Hex {
+    static fun encode(str) {
+        return crypto_hex_encode(str);
+    }
+
+    static fun decode(str) {
+        return crypto_hex_decode(str);
+    }
+}
+
+class Crypto {
+    static fun md5(str) {
+        return crypto_md5(str);
+    }
+
+    static fun sha1(str) {
+        return crypto_sha1(str);
+    }
+
+    static fun sha256(str) {
+        return crypto_sha256(str);
+    }
+
+    static fun sha512(str) {
+        return crypto_sha512(str);
+    }
+
+    static fun base64Encode(str) {
+        return crypto_base64_encode(str);
+    }
+
+    static fun base64Decode(str) {
+        return crypto_base64_decode(str);
+    }
+
+    static fun hexEncode(str) {
+        return crypto_hex_encode(str);
+    }
+
+    static fun hexDecode(str) {
+        return crypto_hex_decode(str);
+    }
+
+    static fun uuid() {
+        return crypto_uuid();
+    }
+
+    static fun randomBytes(length) {
+        return crypto_random_bytes(length);
+    }
+}

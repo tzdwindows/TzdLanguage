@@ -1,0 +1,33 @@
+// test_standalone.tzd - 测试独立可执行程序直接编译
+fun fib(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fun main(cmdArgs) {
+    print("==================================================");
+    print("  TzdLang 独立原生可执行程序 (.exe) 运行成功！");
+    print("==================================================");
+    
+    var n = 15;
+    var res = fib(n);
+    print("计算 fib(" + str(n) + ") = " + str(res));
+    
+    // 测试原生数学函数
+    var x = 3.1415926 / 2.0;
+    var s = sin(x);
+    print("原生数学 API sin(pi/2) = " + str(s));
+    
+    // 测试命令行参数
+    print("传入的命令行参数列表:");
+    if (cmdArgs != null) {
+        for (var i = 0; i < len(cmdArgs); i = i + 1) {
+            print("  arg[" + str(i) + "] = " + str(cmdArgs[i]));
+        }
+    }
+    
+    print("==================================================");
+    print("全部原生模块与逻辑执行完毕，正常退出。");
+}

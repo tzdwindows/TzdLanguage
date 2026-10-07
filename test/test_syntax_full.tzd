@@ -1,0 +1,168 @@
+// test_syntax_full.tzd - Test all TzdLang syntax in bytecode VM
+var passCount = 0;
+var failCount = 0;
+
+fun check(name, actual, expected) {
+    if (toString(actual) == toString(expected)) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected " + toString(expected) + " got " + toString(actual));
+    }
+}
+
+// 1. Switch statement
+fun testSwitch(n) {
+    var result = "";
+    switch(n) {
+        case 1:
+            result = "one";
+            break;
+        case 2:
+            result = "two";
+            break;
+        case 3:
+            result = "three";
+            break;
+        default:
+            result = "other";
+    }
+    return result;
+}
+check("switch_1", testSwitch(1), "one");
+check("switch_2", testSwitch(2), "two");
+check("switch_3", testSwitch(3), "three");
+check("switch_default", testSwitch(99), "other");
+
+// 2. Lambda expressions
+var adder = fun(a, b) { return a + b; };
+check("lambda_add", adder(3, 4), 7);
+
+var multiplier = fun(a, b) { return a * b; };
+check("lambda_mul", multiplier(5, 6), 30);
+
+// 3. Classes
+class Animal {
+    var string name;
+    var int age;
+
+    Animal(n, a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    fun describe() {
+        return this.name + " is " + toString(this.age) + " years old";
+    }
+}
+
+var pet = new Animal("Rex", 5);
+check("class_name", pet.name, "Rex");
+check("class_age", pet.age, 5);
+check("class_method", pet.describe(), "Rex is 5 years old");
+
+// 4. Class inheritance
+class Dog : Animal {
+    var string breed;
+
+    Dog(n, a, b) {
+        super(n, a);
+        this.breed = b;
+    }
+
+    fun bark() {
+        return this.name + " (" + this.breed + ") says Woof!";
+    }
+}
+
+var dog = new Dog("Buddy", 3, "Labrador");
+check("inherit_name", dog.name, "Buddy");
+check("inherit_breed", dog.breed, "Labrador");
+check("inherit_bark", dog.bark(), "Buddy (Labrador) says Woof!");
+
+// 5. Nested classes and methods
+class Calculator {
+    var double result;
+
+    Calculator() {
+        this.result = 0.0;
+    }
+
+    fun add(n) {
+        this.result = this.result + n;
+        return this;
+    }
+
+    fun sub(n) {
+        this.result = this.result - n;
+        return this;
+    }
+
+    fun mul(n) {
+        this.result = this.result * n;
+        return this;
+    }
+
+    fun get() {
+        return this.result;
+    }
+}
+
+var calc = new Calculator();
+check("chain_add", calc.add(10).sub(3).mul(2).get(), 14.0);
+
+// 6. Enums
+enum Color { RED, GREEN, BLUE }
+check("enum_red", Color.RED, 0);
+check("enum_green", Color.GREEN, 1);
+check("enum_blue", Color.BLUE, 2);
+
+// 7. Try/catch
+fun testTry(n) {
+    try {
+        if (n < 0) {
+            throw "negative";
+        }
+        return n * 2;
+    } catch(e) {
+        return "caught: " + e;
+    }
+}
+check("try_ok", testTry(5), 10);
+check("try_catch", testTry(-1), "caught: negative");
+
+// 8. Complex expressions
+fun factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+check("factorial_5", factorial(5), 120);
+check("factorial_10", factorial(10), 3628800);
+
+// 9. Array operations
+var arr = range(1, 11, 1);
+var arrSum = 0;
+for (i = 0; i < len(arr); i = i + 1) {
+    arrSum = arrSum + arr[i];
+}
+check("arr_sum", arrSum, 55);
+
+// 10. Map operations
+var m = jsonParse("{}");
+m["x"] = 100;
+m["y"] = 200;
+check("map_x", m["x"], 100);
+check("map_y", m["y"], 200);
+check("map_keys", len(mapKeys(m)), 2);
+
+print("");
+print("========================================");
+print("Syntax Full Test Results:");
+print("  Passed: " + toString(passCount));
+print("  Failed: " + toString(failCount));
+if (failCount == 0) {
+    print("  *** ALL TESTS PASSED ***");
+} else {
+    print("  *** SOME TESTS FAILED ***");
+}
+print("========================================");

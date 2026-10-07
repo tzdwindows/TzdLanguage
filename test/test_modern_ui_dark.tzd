@@ -1,0 +1,82 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    print("=== TzdLang Modern UI Dark Mode Test ===");
+    var win = new Window("TzdLang 现代深色模式 UI 演示与组件展示", 720, 560, 150, 150);
+    win.setDarkMode(true);
+
+    // 1. 顶部现代化选项卡 TabControl
+    var tab = win.addTabControl(20, 15, 665, 32);
+    tab.addTab("🌙 深色控制台", 0);
+    tab.addTab("⚡ 硬件加速监控", 1);
+    tab.addTab("🛡️ 安全与网络", 2);
+    tab.setSelectedIndex(0);
+
+    // 2. 左侧分组框：基础与输入控件
+    var gbBasic = win.addGroupBox(" 基础输入与状态 ", 20, 60, 310, 210);
+    var lblUser = win.addLabel("用户名:", 35, 90, 60, 24);
+    var txtUser = win.addTextBox("DarkKnight", 100, 87, 210, 26, false);
+
+    var chkHardware = win.addCheckBox("启用硬件 GPU 加速", 35, 125, 200, 24);
+    chkHardware.setChecked(true);
+
+    var radLight = win.addRadioButton("现代浅色主题", 35, 160, 120, 24);
+    var radDark = win.addRadioButton("极客深色模式", 170, 160, 120, 24);
+    radDark.setChecked(true);
+
+    var btnApply = win.addButton("应用深色配置", 35, 200, 110, 32);
+
+    // 3. 右侧分组框：高级控件与预览
+    var gbAdvance = win.addGroupBox(" 3D 图形与时间组件 ", 350, 60, 335, 210);
+    var lblDate = win.addLabel("生效日期:", 365, 90, 75, 24);
+    var dtp = win.addDateTimePicker(445, 87, 225, 26, false);
+
+    var lblImg = win.addLabel("3D 场景视图:", 365, 125, 80, 24);
+    var imgView = win.addImageView(445, 125, 225, 130, "screenshots/gl_render_test.png");
+
+    // 4. 下方分组框：进度与调节滑块联动
+    var gbProgress = win.addGroupBox(" 运行进度与参数调节 ", 20, 285, 665, 175);
+
+    var lblSlider = win.addLabel("算力吞吐调节: 80%", 40, 315, 250, 24);
+    var slider = win.addSlider(40, 345, 420, 35, 0, 100);
+    slider.setValue(80);
+
+    var lblProgress = win.addLabel("深度学习训练进度: 80%", 40, 390, 250, 24);
+    var pbar = win.addProgressBar(40, 420, 420, 26, 0, 100);
+    pbar.setProgress(80);
+
+    slider.onChange(fun(h) {
+        var v = slider.getValue();
+        lblSlider.setText("算力吞吐调节: " + v + "%");
+        pbar.setProgress(v);
+        lblProgress.setText("深度学习训练进度: " + v + "%");
+    });
+
+    var btnStep = win.addButton("进度 +10%", 480, 417, 100, 32);
+    btnStep.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("深度学习训练进度: " + cur + "%");
+        lblSlider.setText("算力吞吐调节: " + cur + "%");
+    });
+
+    // 5. 底部状态栏
+    var sb = win.addStatusBar();
+    sb.setText("已就绪 | TzdLang 沉浸式深色模式 | DWM 黑暗标题栏与现代控件系统", 0);
+
+    win.show();
+    App.pollEvents();
+    win.saveScreenshot("screenshots/ui_dark_mode_showcase.png");
+    print("[Test] 深色模式截图已保存到 screenshots/ui_dark_mode_showcase.png");
+
+    for (var i = 0; i < 20; i = i + 1) {
+        App.pollEvents();
+        App.sleep(20);
+    }
+    win.close();
+    print("=== 深色模式测试成功 ===");
+}

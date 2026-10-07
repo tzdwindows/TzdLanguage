@@ -1,0 +1,9 @@
+// Just declare a class, don't use it
+class Box {
+    var int val;
+    Box(v) {
+        this.val = v;
+    }
+}
+print("class registered");
+print("done");

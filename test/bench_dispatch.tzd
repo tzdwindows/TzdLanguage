@@ -1,0 +1,68 @@
+class MathBench {
+    static fun square(x) {
+        return x * x;
+    }
+
+    fun instSquare(x) {
+        return x * x;
+    }
+
+    static fun testStatic(iterations) {
+        var acc = 0;
+        var i = 0;
+        while (i < iterations) {
+            acc = acc + MathBench.square(i);
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    static fun testInstance(iterations) {
+        var bench = new MathBench();
+        var acc = 0;
+        var i = 0;
+        while (i < iterations) {
+            acc = acc + bench.instSquare(i);
+            i = i + 1;
+        }
+        return acc;
+    }
+}
+
+fun main() {
+    // 预热 (Warmup)
+    var w = 0;
+    while (w < 5) {
+        MathBench.testStatic(100000);
+        MathBench.testInstance(100000);
+        w = w + 1;
+    }
+
+    // 100k 测试
+    var t0 = clock();
+    var sRes100k = MathBench.testStatic(100000);
+    var t1 = clock();
+    var sTime100k = t1 - t0;
+
+    var t2 = clock();
+    var iRes100k = MathBench.testInstance(100000);
+    var t3 = clock();
+    var iTime100k = t3 - t2;
+
+    print("TzdLang Static (100k):   " + sTime100k + " ms (Result: " + sRes100k + ")");
+    print("TzdLang Instance (100k): " + iTime100k + " ms (Result: " + iRes100k + ")");
+
+    // 1M 测试
+    var t4 = clock();
+    var sRes1M = MathBench.testStatic(1000000);
+    var t5 = clock();
+    var sTime1M = t5 - t4;
+
+    var t6 = clock();
+    var iRes1M = MathBench.testInstance(1000000);
+    var t7 = clock();
+    var iTime1M = t7 - t6;
+
+    print("TzdLang Static (1M):     " + sTime1M + " ms (Result: " + sRes1M + ")");
+    print("TzdLang Instance (1M):   " + iTime1M + " ms (Result: " + iRes1M + ")");
+}

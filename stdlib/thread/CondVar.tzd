@@ -1,0 +1,38 @@
+/**
+ * TzdLang 线程同步标准库 - CondVar 条件变量
+ */
+
+class CondVar {
+    var any id;
+
+    CondVar() {
+        this.id = sys_cond_create();
+    }
+
+    fun wait(mutex) {
+        return sys_cond_wait(this.id, mutex.id, -1);
+    }
+
+    fun waitTimeout(mutex, timeoutMs) {
+        return sys_cond_wait(this.id, mutex.id, timeoutMs);
+    }
+
+    fun notify() {
+        return sys_cond_notify(this.id);
+    }
+
+    fun notifyOne() {
+        return sys_cond_notify(this.id);
+    }
+
+    fun notifyAll() {
+        return sys_cond_notify_all(this.id);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_cond_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}

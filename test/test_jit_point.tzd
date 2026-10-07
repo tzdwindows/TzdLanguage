@@ -1,0 +1,20 @@
+﻿class Point {
+    var float x;
+    var float y;
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    fun distance_sq(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        ret dx * dx + dy * dy;
+    }
+}
+fun testPoint() {
+    var p1 = new Point(1, 1);
+    var p2 = new Point(2, 2);
+    var d = p1.distance_sq(p2);
+    print("d: " + d);
+}
+testPoint();

@@ -1,0 +1,19 @@
+﻿import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    App.setStyle("macos");
+    var win = new Window("macOS Cupertino Style Demo", 680, 500, 150, 120);
+
+    var lblName = win.addLabel("用户账号:", 38, 55, 68, 24);
+    var txtName = win.addTextBox("tzd_developer@macos", 110, 52, 200, 26, false);
+
+    var btnNormal = win.addButton("标准按钮", 38, 98, 100, 30);
+    var btnPrimary = win.addButton("确认提交", 148, 98, 110, 30);
+    btnPrimary.setPrimary(true);
+
+    win.saveScreenshot("screenshots/debug_no_gb.png");
+    win.close();
+}
+main();

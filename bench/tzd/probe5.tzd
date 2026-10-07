@@ -1,0 +1,38 @@
+// Probe 5: find the argument-size threshold for range
+
+fun makeArr(size) {
+    return range(0, size, 1);
+}
+
+var a1 = makeArr(5);
+print("len makeArr(5): " + toString(len(a1)));
+
+var a2 = makeArr(100);
+print("len makeArr(100): " + toString(len(a2)));
+
+var a3 = makeArr(1000);
+print("len makeArr(1000): " + toString(len(a3)));
+
+var a4 = makeArr(65536);
+print("len makeArr(65536): " + toString(len(a4)));
+
+var a5 = makeArr(100000);
+print("len makeArr(100000): " + toString(len(a5)));
+
+var a6 = makeArr(1000000);
+print("len makeArr(1000000): " + toString(len(a6)));
+
+// also: computed arg
+var k = 5;
+var k2 = k * 1;
+var a7 = makeArr(k2);
+print("len makeArr(5*1 computed): " + toString(len(a7)));
+
+// and range with literal args inside a function
+fun litRange() {
+    return range(0, 5, 1);
+}
+var a8 = litRange();
+print("len litRange(): " + toString(len(a8)));
+
+print("=== probe5 done ===");

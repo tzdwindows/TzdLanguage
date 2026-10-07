@@ -1,0 +1,6 @@
+fun testCallNonFunc() {
+    var x = 12345;
+    x();
+}
+
+testCallNonFunc();

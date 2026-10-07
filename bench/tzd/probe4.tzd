@@ -1,0 +1,31 @@
+// Probe 4: workaround — create arrays inside functions
+
+fun makeArr(size) {
+    return range(0, size, 1);
+}
+
+var a3 = makeArr(5);
+print("len a3 (expect 5): " + toString(len(a3)));
+print("a3[2] (expect 2): " + toString(a3[2]));
+
+fun mutParam(a, idx, v) {
+    a[idx] = v;
+    return 0;
+}
+mutParam(a3, 2, 99);
+print("a3[2] after mutParam (expect 99): " + toString(a3[2]));
+
+var garr = makeArr(5);
+fun writeGlobalArr() {
+    garr[1] = 42;
+    return 0;
+}
+writeGlobalArr();
+print("garr[1] (expect 42): " + toString(garr[1]));
+
+// literal-init array too
+var lit = [10, 20, 30];
+mutParam(lit, 1, 77);
+print("lit[1] (expect 77): " + toString(lit[1]));
+
+print("=== probe4 done ===");

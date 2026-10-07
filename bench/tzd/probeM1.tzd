@@ -1,0 +1,15 @@
+// probeM1: top-level loop + computed string keys, n=1000
+var m = {};
+var i = 0;
+while (i < 1000) {
+    m[toString(i)] = i;
+    i = i + 1;
+}
+var sum = 0;
+i = 0;
+while (i < 1000) {
+    sum = sum + m[toString(i)];
+    i = i + 1;
+}
+print("top-level computed keys n=1000 ok sum=" + toString(sum));
+print("=== done ===");

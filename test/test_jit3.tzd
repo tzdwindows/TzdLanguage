@@ -1,0 +1,1 @@
+var counter = 0; fun inc() { counter = counter + 1; return counter; } fun main() { inc(); inc(); print(inc()); }  

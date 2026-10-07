@@ -1,0 +1,151 @@
+// test_behavior_match.tzd - Verify bytecode VM matches interpreter behavior
+// Run with interpreter: TzdTools.exe --noJit --runMainTzd=test_behavior_match.tzd
+// Run with bytecode:    TzdTools.exe --runbc=test_behavior_match.tzdc
+// Both should produce identical output
+
+var passCount = 0;
+var failCount = 0;
+
+fun check(name, actual, expected) {
+    if (toString(actual) == toString(expected)) {
+        passCount = passCount + 1;
+    } else {
+        failCount = failCount + 1;
+        print("FAIL: " + name + " - expected " + toString(expected) + " got " + toString(actual));
+    }
+}
+
+// 1. Integer arithmetic (must preserve int type)
+check("int_add", 3 + 4, 7);
+check("int_sub", 10 - 3, 7);
+check("int_mul", 6 * 7, 42);
+check("int_neg", 0 - 5, -5);
+
+// 2. Float arithmetic
+check("float_add", 3.5 + 4.5, 8.0);
+check("float_div", 10.0 / 4.0, 2.5);
+check("float_mul", 2.5 * 4.0, 10.0);
+
+// 3. Mixed int/float
+check("mixed_add", 3 + 4.5, 7.5);
+check("mixed_div", 10 / 3.0, 3.333333);
+
+// 4. String operations
+check("str_concat", "Hello" + " " + "World", "Hello World");
+check("str_len", len("Hello"), 5);
+check("str_at", "Hello"[0], "H");
+
+// 5. Boolean
+check("bool_and", true && false, false);
+check("bool_or", true || false, true);
+check("bool_not", !true, false);
+check("bool_eq", 3 == 3, true);
+check("bool_ne", 3 != 4, true);
+check("bool_lt", 3 < 4, true);
+check("bool_le", 3 <= 3, true);
+check("bool_gt", 4 > 3, true);
+check("bool_ge", 3 >= 3, true);
+
+// 6. Control flow
+var x = 5;
+if (x > 3) {
+    check("if_true", 1, 1);
+} else {
+    check("if_true", 0, 1); // Should not reach
+}
+
+if (x > 10) {
+    check("if_false", 0, 1); // Should not reach
+} else {
+    check("if_false_else", 1, 1);
+}
+
+// 7. Loops
+var sum = 0;
+for (i = 1; i <= 10; i = i + 1) {
+    sum = sum + i;
+}
+check("for_sum", sum, 55);
+
+var product = 1;
+var n = 5;
+while (n > 0) {
+    product = product * n;
+    n = n - 1;
+}
+check("while_product", product, 120);
+
+// 8. Function calls and recursion
+fun fib(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+check("fib_10", fib(10), 55);
+
+fun gcd(a, b) {
+    if (b == 0) { return a; }
+    return gcd(b, a % b);
+}
+check("gcd_48_36", gcd(48, 36), 12);
+
+// 9. Arrays
+var arr = range(1, 6, 1);
+check("arr_len", len(arr), 5);
+check("arr_sum", arr[0] + arr[1] + arr[2] + arr[3] + arr[4], 15);
+arr = push(arr, 99);
+check("arr_push", arr[5], 99);
+
+// 10. Maps
+var m = jsonParse("{}");
+m["a"] = 1;
+m["b"] = 2;
+check("map_a", m["a"], 1);
+check("map_b", m["b"], 2);
+check("map_len", len(mapKeys(m)), 2);
+
+// 11. Break/continue
+var bc_result = 0;
+for (i = 0; i < 100; i = i + 1) {
+    if (i == 5) { break; }
+    if (i == 2) { continue; }
+    bc_result = bc_result + i;
+}
+check("break_continue", bc_result, 0 + 1 + 3 + 4);
+
+// 12. Nested scope
+fun outer() {
+    var x = 10;
+    fun inner() {
+        return x + 5;
+    }
+    return inner();
+}
+check("nested_scope", outer(), 15);
+
+// 13. Compound assignment
+var ca = 10;
+ca = ca + 5; check("compound_add", ca, 15);
+ca = ca - 3; check("compound_sub", ca, 12);
+ca = ca * 2; check("compound_mul", ca, 24);
+
+// 14. Conditional expression (no ternary - use if/else)
+var t = 0;
+if (5 > 3) { t = 1; } else { t = 0; }
+check("conditional", t, 1);
+
+// 15. String to number conversion
+check("to_string", toString(42), "42");
+check("to_string_float", toString(3.14), "3.14");
+check("to_int", toInt("42"), 42);
+
+print("");
+print("========================================");
+print("Behavior Match Test Results:");
+print("  Passed: " + toString(passCount));
+print("  Failed: " + toString(failCount));
+if (failCount == 0) {
+    print("  *** ALL TESTS PASSED ***");
+} else {
+    print("  *** SOME TESTS FAILED ***");
+}
+print("========================================");

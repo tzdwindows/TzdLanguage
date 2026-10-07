@@ -1,0 +1,19 @@
+fun main() {
+  var a1 = 10 ^ 4096; var b1 = 3 ^ 2580;
+  var a2 = 10 ^ 4096; var b2 = 3 ^ 2580;
+  var t1 = clock(); var nr1 = a1 * a2; var dr1 = b1 * b2; var t2 = clock();
+  print("frac 4096: " + toString((t2-t1)*1000) + "us");
+  var c1 = 10 ^ 8192; var c2 = 3 ^ 5160; var c3 = 10 ^ 8192; var c4 = 3 ^ 5160;
+  var t3 = clock(); var nr2 = c1 * c3; var dr2 = c2 * c4; var t4 = clock();
+  print("frac 8192: " + toString((t4-t3)*1000) + "us");
+  var d1 = 10 ^ 16384; var d2 = 3 ^ 10320; var d3 = 10 ^ 16384; var d4 = 3 ^ 10320;
+  var t5 = clock(); var nr3 = d1 * d3; var dr3 = d2 * d4; var t6 = clock();
+  print("frac 16384: " + toString((t6-t5)*1000) + "us");
+  var e1 = 10 ^ 32768; var e2 = 3 ^ 20640; var e3 = 10 ^ 32768; var e4 = 3 ^ 20640;
+  var t7 = clock(); var nr4 = e1 * e3; var dr4 = e2 * e4; var t8 = clock();
+  print("frac 32768: " + toString((t8-t7)*1000) + "us");
+  var f1 = 10 ^ 65536; var f2 = 3 ^ 41280; var f3 = 10 ^ 65536; var f4 = 3 ^ 41280;
+  var t9 = clock(); var nr5 = f1 * f3; var dr5 = f2 * f4; var t10 = clock();
+  print("frac 65536: " + toString((t10-t9)*1000) + "us");
+  print("done");
+}

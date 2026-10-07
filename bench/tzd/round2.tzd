@@ -1,0 +1,162 @@
+import "time/DateTime.tzd";
+
+// ===== Round-2 kernels (optimizer-resistant) =====
+
+// K1: string build — repeated concat of int->str conversions
+fun stringBuild(n) {
+    var s = "";
+    var i = 0;
+    while (i < n) {
+        s = s + toString(i) + "-" + toString(i % 7);
+        i = i + 1;
+    }
+    return len(s);
+}
+
+// K2: Monte Carlo pi via Lehmer LCG (sequential state, data-dependent branch)
+fun monteCarlo(n) {
+    var x = 1;
+    var count = 0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var y = (x * 16807) % 2147483647;
+        var fx = x / 2147483647.0;
+        var fy = y / 2147483647.0;
+        if (fx * fx + fy * fy <= 1.0) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return 4.0 * count / n;
+}
+
+// K3: map insert + lookup with string keys
+fun mapOps(n) {
+    var m = {};
+    var i = 0;
+    while (i < n) {
+        m[toString(i)] = i;
+        i = i + 1;
+    }
+    var sum = 0;
+    i = 0;
+    while (i < n) {
+        sum = sum + m[toString(i)];
+        i = i + 1;
+    }
+    return sum;
+}
+
+// K4: OOP allocation + dynamic dispatch, coordinates from LCG (not foldable)
+class Pt {
+    var float x;
+    var float y;
+    Pt(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    fun d2(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        return dx * dx + dy * dy;
+    }
+}
+
+fun oopDispatch(n) {
+    var x = 1;
+    var sum = 0.0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var a = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var b = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var c = x % 1000;
+        x = (x * 16807) % 2147483647;
+        var d = x % 1000;
+        var p1 = new Pt(a * 1.0, b * 1.0);
+        var p2 = new Pt(c * 1.0, d * 1.0);
+        sum = sum + p1.d2(p2);
+        i = i + 1;
+    }
+    return sum;
+}
+
+// K5: hand-written Lomuto quicksort over a global array (array params not used)
+var G = range(0, 300000, 1);
+
+fun qsortG(lo, hi) {
+    if (lo >= hi) {
+        return 0;
+    }
+    var p = G[hi];
+    var i = lo - 1;
+    var j = lo;
+    while (j < hi) {
+        if (G[j] <= p) {
+            i = i + 1;
+            var t = G[i];
+            G[i] = G[j];
+            G[j] = t;
+        }
+        j = j + 1;
+    }
+    i = i + 1;
+    var t2 = G[i];
+    G[i] = G[hi];
+    G[hi] = t2;
+    qsortG(lo, i - 1);
+    qsortG(i + 1, hi);
+    return 0;
+}
+
+fun quickSort() {
+    var n = 300000;
+    var x = 1;
+    var fillSum = 0;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        var v = x % 1000000007;
+        G[i] = v;
+        fillSum = fillSum + v;
+        i = i + 1;
+    }
+    qsortG(0, n - 1);
+    print("qsort min=" + toString(G[0]) + " max=" + toString(G[n - 1]) + " fill=" + toString(fillSum));
+    return 0;
+}
+
+// ===== Driver =====
+
+var sw1 = new Stopwatch();
+sw1.start();
+var r1 = stringBuild(20000);
+sw1.stop();
+print("stringBuild len=" + toString(r1) + " | " + toString(sw1.elapsedMs()) + " ms");
+
+var sw2 = new Stopwatch();
+sw2.start();
+var r2 = monteCarlo(1000000);
+sw2.stop();
+print("monteCarlo pi=" + toString(r2) + " | " + toString(sw2.elapsedMs()) + " ms");
+
+var sw3 = new Stopwatch();
+sw3.start();
+var r3 = mapOps(200000);
+sw3.stop();
+print("mapOps sum=" + toString(r3) + " | " + toString(sw3.elapsedMs()) + " ms");
+
+var sw4 = new Stopwatch();
+sw4.start();
+var r4 = oopDispatch(200000);
+sw4.stop();
+print("oop sum=" + toString(r4) + " | " + toString(sw4.elapsedMs()) + " ms");
+
+var sw5 = new Stopwatch();
+sw5.start();
+quickSort();
+sw5.stop();
+print("qsort time | " + toString(sw5.elapsedMs()) + " ms");

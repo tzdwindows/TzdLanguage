@@ -1,0 +1,42 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    App.setTheme("dark");
+    var win = new Window("Button Visual States Verification (Dark)", 580, 360, 200, 200);
+
+    var gb = win.addGroupBox(" 暗色模式 (Dark Mode) 按钮不同状态对比 ", 20, 20, 540, 300);
+
+    var lbl1 = win.addLabel("1. 正常状态 (Normal):", 40, 60, 180, 24);
+    var btn1 = win.addButton("正常按钮", 240, 56, 120, 32);
+
+    var lbl2 = win.addLabel("2. 悬浮状态 (Hover 100%):", 40, 110, 180, 24);
+    var btn2 = win.addButton("悬浮按钮", 240, 106, 120, 32);
+    btn2.setAnimState(1.0, false);
+
+    var lbl3 = win.addLabel("3. 按下状态 (Pressed):", 40, 160, 180, 24);
+    var btn3 = win.addButton("按下按钮", 240, 156, 120, 32);
+    btn3.setAnimState(1.0, true);
+
+    var lbl4 = win.addLabel("4. 主色按钮悬浮与按下:", 40, 210, 180, 24);
+    var btn4Normal = win.addButton("主色悬浮", 240, 206, 110, 32);
+    btn4Normal.setPrimary(true);
+    btn4Normal.setAnimState(1.0, false);
+
+    var btn4Pressed = win.addButton("主色按下", 370, 206, 110, 32);
+    btn4Pressed.setPrimary(true);
+    btn4Pressed.setAnimState(1.0, true);
+
+    win.show();
+    App.sleep(200);
+    for (var i = 0; i < 20; i = i + 1) {
+        App.pollEvents();
+    }
+
+    win.saveScreenshot("screenshots/button_visual_states_dark.png");
+    print("[Success] button_visual_states_dark.png saved successfully!");
+    win.close();
+}
+
+main();

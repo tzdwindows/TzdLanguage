@@ -1,0 +1,165 @@
+// ============================================================================
+// Module.tzd - Base class for neural network modules (nn.Module equivalent)
+// ============================================================================
+
+import "torch/Init.tzd";
+
+class Module {
+    var int _training;
+    var ptr _params;
+    var ptr _modules;
+    var ptr _buffers;
+    var string _name;
+    var string _device;
+
+    Module(name) {
+        this._name = name;
+        this._training = true;
+        this._params = jsonParse("{}");
+        this._modules = jsonParse("{}");
+        this._buffers = jsonParse("{}");
+        this._device = "cpu";
+    }
+
+    fun registerParameter(name, tensor) {
+        torch_requires_grad(tensor, true);
+        this._params[name] = tensor;
+    }
+
+    fun registerModule(name, module) {
+        this._modules[name] = module;
+    }
+
+    fun registerBuffer(name, tensor) {
+        this._buffers[name] = tensor;
+    }
+
+    fun parameters() {
+        var params = range(0, 0, 1);
+        var keys = mapKeys(this._params);
+        for (var i = 0; i < len(keys); i = i + 1) {
+            params = push(params, this._params[keys[i]]);
+        }
+        var modKeys = mapKeys(this._modules);
+        for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
+            var subMod = this._modules[modKeys[mi]];
+            var subParams = subMod.parameters();
+            for (var si = 0; si < len(subParams); si = si + 1) {
+                params = push(params, subParams[si]);
+            }
+        }
+        return params;
+    }
+
+    fun stateDict() {
+        var dict = jsonParse("{}");
+        var keys = mapKeys(this._params);
+        for (var i = 0; i < len(keys); i = i + 1) {
+            dict[keys[i]] = this._params[keys[i]];
+        }
+        var bufKeys = mapKeys(this._buffers);
+        for (var bi = 0; bi < len(bufKeys); bi = bi + 1) {
+            dict[bufKeys[bi]] = this._buffers[bufKeys[bi]];
+        }
+        var modKeys = mapKeys(this._modules);
+        for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
+            var subMod = this._modules[modKeys[mi]];
+            var subDict = subMod.stateDict();
+            var subKeys = mapKeys(subDict);
+            for (var si = 0; si < len(subKeys); si = si + 1) {
+                dict[modKeys[mi] + "." + subKeys[si]] = subDict[subKeys[si]];
+            }
+        }
+        return dict;
+    }
+
+    fun to(device) {
+        this._device = device;
+        var keys = mapKeys(this._params);
+        for (var i = 0; i < len(keys); i = i + 1) {
+            this._params[keys[i]] = torch_to_device(this._params[keys[i]], device);
+        }
+        var bufKeys = mapKeys(this._buffers);
+        for (var bi = 0; bi < len(bufKeys); bi = bi + 1) {
+            this._buffers[bufKeys[bi]] = torch_to_device(this._buffers[bufKeys[bi]], device);
+        }
+        var modKeys = mapKeys(this._modules);
+        for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
+            var subMod = this._modules[modKeys[mi]];
+            subMod.to(device);
+        }
+        return this;
+    }
+
+    fun cpu() { return this.to("cpu"); }
+    fun cuda() { return this.to("cuda"); }
+    fun train() { this._training = true; return this; }
+    fun eval() { this._training = false; return this; }
+    fun isTraining() { return this._training; }
+    fun getName() { return this._name; }
+
+    fun moduleNames() {
+        return mapKeys(this._modules);
+    }
+
+    fun getModule(name) {
+        return this._modules[name];
+    }
+
+    fun hasModule(name) {
+        return mapHas(this._modules, name);
+    }
+
+    fun namedParameters() {
+        var result = jsonParse("{}");
+        var keys = mapKeys(this._params);
+        for (var i = 0; i < len(keys); i = i + 1) {
+            result[keys[i]] = this._params[keys[i]];
+        }
+        var modKeys = mapKeys(this._modules);
+        for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
+            var subMod = this._modules[modKeys[mi]];
+            var subNP = subMod.namedParameters();
+            var subKeys = mapKeys(subNP);
+            for (var si = 0; si < len(subKeys); si = si + 1) {
+                result[modKeys[mi] + "." + subKeys[si]] = subNP[subKeys[si]];
+            }
+        }
+        return result;
+    }
+
+    fun forward(x) { return x; }
+    fun zeroGrad() { torch_zero_grad_params(this.parameters()); }
+    fun numParams() { return torch_count_params(this.parameters()); }
+    fun save(path) { torch_save_state_dict(this.stateDict(), path); }
+    fun load(path) { this.loadStateDict(torch_load_state_dict(path)); }
+
+    fun loadStateDict(dict) {
+        var keys = mapKeys(this._params);
+        for (var i = 0; i < len(keys); i = i + 1) {
+            if (mapHas(dict, keys[i])) {
+                var param = this._params[keys[i]];
+                var loaded = dict[keys[i]];
+                if (torch_is_tensor(param)) {
+                    if (torch_is_tensor(loaded)) {
+                        torch_copy_(param, loaded);
+                    }
+                }
+            }
+        }
+        var modKeys = mapKeys(this._modules);
+        for (var mi = 0; mi < len(modKeys); mi = mi + 1) {
+            var subMod = this._modules[modKeys[mi]];
+            var prefix = modKeys[mi] + ".";
+            var subDict = jsonParse("{}");
+            var dictKeys = mapKeys(dict);
+            for (var di = 0; di < len(dictKeys); di = di + 1) {
+                var dk = dictKeys[di];
+                if (startsWith(dk, prefix)) {
+                    subDict[substring(dk, len(prefix), len(dk))] = dict[dk];
+                }
+            }
+            subMod.loadStateDict(subDict);
+        }
+    }
+}

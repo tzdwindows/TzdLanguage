@@ -1,0 +1,75 @@
+// ============================================================================
+// FFT.tzd - Signal Processing & Frequency Domain Operations (Category 1)
+// ============================================================================
+
+fun fft(input, n, dim) {
+    return torch_fft_fft(input, n, dim);
+}
+
+fun ifft(input, n, dim) {
+    return torch_fft_ifft(input, n, dim);
+}
+
+fun fft2(input) {
+    return torch_fft_fft2(input);
+}
+
+fun ifft2(input) {
+    return torch_fft_ifft2(input);
+}
+
+fun fftn(input) {
+    return torch_fft_fftn(input);
+}
+
+fun ifftn(input) {
+    return torch_fft_ifftn(input);
+}
+
+fun rfft(input, n, dim) {
+    return torch_fft_rfft(input, n, dim);
+}
+
+fun irfft(input, n, dim) {
+    return torch_fft_irfft(input, n, dim);
+}
+
+fun fftshift(input) {
+    return torch_fft_shift(input);
+}
+
+fun ifftshift(input) {
+    return torch_fft_ishift(input);
+}
+
+fun complexReal(input) {
+    return torch_complex_real(input);
+}
+
+fun complexImag(input) {
+    return torch_complex_imag(input);
+}
+
+fun complexAngle(input) {
+    return torch_complex_angle(input);
+}
+
+fun complexAbs(input) {
+    return torch_complex_abs(input);
+}
+
+fun stft(input, n_fft, hop_length, win_length, window) {
+    return torch_stft(input, n_fft, hop_length, win_length, window);
+}
+
+fun istft(input, n_fft, hop_length, win_length, window) {
+    return torch_istft(input, n_fft, hop_length, win_length, window);
+}
+
+fun spectrogram(input, n_fft, hop_length, win_length) {
+    return torch_spectrogram(input, n_fft, hop_length, win_length);
+}
+
+fun haarWavelet1d(input) {
+    return torch_wavelet_haar_1d(input);
+}

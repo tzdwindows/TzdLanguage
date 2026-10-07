@@ -1,0 +1,13 @@
+import "thread/Thread.tzd";
+
+class AAA {
+    var int a;
+}
+
+AAA A = new AAA();
+A.a = 20;
+
+c = 10;
+fun aaa() {
+    print("aaa: " + A.a);
+}

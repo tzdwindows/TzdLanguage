@@ -1,0 +1,61 @@
+// Test nn.Module system - simple version without torch ops
+import "torch/Module.tzd";
+import "torch/Sequential.tzd";
+import "torch/Layer.tzd";
+
+class MLP extends Module {
+    var int fc1;
+    var int fc2;
+
+    MLP() {
+        super("MLP");
+        this.fc1 = new Linear(10, 32);
+        this.fc2 = new Linear(32, 5);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+    }
+
+    fun forward(x) {
+        var h = torch_relu(this.fc1.forward(x));
+        return this.fc2.forward(h);
+    }
+}
+
+print("=== Module System Test ===");
+
+// Test 1: Create model
+var model = new MLP();
+print("Model name: " + model.getName());
+print("Training: " + toString(model.isTraining()));
+
+// Test 2: Parameters
+var params = model.parameters();
+print("Param count: " + toString(len(params)));
+print("Total params: " + toString(model.numParams()));
+
+// Test 3: State dict
+var sd = model.stateDict();
+var keys = mapKeys(sd);
+print("StateDict entries: " + toString(len(keys)));
+var i = 0;
+for (i = 0; i < len(keys); i = i + 1) {
+    print("  " + keys[i]);
+}
+
+// Test 4: Train/eval
+model.eval();
+print("After eval: " + toString(model.isTraining()));
+model.train();
+print("After train: " + toString(model.isTraining()));
+
+// Test 5: Sequential
+var seq = new Sequential();
+seq.add(new Linear(10, 20));
+seq.add(new ReLU());
+seq.add(new Linear(20, 5));
+print("Sequential layers: " + toString(seq.len()));
+var seqParams = seq.parameters();
+print("Sequential params: " + toString(len(seqParams)));
+
+print("=== Module tests passed! ===");
+exit;

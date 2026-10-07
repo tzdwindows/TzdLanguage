@@ -1,0 +1,15 @@
+// ============================================================================
+// RNG.tzd - Random Number Generator State Management (Category 15)
+// ============================================================================
+
+fun getRngState() {
+    return torch_get_rng_state();
+}
+
+fun setRngState(state) {
+    return torch_set_rng_state(state);
+}
+
+fun manualSeed(seed) {
+    return torch_manual_seed(seed);
+}

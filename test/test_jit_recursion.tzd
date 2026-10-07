@@ -1,0 +1,107 @@
+// ============================================================================
+// test_jit_recursion.tzd - Test JIT infinite recursion detection
+// Verifies that infinite recursion is caught early (before stack overflow)
+// and that legitimate deep recursion still works.
+// ============================================================================
+
+print("=== Test 1: Legitimate recursion (factorial) ===");
+fun factorial(n) {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+print("factorial(10) = " + toString(factorial(10)));
+print("factorial(20) = " + toString(factorial(20)));
+print("factorial(100) = " + toString(factorial(100)));
+print("");
+
+print("=== Test 2: Legitimate tail recursion (sum) ===");
+fun sumRange(n, acc) {
+    if (n <= 0) { return acc; }
+    return sumRange(n - 1, acc + n);
+}
+print("sumRange(1000) = " + toString(sumRange(1000, 0)));
+print("sumRange(5000) = " + toString(sumRange(5000, 0)));
+print("");
+
+print("=== Test 3: Infinite recursion detection ===");
+fun awa() {
+    awa();
+}
+
+try {
+    awa();
+    print("ERROR: Should have thrown recursion error!");
+} catch (err) {
+    print("SUCCESS: Caught infinite recursion: " + err);
+}
+print("");
+
+print("=== Test 4: Mutual recursion ===");
+fun isEven(n) {
+    if (n == 0) { return true; }
+    return isOdd(n - 1);
+}
+
+fun isOdd(n) {
+    if (n == 0) { return false; }
+    return isEven(n - 1);
+}
+
+print("isEven(100) = " + toString(isEven(100)));
+print("isOdd(99) = " + toString(isOdd(99)));
+print("");
+
+print("=== Test 5: Infinite mutual recursion detection ===");
+fun ping() {
+    return pong();
+}
+
+fun pong() {
+    return ping();
+}
+
+try {
+    ping();
+    print("ERROR: Should have thrown recursion error!");
+} catch (err) {
+    print("SUCCESS: Caught infinite mutual recursion: " + err);
+}
+print("");
+
+print("=== Test 6: Class method recursion ===");
+class Counter {
+    var count = 0;
+
+    Counter() {
+        this.count = 0;
+    }
+
+    fun recursiveDecrement(n) {
+        if (n <= 0) {
+            return this.count;
+        }
+        this.count = this.count + 1;
+        return this.recursiveDecrement(n - 1);
+    }
+}
+
+var c = new Counter();
+var result = c.recursiveDecrement(100);
+print("Counter after 100 recursive calls: " + toString(result));
+print("");
+
+print("=== Test 7: Deep recursion within limit ===");
+fun deepRecurse(n, target) {
+    if (n >= target) {
+        return n;
+    }
+    return deepRecurse(n + 1, target);
+}
+
+// This should succeed - 3000 levels of recursion
+var r = deepRecurse(0, 3000);
+print("deepRecurse(0, 3000) = " + toString(r));
+print("");
+
+print("=== All recursion tests passed! ===");
+exit;

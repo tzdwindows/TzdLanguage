@@ -1,0 +1,17 @@
+class Counter {
+    var int count;
+    Counter() { this.count = 0; }
+    fun recurse(n) {
+        if (n <= 0) { return this.count; }
+        this.count = this.count + 1;
+        return this.recurse(n - 1);
+    }
+}
+
+print("=== Recursive Class Method ===");
+var c = new Counter();
+print("recurse(10) = " + toString(c.recurse(10)));
+print("recurse(50) = " + toString(c.recurse(50)));
+print("recurse(100) = " + toString(c.recurse(100)));
+print("=== Done ===");
+exit;

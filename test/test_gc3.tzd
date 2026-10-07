@@ -1,0 +1,17 @@
+class Node {
+    var int data;
+    var ptr next;
+    Node(v) { this.data = v; this.next = null; }
+}
+fun main() {
+    var n = new Node(1);
+    print("n.data = " + toString(n.data));
+    var n2 = new Node(2);
+    n.next = n2;
+    print("n.next.data = " + toString(n.next.data));
+    var head = null;
+    var n3 = new Node(3);
+    n3.next = head;
+    head = n3;
+    print("head.data = " + toString(head.data));
+}

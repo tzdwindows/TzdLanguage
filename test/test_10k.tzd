@@ -1,0 +1,32 @@
+﻿class Point {
+    var float x;
+    var float y;
+    
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    
+    fun distance_sq(p) {
+        var dx = this.x - p.x;
+        var dy = this.y - p.y;
+        ret dx * dx + dy * dy;
+    }
+}
+
+fun runBenchmark() {
+    var start = clock();
+    var sum = 0;
+    var i = 0;
+    while (i < 10000) {
+        var p1 = new Point(i, i);
+        var p2 = new Point(i+1, i+1);
+        sum = sum + p1.distance_sq(p2);
+        i = i + 1;
+    }
+    var end = clock();
+    print("Tzd result: " + sum);
+    print("Tzd Time: " + ((end - start) / 1000.0) + " s");
+}
+
+runBenchmark();

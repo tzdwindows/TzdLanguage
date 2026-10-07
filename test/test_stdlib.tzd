@@ -1,0 +1,116 @@
+// ============================================================================
+// test_stdlib.tzd - Test extended standard library functions
+// ============================================================================
+
+print("=== Test: DateTime ===");
+print("now() = " + toString(now()));
+print("timestamp() = " + toString(timestamp()));
+print("formatTime = " + formatTime(now(), "%Y-%m-%d %H:%M:%S"));
+var parts = dateParts(now());
+print("Year: " + parts.year + " Month: " + parts.month + " Day: " + parts.day);
+print("");
+
+print("=== Test: Base64 ===");
+var encoded = base64Encode("Hello, World!");
+print("base64Encode('Hello, World!') = " + encoded);
+var decoded = base64Decode(encoded);
+print("base64Decode = " + decoded);
+print("");
+
+print("=== Test: CRC32 ===");
+print("crc32('test') = " + toString(crc32("test")));
+print("crc32('hello') = " + toString(crc32("hello")));
+print("");
+
+print("=== Test: Hash ===");
+print("hash('abc') = " + toString(hash("abc")));
+print("");
+
+print("=== Test: Environment ===");
+print("PATH exists: " + toString(mapHas(jsonParse("{}"), "PATH")));
+var path = getEnv("PATH");
+print("PATH length: " + toString(len(path)));
+print("");
+
+print("=== Test: Math ===");
+print("comb(10, 3) = " + toString(comb(10, 3)));
+print("perm(10, 3) = " + toString(perm(10, 3)));
+print("fib(20) = " + toString(fib(20)));
+print("fib(50) = " + toString(fib(50)));
+print("isPowerOf2(64) = " + toString(isPowerOf2(64)));
+print("isPowerOf2(63) = " + toString(isPowerOf2(63)));
+print("nextPowerOf2(100) = " + toString(nextPowerOf2(100)));
+print("cbrt(27) = " + toString(cbrt(27)));
+print("log1p(1) = " + toString(log1p(1)));
+print("expm1(1) = " + toString(expm1(1)));
+print("");
+
+print("=== Test: String functions ===");
+print("toTitleCase('hello world') = " + toTitleCase("hello world"));
+print("levenshtein('kitten', 'sitting') = " + toString(levenshtein("kitten", "sitting")));
+print("countSubstr('ababab', 'ab') = " + toString(countSubstr("ababab", "ab")));
+print("wordCount('hello world foo bar') = " + toString(wordCount("hello world foo bar")));
+print("toCamelCase('hello_world') = " + toCamelCase("hello_world"));
+print("toSnakeCase('HelloWorld') = " + toSnakeCase("HelloWorld"));
+print("escape('a\\nb\\tc') = " + escape("a\nb\tc"));
+print("");
+
+print("=== Test: UUID ===");
+print("uuid() = " + uuid());
+print("uuid() = " + uuid());
+print("");
+
+print("=== Test: Map functions ===");
+var m = jsonParse("{}");
+m["a"] = 1;
+m["b"] = 2;
+m["c"] = 3;
+var keys = mapKeys(m);
+print("mapKeys = " + toString(len(keys)) + " keys");
+var vals = mapValues(m);
+print("mapValues = " + toString(len(vals)) + " values");
+print("mapHas(m, 'a') = " + toString(mapHas(m, "a")));
+print("mapHas(m, 'z') = " + toString(mapHas(m, "z")));
+print("mapGet(m, 'a', 0) = " + toString(mapGet(m, "a", 0)));
+print("mapGet(m, 'z', 99) = " + toString(mapGet(m, "z", 99)));
+print("");
+
+print("=== Test: Array functions ===");
+var arr = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+print("argmax = " + toString(argmax(arr)));
+print("argmin = " + toString(argmin(arr)));
+print("cumsum = " + toString(len(cumsum(arr))));
+print("diff = " + toString(len(diff(arr))));
+var ls = linspace_arr(0, 1, 5);
+print("linspace_arr len = " + toString(len(ls)));
+print("shuffle len = " + toString(len(shuffle(arr))));
+print("");
+
+print("=== Test: Set operations ===");
+var s1 = setCreate(1, 2, 3, 4, 5);
+var s2 = setCreate(3, 4, 5, 6, 7);
+print("setContains(s1, 3) = " + toString(setContains(s1, 3)));
+print("setSize(s1) = " + toString(setSize(s1)));
+var union = setUnion(s1, s2);
+print("union size = " + toString(setSize(union)));
+var inter = setIntersect(s1, s2);
+print("intersect size = " + toString(setSize(inter)));
+var diff_s = setDifference(s1, s2);
+print("difference size = " + toString(setSize(diff_s)));
+print("");
+
+print("=== Test: Constants ===");
+print("TAU = " + toString(TAU));
+print("SQRT2 = " + toString(SQRT2));
+print("GOLDEN_RATIO = " + toString(GOLDEN_RATIO));
+print("EPSILON = " + toString(EPSILON));
+print("");
+
+print("=== Test: OS info ===");
+var osInfo = getOsInfo();
+print("OS: " + osInfo.os);
+print("Cores: " + toString(osInfo.cores));
+print("");
+
+print("=== All stdlib tests passed! ===");
+exit;

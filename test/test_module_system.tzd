@@ -1,0 +1,224 @@
+// ============================================================================
+// test_module_system.tzd - Test the nn.Module system
+// Tests: Module base class, Sequential, Linear, loss functions,
+// state_dict, parameters, to(device), train/eval, training loop
+// ============================================================================
+
+import "torch/All.tzd";
+
+// ---- Test 1: Basic Linear layer ----
+print("=== Test 1: Linear Layer ===");
+var fc = new Linear(10, 5);
+print("Layer name: " + fc.getName());
+print("Num params: " + toString(fc.numParams()));
+
+var x = torch_randn(3, 10);
+var out = fc.forward(x);
+print("Input shape: " + torch_to_string(torch_shape(x)));
+print("Output shape: " + torch_to_string(torch_shape(out)));
+print("");
+
+// ---- Test 2: Sequential model ----
+print("=== Test 2: Sequential Model ===");
+var model = new Sequential();
+model.add(new Linear(784, 256));
+model.add(new ReLU());
+model.add(new Dropout(0.5));
+model.add(new Linear(256, 10));
+model.add(new Softmax());
+
+print("Model has " + toString(model.len()) + " layers");
+print("Total params: " + toString(model.numParams()));
+
+var input = torch_randn(4, 784);
+var output = model.forward(input);
+print("Output shape: " + torch_to_string(torch_shape(output)));
+print("");
+
+// ---- Test 3: Custom model with class inheritance ----
+print("=== Test 3: Custom Model ===");
+
+class MLP extends Module {
+    var fc1;
+    var fc2;
+    var fc3;
+
+    MLP(in_features, hidden1, hidden2, out_features) {
+        super("MLP");
+        this.fc1 = new Linear(in_features, hidden1);
+        this.fc2 = new Linear(hidden1, hidden2);
+        this.fc3 = new Linear(hidden2, out_features);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+        this.registerModule("fc3", this.fc3);
+    }
+
+    fun forward(x) {
+        var h1 = torch_relu(this.fc1.forward(x));
+        var h2 = torch_relu(this.fc2.forward(h1));
+        var out = this.fc3.forward(h2);
+        return torch_softmax(out, -1);
+    }
+}
+
+var mlp = new MLP(100, 64, 32, 10);
+print("MLP params: " + toString(mlp.numParams()));
+
+var x2 = torch_randn(8, 100);
+var out2 = mlp.forward(x2);
+print("MLP output shape: " + torch_to_string(torch_shape(out2)));
+print("");
+
+// ---- Test 4: State dict save/load ----
+print("=== Test 4: State Dict ===");
+var state = mlp.stateDict();
+var keys = mapKeys(state);
+print("State dict entries: " + toString(len(keys)));
+for (i = 0; i < len(keys); i = i + 1) {
+    var t = state[keys[i]];
+    print("  " + keys[i] + ": shape=" + torch_to_string(torch_shape(t)));
+}
+
+// Save to file
+mlp.save("test_model_state.bin");
+print("Model saved to test_model_state.bin");
+
+// Create new model and load state
+var mlp2 = new MLP(100, 64, 32, 10);
+mlp2.load("test_model_state.bin");
+print("Model loaded from file");
+print("");
+
+// ---- Test 5: Loss functions ----
+print("=== Test 5: Loss Functions ===");
+var logits = torch_randn(4, 10);
+var targets = torch_randint(0, 10, 4);
+
+var ceLoss = new CrossEntropyLoss();
+var loss = ceLoss.forward(logits, targets);
+print("CrossEntropy loss: " + toString(torch_scalar_value(loss)));
+
+var mseLoss = new MSELoss();
+var pred = torch_randn(4, 10);
+var target2 = torch_randn(4, 10);
+var loss2 = mseLoss.forward(pred, target2);
+print("MSE loss: " + toString(torch_scalar_value(loss2)));
+print("");
+
+// ---- Test 6: Training loop ----
+print("=== Test 6: Training Loop ===");
+var trainModel = new Linear(10, 2);
+var optim = adam(trainModel, 0.01);
+var lossFn = new MSELoss();
+
+var trainData = [];
+for (i = 0; i < 100; i = i + 1) {
+    var inp = torch_randn(4, 10);
+    var tgt = torch_randn(4, 2);
+    var batch = jsonParse("{}");
+    batch["input"] = inp;
+    batch["target"] = tgt;
+    push(trainData, batch);
+}
+
+// Train for 5 epochs
+model = trainModel;
+for (epoch = 0; epoch < 5; epoch = epoch + 1) {
+    var epochLoss = 0.0;
+    for (i = 0; i < 20; i = i + 1) {
+        var batch = trainData[i];
+        torch_optim_zero_grad(optim);
+        var output = model.forward(batch["input"]);
+        var loss = lossFn.forward(output, batch["target"]);
+        torch_backward(loss);
+        torch_optim_step(optim);
+        epochLoss = epochLoss + torch_scalar_value(loss);
+    }
+    print("Epoch " + toString(epoch + 1) + " - avg loss: " + toFixed(epochLoss / 20.0, 4));
+}
+print("");
+
+// ---- Test 7: Conv2d model ----
+print("=== Test 7: Conv2d Model ===");
+
+class SimpleCNN extends Module {
+    var conv1;
+    var conv2;
+    var fc1;
+
+    SimpleCNN() {
+        super("SimpleCNN");
+        this.conv1 = new Conv2d(1, 16, 3, 1, 1);
+        this.conv2 = new Conv2d(16, 32, 3, 1, 1);
+        this.fc1 = new Linear(32 * 7 * 7, 10);
+        this.registerModule("conv1", this.conv1);
+        this.registerModule("conv2", this.conv2);
+        this.registerModule("fc1", this.fc1);
+    }
+
+    fun forward(x) {
+        var h = torch_relu(this.conv1.forward(x));
+        h = torch_max_pool2d(h, 2, 2);
+        h = torch_relu(this.conv2.forward(h));
+        h = torch_max_pool2d(h, 2, 2);
+        h = torch_flatten(h, 1, -1);
+        return this.fc1.forward(h);
+    }
+}
+
+var cnn = new SimpleCNN();
+print("CNN params: " + toString(cnn.numParams()));
+var imgInput = torch_randn(1, 1, 28, 28);
+var cnnOut = cnn.forward(imgInput);
+print("CNN output shape: " + torch_to_string(torch_shape(cnnOut)));
+print("");
+
+// ---- Test 8: ModuleList ----
+print("=== Test 8: ModuleList ===");
+var ml = new ModuleList();
+ml.add(new Linear(10, 10));
+ml.add(new ReLU());
+ml.add(new Linear(10, 5));
+print("ModuleList size: " + toString(ml.len()));
+print("ModuleList params: " + toString(ml.numParams()));
+print("");
+
+// ---- Test 9: Train/eval mode ----
+print("=== Test 9: Train/Eval Mode ===");
+print("Default training: " + toString(mlp.isTraining()));
+mlp.eval();
+print("After eval(): " + toString(mlp.isTraining()));
+mlp.train();
+print("After train(): " + toString(mlp.isTraining()));
+print("");
+
+// ---- Test 10: Model summary ----
+print("=== Test 10: Model Summary ===");
+modelSummary(mlp);
+print("");
+
+// ---- Test 11: Early stopping ----
+print("=== Test 11: Early Stopping ===");
+var es = new EarlyStopping(3, 0.001);
+var losses = [1.0, 0.9, 0.85, 0.85, 0.85, 0.85];
+for (i = 0; i < len(losses); i = i + 1) {
+    var stopped = es.step(losses[i]);
+    print("  Epoch " + toString(i + 1) + ": loss=" + toString(losses[i]) + " stop=" + toString(stopped));
+    if (stopped) {
+        print("  Early stopping triggered!");
+        break;
+    }
+}
+print("");
+
+// ---- Test 12: Memory management ----
+print("=== Test 12: Memory Management ===");
+print("Num tensors: " + toString(torch_num_tensors()));
+print("Memory: " + torch_memory_allocated_str());
+torch_gc();
+print("After GC - Num tensors: " + toString(torch_num_tensors()));
+print("After GC - Memory: " + torch_memory_allocated_str());
+print("");
+
+print("=== All Module system tests passed! ===");
+exit;

@@ -1,0 +1,60 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+fun main() {
+    var win = new Window("Test Closure Scoping", 500, 400, 100, 100);
+
+    var lblSlider = win.addLabel("音量调节 (滑块): 65%", 40, 40, 250, 24);
+    var slider = win.addSlider(40, 70, 350, 35, 0, 100);
+    slider.setValue(65);
+
+    var lblProgress = win.addLabel("任务进度: 65%", 40, 120, 200, 24);
+    var pbar = win.addProgressBar(40, 150, 350, 26, 0, 100);
+    pbar.setProgress(65);
+
+    var callbackCount = 0;
+
+    slider.onChange(fun(h) {
+        var v = slider.getValue();
+        lblSlider.setText("音量调节 (滑块): " + v + "%");
+        pbar.setProgress(v);
+        lblProgress.setText("任务进度: " + v + "%");
+        callbackCount = callbackCount + 1;
+        print("[Slider onChange] v = " + v + ", pbar progress set!");
+    });
+
+    var btnStep = win.addButton("进度 +10%", 40, 200, 120, 32);
+    btnStep.onClick(fun(h) {
+        var cur = pbar.getProgress();
+        if (cur >= 100) cur = 0; else cur = cur + 10;
+        pbar.setProgress(cur);
+        slider.setValue(cur);
+        lblProgress.setText("任务进度: " + cur + "%");
+        lblSlider.setText("音量调节 (滑块): " + cur + "%");
+        callbackCount = callbackCount + 1;
+        print("[Button onClick] cur = " + cur + ", updated pbar to " + cur);
+    });
+
+    win.show();
+    App.pollEvents();
+
+    print("[Testing] Initial pbar progress: " + pbar.getProgress());
+
+    // 1. Simulate button click: progress should increase from 65 to 75
+    btnStep.performClick();
+    App.pollEvents();
+
+    var progAfterClick = pbar.getProgress();
+    print("[Testing] Progress after btnStep click: " + progAfterClick);
+
+    if (progAfterClick == 75) {
+        print("=== CLOSURE TEST PASSED: pbar accessed and modified in callback successfully! ===");
+    } else {
+        print("=== CLOSURE TEST FAILED: expected 75, got " + progAfterClick + " ===");
+    }
+
+    win.close();
+}
+
+main();

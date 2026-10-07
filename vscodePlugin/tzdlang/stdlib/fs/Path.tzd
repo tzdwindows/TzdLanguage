@@ -1,0 +1,76 @@
+/**
+ * TzdLang 文件系统标准库 - Path 路径操作
+ */
+
+class Path {
+    static fun join2(p1, p2) {
+        if (p1 == null || p1 == "") return p2;
+        if (p2 == null || p2 == "") return p1;
+        var l1 = len(p1);
+        var lastChar = p1[l1 - 1];
+        if (lastChar == "/" || lastChar == "\\") {
+            return p1 + p2;
+        }
+        return p1 + "/" + p2;
+    }
+
+    static fun join(p1, p2, p3, p4) {
+        var res = Path.join2(p1, p2);
+        if (p3 != null && p3 != "") res = Path.join2(res, p3);
+        if (p4 != null && p4 != "") res = Path.join2(res, p4);
+        return res;
+    }
+
+    static fun getFileName(path) {
+        if (path == null) return "";
+        var idx1 = lastIndexOf(path, "/");
+        var idx2 = lastIndexOf(path, "\\");
+        var idx = idx1;
+        if (idx2 > idx) idx = idx2;
+        if (idx >= 0) {
+            return substring(path, idx + 1);
+        }
+        return path;
+    }
+
+    static fun getDirectoryName(path) {
+        if (path == null) return "";
+        var idx1 = lastIndexOf(path, "/");
+        var idx2 = lastIndexOf(path, "\\");
+        var idx = idx1;
+        if (idx2 > idx) idx = idx2;
+        if (idx >= 0) {
+            return substring(path, 0, idx);
+        }
+        return "";
+    }
+
+    static fun getExtension(path) {
+        var name = Path.getFileName(path);
+        var idx = lastIndexOf(name, ".");
+        if (idx >= 0) {
+            return substring(name, idx);
+        }
+        return "";
+    }
+
+    static fun getFileNameWithoutExtension(path) {
+        var name = Path.getFileName(path);
+        var idx = lastIndexOf(name, ".");
+        if (idx >= 0) {
+            return substring(name, 0, idx);
+        }
+        return name;
+    }
+
+    static fun isAbsolute(path) {
+        if (path == null || len(path) < 2) return false;
+        var c0 = path[0];
+        var c1 = path[1];
+        if (c1 == ":" && ((c0 >= "A" && c0 <= "Z") || (c0 >= "a" && c0 <= "z"))) {
+            return true;
+        }
+        if (c0 == "/" || c0 == "\\") return true;
+        return false;
+    }
+}

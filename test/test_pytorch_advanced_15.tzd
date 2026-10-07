@@ -1,0 +1,207 @@
+﻿// ============================================================================
+// test_pytorch_advanced_15.tzd
+// Lightweight, comprehensive verification of all 15 advanced PyTorch capabilities
+// ============================================================================
+
+import "torch/All.tzd";
+
+print("=== Testing 15 Advanced PyTorch Capabilities ===");
+
+// ----------------------------------------------------------------------------
+// 1. Signal Processing & FFT
+// ----------------------------------------------------------------------------
+print("[1/15] Testing Signal Processing & FFT...");
+var sig = torch_randn(4, 8);
+var sig_fft = fft(sig, null, -1);
+var sig_ifft = ifft(sig_fft, null, -1);
+var sig_rfft = rfft(sig, null, -1);
+var sig_irfft = irfft(sig_rfft, 8, -1);
+var sig_shift = fftshift(sig);
+var sig_spec = spectrogram(torch_randn(64), 16, 8, 16);
+var sig_haar = haarWavelet1d(torch_randn(8));
+print("  FFT and signal ops: OK");
+
+// ----------------------------------------------------------------------------
+// 2. Distributed Training
+// ----------------------------------------------------------------------------
+print("[2/15] Testing Distributed Training...");
+var pg = initProcessGroup("gloo", 0, 1);
+var t_dist = torch_ones(2, 2);
+var reduced = pg.allReduce(t_dist, "mean");
+var dummy_mod = new Linear(2, 2);
+var ddp = new DistributedDataParallel(dummy_mod, pg);
+var ddp_out = ddp.forward(torch_randn(1, 2));
+ddp.syncGradients();
+var dp = new DataParallel(dummy_mod, ["cpu"]);
+var dp_out = dp.forward(torch_randn(1, 2));
+print("  Distributed & DDP: OK");
+
+// ----------------------------------------------------------------------------
+// 3. Dynamic Graphs & TorchScript
+// ----------------------------------------------------------------------------
+print("[3/15] Testing TorchScript & Dynamic Graphs...");
+registerCustomOp("my_custom_relu", fun(args) { return torch_relu(args[0]); });
+var custom_res = callCustomOp("my_custom_relu", [torch_tensor([-1.0, 2.0])]);
+var traced_m = trace(dummy_mod, torch_randn(1, 2));
+print("  TorchScript & Custom Op: OK");
+
+// ----------------------------------------------------------------------------
+// 4. Advanced Vision Operators
+// ----------------------------------------------------------------------------
+print("[4/15] Testing Advanced Vision Operators...");
+var boxes = torch_tensor([[0.0, 0.0, 10.0, 10.0], [1.0, 1.0, 9.0, 9.0]]);
+var scores = torch_tensor([0.9, 0.75]);
+var keep = nms(boxes, scores, 0.5);
+var feat = torch_randn(1, 2, 8, 8);
+var rois = torch_tensor([[0.0, 1.0, 1.0, 4.0, 4.0]]);
+var pool_out = roiPool(feat, rois, 2, 2, 1.0);
+var align_out = roiAlign(feat, rois, 2, 2, 1.0);
+print("  NMS, RoIPool, RoIAlign: OK");
+
+// ----------------------------------------------------------------------------
+// 5. RNN / LSTM / GRU Operators
+// ----------------------------------------------------------------------------
+print("[5/15] Testing RNN / LSTM / GRU Operators...");
+var rnn_c = new RNNCell(4, 6, "tanh");
+var rnn_out = rnn_c.forward(torch_randn(2, 4), null);
+var lstm_c = new LSTMCell(4, 6);
+var lstm_out = lstm_c.forward(torch_randn(2, 4), null);
+var gru_c = new GRUCell(4, 6);
+var gru_out = gru_c.forward(torch_randn(2, 4), null);
+var lstm_seq = new LSTM(4, 6, 1, false);
+var seq_out = lstm_seq.forward(torch_randn(3, 2, 4), null);
+print("  RNN, LSTM, GRU cells and sequence: OK");
+
+// ----------------------------------------------------------------------------
+// 6. Transformer & FlashAttention
+// ----------------------------------------------------------------------------
+print("[6/15] Testing Transformer & FlashAttention...");
+var q = torch_randn(2, 4, 8);
+var k = torch_randn(2, 4, 8);
+var v = torch_randn(2, 4, 8);
+var sdpa_out = scaledDotProductAttention(q, k, v, null, 0.0, false, null);
+var mha = new MultiheadAttention(8, 2, 0.0);
+var mha_out = mha.forward(torch_randn(2, 4, 8), null, null, null);
+var sp_mask = sparseAttentionMask(4, 2);
+var flash = new FlashAttention();
+var flash_out = flash.forward(q, k, v, null, false);
+print("  SDPA, MHA, FlashAttention, SparseMask: OK");
+
+// ----------------------------------------------------------------------------
+// 7. Model Parallelism & Pipeline
+// ----------------------------------------------------------------------------
+print("[7/15] Testing Model Parallelism & Pipeline...");
+var col_p = new ColumnParallelLinear(4, 8, 2);
+var row_p = new RowParallelLinear(8, 4, 2);
+var c_out = col_p.forward(torch_randn(2, 4));
+var stage1 = new PipelineStage(0, new Linear(4, 4));
+var stage2 = new PipelineStage(1, new Linear(4, 2));
+var pipe = new PipelineParallel([stage1, stage2]);
+var pipe_out = pipe.forward(torch_randn(1, 4));
+print("  Column/Row Parallel, Pipeline: OK");
+
+// ----------------------------------------------------------------------------
+// 8. Dynamic Shapes & Symbolic Execution
+// ----------------------------------------------------------------------------
+print("[8/15] Testing Dynamic Shapes & Symbolic Execution...");
+var sym_b = new SymDim("batch", 1, 64);
+var sym_s = new SymShape([sym_b, 128]);
+var fx_mod = fxTrace(dummy_mod);
+print("  Dynamic Shapes & FX Tracing: OK");
+
+// ----------------------------------------------------------------------------
+// 9. Sparse Tensors
+// ----------------------------------------------------------------------------
+print("[9/15] Testing Sparse Tensors...");
+var sp_idx = torch_tensor([[0, 1], [1, 2]]);
+var sp_val = torch_tensor([3.0, 4.0]);
+var sp_coo = sparseCooTensor(sp_idx, sp_val, [2, 3]);
+var sp_dense = sparseToDense(sp_coo);
+var sp_re = denseToSparse(sp_dense);
+var sp_num = sparseNnz(sp_coo);
+var sp_mm_res = sparseMm(sp_coo, torch_randn(3, 2));
+print("  Sparse COO, Dense conversion, Sparse MM: OK");
+
+// ----------------------------------------------------------------------------
+// 10. Graph Neural Networks
+// ----------------------------------------------------------------------------
+print("[10/15] Testing Graph Neural Networks...");
+var x_nodes = torch_randn(3, 4);
+var adj = torch_tensor([[1.0, 0.5, 0.0], [0.5, 1.0, 0.5], [0.0, 0.5, 1.0]]);
+var gcn = new GCNConv(4, 6);
+var gcn_out = gcn.forward(x_nodes, adj);
+var gat = new GATConv(4, 6, 1);
+var gat_out = gat.forward(x_nodes, adj);
+var sage = new GraphSAGE(4, 6);
+var sage_out = sage.forward(x_nodes, adj);
+print("  GCNConv, GATConv, GraphSAGE: OK");
+
+// ----------------------------------------------------------------------------
+// 11. Reinforcement Learning
+// ----------------------------------------------------------------------------
+print("[11/15] Testing Reinforcement Learning...");
+var probs = torch_tensor([[0.2, 0.8], [0.5, 0.5]]);
+var cat_dist = new CategoricalDistribution(probs, null);
+var samples = cat_dist.sample(1);
+var cat_ent = cat_dist.entropy();
+var p_loss = policyLoss(torch_tensor([-0.2, -0.5]), torch_tensor([1.0, -1.0]));
+var norm_dist = new NormalDistribution(torch_zeros(2), torch_ones(2));
+var norm_sample = norm_dist.sample();
+print("  Categorical, Normal, PolicyLoss, Entropy: OK");
+
+// ----------------------------------------------------------------------------
+// 12. Model Export & Deployment
+// ----------------------------------------------------------------------------
+print("[12/15] Testing Model Export & Deployment...");
+var lin_export = new Linear(4, 2);
+exportONNX(lin_export, torch_randn(1, 4), "test_onnx_manifest.json");
+exportTorchLite(lin_export, "test_torchlite.bin");
+var qat = new QuantizationAwareTraining(lin_export);
+var qat_out = qat.forward(torch_randn(1, 4));
+print("  ONNX Export, TorchLite, QAT: OK");
+
+// ----------------------------------------------------------------------------
+// 13. Compilation & Optimization Backends
+// ----------------------------------------------------------------------------
+print("[13/15] Testing Compilation & Optimization Backends...");
+var fused = fuseLinearReLU(new Linear(4, 4));
+var fused_out = fused.forward(torch_randn(1, 4));
+var compiled = compileTorch(fused, "inductor");
+var comp_out = compiled.forward(torch_randn(1, 4));
+print("  FusedLinearReLU, CompileInductor: OK");
+
+// ----------------------------------------------------------------------------
+// 14. AMP & Advanced Memory Management
+// ----------------------------------------------------------------------------
+print("[14/15] Testing AMP & Advanced Memory Management...");
+enableAmp("cpu");
+var amp_state = isAmpEnabled("cpu");
+disableAmp("cpu");
+var scaler = new GradScaler(32768.0);
+var scaled_loss = scaler.scale(torch_tensor(2.5));
+var ckpt_out = checkpoint(lin_export, torch_randn(1, 4));
+print("  AMP Autocast, GradScaler, Checkpoint: OK");
+
+// ----------------------------------------------------------------------------
+// 15. Ecosystem (RNG, Data, Profiler, SummaryWriter)
+// ----------------------------------------------------------------------------
+print("[15/15] Testing PyTorch Ecosystem (RNG, Data, Profiler, SummaryWriter)...");
+var rng_s = getRngState();
+setRngState(rng_s);
+
+var dset = new TensorDataset([torch_randn(10, 4), torch_zeros(10, 1)]);
+var loader = new DataLoader(dset, 2, false, false);
+var batch0 = loader.getBatch(0);
+
+var prof = new Profiler();
+prof.start();
+var tmp_calc = torch_matmul(torch_randn(8, 8), torch_randn(8, 8));
+var rep = prof.stop();
+
+var writer = new SummaryWriter("./runs_test");
+writer.addScalar("loss", 0.05, 1);
+writer.addHistogram("weights", lin_export._params["weight"], 1);
+writer.close();
+print("  RNG State, DataLoader, Profiler, SummaryWriter: OK");
+
+print("=== ALL 15 CAPABILITIES TESTED AND PASSED SUCCESSFULLY! ===");

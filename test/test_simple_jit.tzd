@@ -1,0 +1,1 @@
+fun add(int a, int b) { return a + b; } fun main() { print(add(3, 4)); }  

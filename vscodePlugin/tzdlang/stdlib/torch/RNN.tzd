@@ -1,0 +1,183 @@
+// ============================================================================
+// RNN.tzd - Recurrent Neural Network Operators (Category 5)
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Init.tzd";
+
+fun rnnCell(input, hidden, weight_ih, weight_hh, bias_ih, bias_hh, nonlinearity) {
+    return torch_rnn_cell(input, hidden, weight_ih, weight_hh, bias_ih, bias_hh, nonlinearity);
+}
+
+fun lstmCell(input, hidden, cell, weight_ih, weight_hh, bias_ih, bias_hh) {
+    return torch_lstm_cell(input, hidden, cell, weight_ih, weight_hh, bias_ih, bias_hh);
+}
+
+fun gruCell(input, hidden, weight_ih, weight_hh, bias_ih, bias_hh) {
+    return torch_gru_cell(input, hidden, weight_ih, weight_hh, bias_ih, bias_hh);
+}
+
+fun packPaddedSequence(input, lengths) {
+    return torch_pack_padded_sequence(input, lengths);
+}
+
+class RNNCell extends Module {
+    var int input_size;
+    var int hidden_size;
+    var string nonlinearity;
+
+    RNNCell(input_size, hidden_size, nonlinearity) {
+        super("RNNCell");
+        this.input_size = input_size;
+        this.hidden_size = hidden_size;
+        this.nonlinearity = "tanh";
+        if (nonlinearity != null) { this.nonlinearity = nonlinearity; }
+
+        var w_ih = torch_zeros(hidden_size, input_size);
+        var w_hh = torch_zeros(hidden_size, hidden_size);
+        var b_ih = torch_zeros(hidden_size);
+        var b_hh = torch_zeros(hidden_size);
+        initXavier(w_ih);
+        initXavier(w_hh);
+        initZeros(b_ih);
+        initZeros(b_hh);
+
+        this.registerParameter("weight_ih", w_ih);
+        this.registerParameter("weight_hh", w_hh);
+        this.registerParameter("bias_ih", b_ih);
+        this.registerParameter("bias_hh", b_hh);
+    }
+
+    fun forward(input, hidden) {
+        var h = hidden;
+        if (h == null) {
+            var batch_size = torch_size(input, 0);
+            h = torch_zeros(batch_size, this.hidden_size);
+        }
+        return torch_rnn_cell(input, h, this._params["weight_ih"], this._params["weight_hh"], this._params["bias_ih"], this._params["bias_hh"], this.nonlinearity);
+    }
+}
+
+class LSTMCell extends Module {
+    var int input_size;
+    var int hidden_size;
+
+    LSTMCell(input_size, hidden_size) {
+        super("LSTMCell");
+        this.input_size = input_size;
+        this.hidden_size = hidden_size;
+
+        var w_ih = torch_zeros(4 * hidden_size, input_size);
+        var w_hh = torch_zeros(4 * hidden_size, hidden_size);
+        var b_ih = torch_zeros(4 * hidden_size);
+        var b_hh = torch_zeros(4 * hidden_size);
+        initXavier(w_ih);
+        initXavier(w_hh);
+        initZeros(b_ih);
+        initZeros(b_hh);
+
+        this.registerParameter("weight_ih", w_ih);
+        this.registerParameter("weight_hh", w_hh);
+        this.registerParameter("bias_ih", b_ih);
+        this.registerParameter("bias_hh", b_hh);
+    }
+
+    fun forward(input, hx) {
+        var h = null;
+        var c = null;
+        if (hx != null && len(hx) >= 2) {
+            h = hx[0];
+            c = hx[1];
+        } else {
+            var batch_size = torch_size(input, 0);
+            h = torch_zeros(batch_size, this.hidden_size);
+            c = torch_zeros(batch_size, this.hidden_size);
+        }
+        var next_hc = torch_lstm_cell(input, h, c, this._params["weight_ih"], this._params["weight_hh"], this._params["bias_ih"], this._params["bias_hh"]);
+        var res = range(0, 0, 1);
+        res = push(res, next_hc["h"]);
+        res = push(res, next_hc["c"]);
+        return res;
+    }
+}
+
+class GRUCell extends Module {
+    var int input_size;
+    var int hidden_size;
+
+    GRUCell(input_size, hidden_size) {
+        super("GRUCell");
+        this.input_size = input_size;
+        this.hidden_size = hidden_size;
+
+        var w_ih = torch_zeros(3 * hidden_size, input_size);
+        var w_hh = torch_zeros(3 * hidden_size, hidden_size);
+        var b_ih = torch_zeros(3 * hidden_size);
+        var b_hh = torch_zeros(3 * hidden_size);
+        initXavier(w_ih);
+        initXavier(w_hh);
+        initZeros(b_ih);
+        initZeros(b_hh);
+
+        this.registerParameter("weight_ih", w_ih);
+        this.registerParameter("weight_hh", w_hh);
+        this.registerParameter("bias_ih", b_ih);
+        this.registerParameter("bias_hh", b_hh);
+    }
+
+    fun forward(input, hidden) {
+        var h = hidden;
+        if (h == null) {
+            var batch_size = torch_size(input, 0);
+            h = torch_zeros(batch_size, this.hidden_size);
+        }
+        return torch_gru_cell(input, h, this._params["weight_ih"], this._params["weight_hh"], this._params["bias_ih"], this._params["bias_hh"]);
+    }
+}
+
+class LSTM extends Module {
+    var int input_size;
+    var int hidden_size;
+    var int num_layers;
+    var int bidirectional;
+    var ptr cell;
+
+    LSTM(input_size, hidden_size, num_layers, bidirectional) {
+        super("LSTM");
+        this.input_size = input_size;
+        this.hidden_size = hidden_size;
+        this.num_layers = 1;
+        if (num_layers != null) { this.num_layers = num_layers; }
+        this.bidirectional = false;
+        if (bidirectional != null) { this.bidirectional = bidirectional; }
+
+        this.cell = new LSTMCell(input_size, hidden_size);
+        this.registerModule("cell", this.cell);
+    }
+
+    fun forward(input, hx) {
+        var w_ih = this.cell._params["weight_ih"];
+        var w_hh = this.cell._params["weight_hh"];
+        var b_ih = this.cell._params["bias_ih"];
+        var b_hh = this.cell._params["bias_hh"];
+
+        var h = null;
+        var c = null;
+        if (hx != null && len(hx) == 2) {
+            h = hx[0];
+            c = hx[1];
+        } else {
+            var shp = torch_shape(input);
+            var batch_size = 1;
+            if (len(shp) > 2) {
+                batch_size = shp[1];
+            } else {
+                batch_size = shp[0];
+            }
+            h = torch_zeros(batch_size, this.hidden_size);
+            c = torch_zeros(batch_size, this.hidden_size);
+        }
+
+        return torch_lstm_forward(input, h, c, w_ih, w_hh, b_ih, b_hh);
+    }
+}

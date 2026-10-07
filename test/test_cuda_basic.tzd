@@ -1,0 +1,18 @@
+print("CUDA Available: " + toString(torch_cuda_is_available()));
+print("CUDA Device Count: " + toString(torch_device_count()));
+print("CUDA Current Device: " + toString(torch_current_device()));
+
+var a = torch_zeros(4);
+print("Tensor a on CPU: " + torch_to_string(a));
+
+var a_gpu = torch_to_cuda(a);
+print("Tensor a on GPU: " + torch_to_string(a_gpu));
+
+var b_gpu = torch_to_cuda(torch_ones(4));
+print("Tensor b on GPU: " + torch_to_string(b_gpu));
+
+var c_gpu = torch_add(a_gpu, b_gpu);
+print("Tensor c (a + b) on GPU: " + torch_to_string(c_gpu));
+
+var c_cpu = torch_to_cpu(c_gpu);
+print("Tensor c moved back to CPU: " + torch_to_string(c_cpu));

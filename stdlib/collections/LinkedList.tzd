@@ -1,0 +1,115 @@
+/**
+ * TzdLang 集合标准库 - LinkedList 双向链表
+ */
+
+class LinkedListNode {
+    var ptr value;
+    var ptr next;
+    var ptr prev;
+
+    LinkedListNode(val) {
+        this.value = val;
+        this.next = null;
+        this.prev = null;
+    }
+}
+
+class LinkedList {
+    var ptr head;
+    var ptr tail;
+    var int count;
+
+    LinkedList() {
+        this.head = null;
+        this.tail = null;
+        this.count = 0;
+    }
+
+    fun addLast(value) {
+        var node = new LinkedListNode(value);
+        if (this.tail == null) {
+            this.head = node;
+            this.tail = node;
+        } else {
+            this.tail.next = node;
+            node.prev = this.tail;
+            this.tail = node;
+        }
+        this.count = this.count + 1;
+        return this;
+    }
+
+    fun addFirst(value) {
+        var node = new LinkedListNode(value);
+        if (this.head == null) {
+            this.head = node;
+            this.tail = node;
+        } else {
+            node.next = this.head;
+            this.head.prev = node;
+            this.head = node;
+        }
+        this.count = this.count + 1;
+        return this;
+    }
+
+    fun removeFirst() {
+        if (this.head == null) return null;
+        var val = this.head.value;
+        this.head = this.head.next;
+        if (this.head != null) {
+            this.head.prev = null;
+        } else {
+            this.tail = null;
+        }
+        this.count = this.count - 1;
+        return val;
+    }
+
+    fun removeLast() {
+        if (this.tail == null) return null;
+        var val = this.tail.value;
+        this.tail = this.tail.prev;
+        if (this.tail != null) {
+            this.tail.next = null;
+        } else {
+            this.head = null;
+        }
+        this.count = this.count - 1;
+        return val;
+    }
+
+    fun first() {
+        if (this.head == null) return null;
+        return this.head.value;
+    }
+
+    fun last() {
+        if (this.tail == null) return null;
+        return this.tail.value;
+    }
+
+    fun size() {
+        return this.count;
+    }
+
+    fun isEmpty() {
+        return this.count == 0;
+    }
+
+    fun clear() {
+        this.head = null;
+        this.tail = null;
+        this.count = 0;
+    }
+
+    fun toArray() {
+        var arr = [ ];
+        var curr = this.head;
+        while (curr != null) {
+            arr = push(arr, curr.value);
+            curr = curr.next;
+        }
+        return arr;
+    }
+}

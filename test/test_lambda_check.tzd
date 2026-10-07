@@ -1,0 +1,6 @@
+var f = fun(x) {
+    print("Received: " + x);
+};
+print("Calling f(42)...");
+f(42);
+print("Done!");

@@ -1,0 +1,159 @@
+/**
+ * TzdLang 网络标准库 - TCP / UDP Socket 通信
+ */
+
+class TcpClient {
+    var int handle;
+    var string host;
+    var int port;
+    var bool connected;
+
+    TcpClient(host, port) {
+        this.handle = -1;
+        this.host = host;
+        this.port = port;
+        this.connected = false;
+    }
+
+    fun connect(timeoutMs) {
+        var t = 10000;
+        if (timeoutMs != null) t = timeoutMs;
+        var h = net_tcp_connect(this.host, this.port, t);
+        if (h != null && h >= 0) {
+            this.handle = h;
+            this.connected = true;
+            return true;
+        }
+        this.connected = false;
+        return false;
+    }
+
+    fun send(data) {
+        if (!this.connected || this.handle < 0) return -1;
+        return net_tcp_send(this.handle, data);
+    }
+
+    fun sendLine(data) {
+        return this.send(data + "\n");
+    }
+
+    fun recv(maxBytes, timeoutMs) {
+        if (!this.connected || this.handle < 0) return "";
+        var maxB = 4096;
+        if (maxBytes != null) maxB = maxBytes;
+        var t = 5000;
+        if (timeoutMs != null) t = timeoutMs;
+        return net_tcp_recv(this.handle, maxB, t);
+    }
+
+    fun close() {
+        if (this.handle >= 0) {
+            net_tcp_close(this.handle);
+            this.handle = -1;
+            this.connected = false;
+        }
+    }
+
+    fun isConnected() {
+        return this.connected;
+    }
+}
+
+class TcpServer {
+    var int handle;
+    var int port;
+    var string host;
+    var bool listening;
+
+    TcpServer(port, h) {
+        this.handle = -1;
+        this.port = port;
+        if (h != null) {
+            this.host = h;
+        } else {
+            this.host = "0.0.0.0";
+        }
+        this.listening = false;
+    }
+
+    fun listen(backlog) {
+        var b = 128;
+        if (backlog != null) b = backlog;
+        var h = net_tcp_listen(this.port, this.host, b);
+        if (h != null && h >= 0) {
+            this.handle = h;
+            this.listening = true;
+            return true;
+        }
+        return false;
+    }
+
+    fun accept(timeoutMs) {
+        if (!this.listening || this.handle < 0) return null;
+        var t = 5000;
+        if (timeoutMs != null) t = timeoutMs;
+        var res = net_tcp_accept(this.handle, t);
+        if (res == null || res["client"] == null) return null;
+
+        var client = new TcpClient(res["ip"], res["port"]);
+        client.handle = res["client"];
+        client.connected = true;
+        return client;
+    }
+
+    fun close() {
+        if (this.handle >= 0) {
+            net_tcp_close(this.handle);
+            this.handle = -1;
+            this.listening = false;
+        }
+    }
+}
+
+class UdpSocket {
+    var int handle;
+    var int port;
+    var string host;
+
+    UdpSocket(port, h) {
+        if (port != null) {
+            this.port = port;
+        } else {
+            this.port = 0;
+        }
+        if (h != null) {
+            this.host = h;
+        } else {
+            this.host = "0.0.0.0";
+        }
+        this.handle = -1;
+    }
+
+    fun bind() {
+        var h = net_udp_bind(this.port, this.host);
+        if (h != null && h >= 0) {
+            this.handle = h;
+            return true;
+        }
+        return false;
+    }
+
+    fun sendTo(data, destHost, destPort) {
+        return net_udp_sendto(this.handle, data, destHost, destPort);
+    }
+
+    fun recvFrom(maxBytes, timeoutMs) {
+        var maxB = 4096;
+        if (maxBytes != null) maxB = maxBytes;
+        var t = 5000;
+        if (timeoutMs != null) t = timeoutMs;
+        return net_udp_recvfrom(this.handle, maxB, t);
+    }
+
+    fun close() {
+        if (this.handle >= 0) {
+            net_udp_close(this.handle);
+            this.handle = -1;
+        }
+    }
+}

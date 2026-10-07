@@ -1,0 +1,31 @@
+class Counter {
+    var int count;
+    Counter() { this.count = 0; }
+    fun add(n) { this.count = this.count + n; return this.count; }
+    fun get() { return this.count; }
+}
+
+print("=== Non-recursive class method ===");
+var c = new Counter();
+print("add(5) = " + toString(c.add(5)));
+print("add(3) = " + toString(c.add(3)));
+print("get() = " + toString(c.get()));
+
+// Test method calling another method
+class Calculator {
+    var int val;
+    Calculator() { this.val = 0; }
+    fun setVal(v) { this.val = v; return this; }
+    fun double() { return this.val * 2; }
+    fun calc(v) {
+        this.setVal(v);
+        return this.double();
+    }
+}
+
+var calc = new Calculator();
+print("calc(5) = " + toString(calc.calc(5)));
+print("calc(10) = " + toString(calc.calc(10)));
+
+print("=== Done ===");
+exit;

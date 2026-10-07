@@ -1,0 +1,6 @@
+fun testArrayOOBWrite() {
+    var a = [10, 20, 30];
+    a[99] = 123;
+}
+
+testArrayOOBWrite();

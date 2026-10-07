@@ -1,0 +1,21 @@
+// ============================================================================
+// Profiler.tzd - Performance & Memory Profiler (Category 15)
+// ============================================================================
+
+class Profiler {
+    var int running;
+
+    Profiler() {
+        this.running = false;
+    }
+
+    fun start() {
+        this.running = true;
+        return torch_profiler_start();
+    }
+
+    fun stop() {
+        this.running = false;
+        return torch_profiler_stop();
+    }
+}

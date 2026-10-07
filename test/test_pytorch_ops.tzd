@@ -1,0 +1,78 @@
+import "torch/Module.tzd";
+
+print("=== PyTorch Operation Test ===");
+
+// Basic creation (works)
+print("1. zeros...");
+var z = torch_zeros(3);
+print("   OK: " + torch_to_string(z));
+
+print("2. ones...");
+var o = torch_ones(3);
+print("   OK");
+
+print("3. tensor...");
+var a = torch_tensor(1.0, 2.0, 3.0, 4.0);
+print("   OK: " + torch_to_string(a));
+
+print("4. add...");
+var b = torch_tensor(5.0, 6.0, 7.0, 8.0);
+var add = torch_add(a, b);
+print("   OK: " + torch_to_string(add));
+
+print("5. sub...");
+var sub = torch_sub(b, a);
+print("   OK: " + torch_to_string(sub));
+
+print("6. mul...");
+var mul = torch_mul(a, b);
+print("   OK: " + torch_to_string(mul));
+
+print("7. div...");
+var div = torch_div(b, a);
+print("   OK: " + torch_to_string(div));
+
+print("8. sum...");
+var s = torch_sum(a);
+print("   OK: " + toString(torch_scalar_value(s)));
+
+print("9. item...");
+print("   OK: " + toString(torch_item(a, 0)));
+
+print("10. reshape...");
+var r = torch_reshape(a, 2, 2);
+print("   OK: " + torch_to_string(r));
+
+print("11. transpose...");
+var t = torch_transpose(r, 0, 1);
+print("   OK: " + torch_to_string(t));
+
+print("12. matmul...");
+var m = torch_matmul(r, r);
+print("   OK: " + torch_to_string(m));
+
+print("13. mean...");
+var mean = torch_mean(a);
+print("   OK: " + toString(torch_scalar_value(mean)));
+
+print("14. relu...");
+var relu = torch_relu(a);
+print("   OK: " + torch_to_string(relu));
+
+print("15. sigmoid...");
+var sig = torch_sigmoid(a);
+print("   OK: " + torch_to_string(sig));
+
+print("16. softmax...");
+var sm = torch_softmax(a, -1);
+print("   OK: " + torch_to_string(sm));
+
+print("17. cat...");
+var cat = torch_cat(a, b, 0);
+print("   OK: " + torch_to_string(cat));
+
+print("18. eq...");
+var eq = torch_eq(a, b);
+print("   OK: " + torch_to_string(eq));
+
+print("=== All basic tests done ===");

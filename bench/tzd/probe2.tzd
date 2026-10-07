@@ -1,0 +1,68 @@
+// Probe 2: array passing semantics (each test guarded)
+
+fun mutParam(a, idx, v) {
+    a[idx] = v;
+    return 0;
+}
+
+fun readParam(a, idx) {
+    return a[idx];
+}
+
+fun readGlobal() {
+    return gvar + 1;
+}
+
+fun writeGlobalArr() {
+    garr[1] = 42;
+    return 0;
+}
+
+var gvar = 5;
+var garr = range(0, 5, 1);
+
+// 0. range size at top level
+print("range(0,5,1) size via len: " + toString(len(range(0, 5, 1))));
+var arr = range(0, 5, 1);
+print("arr[2] top-level (expect 2): " + toString(arr[2]));
+
+// 1. read array param
+try {
+    print("readParam (expect 2): " + toString(readParam(arr, 2)));
+} catch (e) {
+    print("readParam FAILED: " + toString(e));
+}
+
+// 2. mutate array param
+try {
+    mutParam(arr, 2, 99);
+    print("mutParam visible (expect 99): " + toString(arr[2]));
+} catch (e) {
+    print("mutParam FAILED: " + toString(e));
+}
+
+// 3. global read in function
+try {
+    print("readGlobal (expect 6): " + toString(readGlobal()));
+} catch (e) {
+    print("readGlobal FAILED: " + toString(e));
+}
+
+// 4. global array write in function
+try {
+    writeGlobalArr();
+    print("garr write visible (expect 42): " + toString(garr[1]));
+} catch (e) {
+    print("writeGlobalArr FAILED: " + toString(e));
+}
+
+// 5. explicit array literal param
+try {
+    var lit = [10, 20, 30];
+    mutParam(lit, 1, 77);
+    print("literal arr by-ref (expect 77): " + toString(lit[1]));
+} catch (e) {
+    print("literal param FAILED: " + toString(e));
+}
+
+print("=== probe2 done ===");

@@ -1,0 +1,66 @@
+/**
+ * TzdLang 线程通信标准库 - Channel (CSP 管道通信)
+ * 支持有缓冲/无缓冲 (Rendezvous) 管道传递任意数据
+ */
+
+class Channel {
+    var any id;
+    var any capacity;
+
+    Channel() {
+        this.capacity = 0;
+        this.id = sys_channel_create(0);
+    }
+
+    Channel(capacity) {
+        this.capacity = capacity;
+        this.id = sys_channel_create(capacity);
+    }
+
+    fun send(val) {
+        return sys_channel_send(this.id, val, -1);
+    }
+
+    fun sendTimeout(val, timeoutMs) {
+        return sys_channel_send(this.id, val, timeoutMs);
+    }
+
+    fun receive() {
+        return sys_channel_recv(this.id, -1);
+    }
+
+    fun receiveTimeout(timeoutMs) {
+        return sys_channel_recv(this.id, timeoutMs);
+    }
+
+    fun trySend(val) {
+        return sys_channel_send(this.id, val, 0);
+    }
+
+    fun tryReceive() {
+        return sys_channel_recv(this.id, 0);
+    }
+
+    fun close() {
+        return sys_channel_close(this.id);
+    }
+
+    fun isClosed() {
+        return sys_channel_is_closed(this.id);
+    }
+
+    fun size() {
+        return sys_channel_size(this.id);
+    }
+
+    fun getCapacity() {
+        return sys_channel_capacity(this.id);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_channel_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}

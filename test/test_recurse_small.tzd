@@ -1,0 +1,18 @@
+class Counter {
+    var int count;
+    Counter() { this.count = 0; }
+    fun recurse(n) {
+        if (n <= 0) { return this.count; }
+        this.count = this.count + 1;
+        return this.recurse(n - 1);
+    }
+}
+
+print("=== Recursive test ===");
+var c = new Counter();
+print("recurse(0) = " + toString(c.recurse(0)));
+print("recurse(1) = " + toString(c.recurse(1)));
+print("recurse(2) = " + toString(c.recurse(2)));
+print("recurse(3) = " + toString(c.recurse(3)));
+print("=== Done ===");
+exit;

@@ -1,0 +1,6 @@
+class MathToolkit {
+    static fun square(x) {
+        return x * x;
+    }
+}
+print(MathToolkit.square(6));

@@ -1,0 +1,258 @@
+// ============================================================================
+// test_gpu_multi_card_training_and_inference.tzd
+// 单卡（CUDA GPU / NVIDIA P106-090）从头训练到底 + 多卡 DataParallel 训练与并行推理验证
+// ============================================================================
+
+import "torch/Module.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+import "torch/Distributed.tzd";
+
+var passCount = 0;
+var failCount = 0;
+
+fun assertTrue(name, condition) {
+    if (condition) {
+        print("  [PASS] " + name);
+        passCount = passCount + 1;
+    } else {
+        print("  [FAIL] " + name + " - assertion failed (expected true)");
+        failCount = failCount + 1;
+    }
+}
+
+fun assertClose(name, actual, expected, tol) {
+    var diff = actual - expected;
+    if (diff < 0) { diff = -diff; }
+    if (diff <= tol) {
+        print("  [PASS] " + name + " (val=" + toFixed(actual, 5) + " ~ exp=" + toFixed(expected, 5) + ")");
+        passCount = passCount + 1;
+    } else {
+        print("  [FAIL] " + name + " (val=" + toFixed(actual, 5) + " != exp=" + toFixed(expected, 5) + ", diff=" + toFixed(diff, 6) + ")");
+        failCount = failCount + 1;
+    }
+}
+
+print("====================================================================");
+print("  TzdLanguage 单卡到多卡 GPU 训练与推理全流程验证套件");
+print("====================================================================\n");
+
+// ============================================================================
+// [Phase 1] 硬件环境探测与 CUDA GPU 算子基准自检
+// ============================================================================
+print("[Phase 1/5] CUDA GPU 硬件环境探测与显存基准自检...");
+var cudaAvailable = torch_cuda_is_available();
+var devCount = torch_device_count();
+print("  CUDA 可用状态: " + toString(cudaAvailable));
+print("  检测到计算设备总数: " + toString(devCount));
+
+assertTrue("检测到底层 CUDA 硬件环境就绪", cudaAvailable);
+assertTrue("检测到可用计算设备数量 >= 1", devCount >= 1);
+
+var devTarget = "cpu";
+if (cudaAvailable) {
+    devTarget = "cuda:0";
+    var devName = torch_cuda_get_device_name(0);
+    print("  CUDA 0# 显卡设备型号: " + devName);
+    var memAlloc = torch_cuda_memory_allocated(0);
+    var memRes = torch_cuda_memory_reserved(0);
+    print("  初始显存已分配: " + toString(memAlloc) + " 字节, 显存已预留: " + toString(memRes) + " 字节");
+}
+
+// 在 GPU 上执行原生张量计算
+var gpuA = torch_to_device(torch_randn(128, 64), devTarget);
+var gpuB = torch_to_device(torch_randn(64, 32), devTarget);
+var gpuC = torch_matmul(gpuA, gpuB);
+assertTrue("GPU 张量矩阵乘法运算形状符合预期 [128, 32]", torch_shape_str(gpuC) == "[128, 32]");
+print("  -> Phase 1 完成\n");
+
+// ============================================================================
+// [Phase 2] 单卡 (cuda:0) 深度模型真实端到端训练到底
+// ============================================================================
+print("[Phase 2/5] 单卡 GPU (cuda:0) 深度神经网络真实端到端训练到底...");
+class GPUNetwork extends Module {
+    var ptr fc1;
+    var ptr fc2;
+
+    GPUNetwork() {
+        super("GPUNetwork");
+        this.fc1 = new Linear(4, 8);
+        this.fc2 = new Linear(8, 1);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+    }
+
+    fun forward(x) {
+        var l1 = this.fc1;
+        var h1 = l1.forward(x);
+        h1 = torch_relu(h1);
+        var l2 = this.fc2;
+        return l2.forward(h1);
+    }
+}
+
+var gpuModel = new GPUNetwork();
+// 将模型参数与缓存迁移至 GPU
+gpuModel.to(devTarget);
+
+var gpuOptim = torch_optimizer_create("adam", gpuModel.parameters(), 0.05);
+var gpuLossFn = new MSELoss();
+
+// 构造非线性回归训练数据并上卡
+torch_manual_seed(42);
+var rawX = torch_randn(32, 4);
+var rawY = torch_sum(rawX, 1, true); // keepdim=true -> [32, 1]
+var trainX = torch_to_device(rawX, devTarget);
+var trainY = torch_to_device(rawY, devTarget);
+
+var initGpuLoss = 0.0;
+var finalGpuLoss = 0.0;
+
+for (var ep = 0; ep < 70; ep = ep + 1) {
+    torch_optim_zero_grad(gpuOptim);
+    var pred = gpuModel.forward(trainX);
+    var loss = gpuLossFn.forward(pred, trainY);
+    torch_backward(loss);
+    torch_optim_step(gpuOptim);
+
+    var curL = torch_scalar_value(loss);
+    if (ep == 0) { initGpuLoss = curL; }
+    finalGpuLoss = curL;
+}
+
+print("  GPU 模型初始 Loss: " + toFixed(initGpuLoss, 5));
+print("  GPU 模型训练到底 Final Loss: " + toFixed(finalGpuLoss, 5));
+assertTrue("单卡 GPU 深度网络损失显著单调大幅下降 (>80%)", finalGpuLoss < initGpuLoss * 0.2);
+assertTrue("单卡 GPU 训练到底达成稳定高精度收敛 (< 0.1)", finalGpuLoss < 0.1);
+
+// 单卡 GPU 验证推理
+gpuModel.eval();
+var testSample = torch_to_device(torch_ones(1, 4), devTarget);
+var testOutput = gpuModel.forward(testSample);
+var predVal = torch_scalar_value(testOutput);
+// 期望 sum(ones(4)) = 4.0 左右
+print("  单卡 GPU 验证样本输入 Ones(4), 目标 4.0, 预测输出: " + toFixed(predVal, 4));
+assertTrue("单卡 GPU 模型推理输出有效且贴近真实目标", predVal > 3.0 && predVal < 5.0);
+print("  -> Phase 2 完成\n");
+
+// ============================================================================
+// [Phase 3] 多卡/分布式 DataParallel (Scatter -> Forward -> Gather)
+// ============================================================================
+print("[Phase 3/5] 多卡 DataParallel (数据并行分发、多路前向计算与聚合) 自检...");
+var targetDevices = range(0, 0, 1);
+if (cudaAvailable) {
+    targetDevices = push(targetDevices, "cuda:0");
+    targetDevices = push(targetDevices, "cpu"); // 联合构建 GPU + CPU 异构多设备并行池
+} else {
+    targetDevices = push(targetDevices, "cpu");
+    targetDevices = push(targetDevices, "cpu");
+}
+
+var dpModel = new GPUNetwork();
+dpModel.to(devTarget);
+var dp = new DataParallel(dpModel, targetDevices, devTarget);
+print("  DataParallel 纳管设备数: " + toString(dp.numDevices()));
+assertTrue("DataParallel 正确纳管多计算设备", dp.numDevices() == 2);
+
+// 构造一个由两卡分摊的 Batch (BatchSize = 16)
+var multiBatchX = torch_randn(16, 4);
+var scatteredChunks = dp.scatter(multiBatchX);
+assertTrue("Scatter 成功将全局 Batch 均匀切分到各个设备", len(scatteredChunks) == 2);
+
+// 验证各切片形状
+var chunk0 = scatteredChunks[0];
+var chunk1 = scatteredChunks[1];
+assertTrue("切片 0 形状正确 [8, 4]", torch_shape_str(chunk0) == "[8, 4]");
+assertTrue("切片 1 形状正确 [8, 4]", torch_shape_str(chunk1) == "[8, 4]");
+
+// 验证 DataParallel forward 前向传播与 gather 聚合
+var dpOut = dp.forward(multiBatchX);
+assertTrue("DataParallel 跨多卡并行计算并聚合后输出形状严格还原 [16, 1]", torch_shape_str(dpOut) == "[16, 1]");
+print("  -> Phase 3 完成\n");
+
+// ============================================================================
+// [Phase 4] 集合通信梯度 AllReduce 与分布式 DDP 训练
+// ============================================================================
+print("[Phase 4/5] 集合通信梯度 AllReduce 与分布式多卡训练自检...");
+{
+    var pg = initProcessGroup("gloo", 0, 2);
+    assertTrue("DistributedProcessGroup 正确初始化", pg.getWorldSize() == 2);
+
+    // 模拟两卡梯度平均 AllReduce (mean)
+    var grad = torch_tensor(2.0, 4.0, 6.0);
+    var reducedGrad = pg.allReduce(grad, "mean");
+    var r0 = torch_item(reducedGrad, 0);
+    var r1 = torch_item(reducedGrad, 1);
+    var r2 = torch_item(reducedGrad, 2);
+    assertClose("AllReduce 集合通信算子结果精准", r0, 1.0, 0.001);
+    assertClose("AllReduce 集合通信算子向量第二分量", r1, 2.0, 0.001);
+
+    // 运行分布式数据并行 DDP 模型训练迭代
+    var ddpNet = new GPUNetwork();
+    var ddp = new DistributedDataParallel(ddpNet, pg);
+    var ddpOptim = torch_optimizer_create("adam", ddpNet.parameters(), 0.03);
+    var ddpLossFn = new MSELoss();
+
+    var ddpInput = torch_randn(16, 4);
+    var ddpTarget = torch_sum(ddpInput, 1, true);
+
+    var ddpInitLoss = 0.0;
+    var ddpFinalLoss = 0.0;
+
+    for (var step = 0; step < 30; step = step + 1) {
+        torch_optim_zero_grad(ddpOptim);
+        var curPred = ddp.forward(ddpInput);
+        var curLoss = ddpLossFn.forward(curPred, ddpTarget);
+        torch_backward(curLoss);
+        ddp.syncGradients();
+        torch_optim_step(ddpOptim);
+
+        var valL = torch_scalar_value(curLoss);
+        if (step == 0) { ddpInitLoss = valL; }
+        ddpFinalLoss = valL;
+    }
+
+    print("  DDP 分布式训练 Initial Loss: " + toFixed(ddpInitLoss, 5));
+    print("  DDP 分布式训练 Final Loss:   " + toFixed(ddpFinalLoss, 5));
+    assertTrue("DDP 多卡训练驱动权重更新并促使损失有效下降", ddpFinalLoss < ddpInitLoss);
+}
+print("  -> Phase 4 完成\n");
+
+// ============================================================================
+// [Phase 5] 多卡高吞吐并行推理 (Parallel Inference) 与显存回收
+// ============================================================================
+print("[Phase 5/5] 多卡高吞吐并行推理与 GPU 显存回收自检...");
+{
+    var inferModel = new GPUNetwork();
+    inferModel.to(devTarget);
+    inferModel.eval();
+
+    var bigBatch = torch_randn(64, 4);
+    // 使用 parallelInference 跨卡分批极速推理
+    var inferResult = parallelInference(inferModel, bigBatch, targetDevices);
+    assertTrue("多卡并行推理返回与全局批次完全一致的结果形状 [64, 1]", torch_shape_str(inferResult) == "[64, 1]");
+
+    // 显存与张量垃圾回收
+    torch_empty_cache();
+    torch_gc();
+    var liveTensors = torch_num_tensors();
+    print("  多卡并行执行完成后的驻留张量数: " + toString(liveTensors));
+    assertTrue("执行完整多卡训练与推理流程后张量状态健康受控", liveTensors < 200);
+}
+print("  -> Phase 5 完成\n");
+
+// ============================================================================
+// 汇总多卡训练与推理自检报告
+// ============================================================================
+print("====================================================================");
+print("  单卡与多卡 GPU 训练与推理全流程测试报告：");
+print("    Passed: " + toString(passCount));
+print("    Failed: " + toString(failCount));
+print("    Total:  " + toString(passCount + failCount));
+if (failCount == 0) {
+    print("  >>> [SUCCESS] 单卡训练到底 + 多卡训练与并行推理 100% 验证通过！ <<<");
+} else {
+    print("  >>> [ERROR] 测试存在失败项，请检查！ <<<");
+}
+print("====================================================================");

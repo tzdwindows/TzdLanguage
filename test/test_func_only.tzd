@@ -1,0 +1,4 @@
+fun foo(n) {
+    return n;
+}
+print(" defined foo\);

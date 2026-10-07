@@ -1,0 +1,7 @@
+var m = jsonParse("{}");
+print("1. type of m: " + toString(m));
+m["test"] = 42;
+print("2. after set: " + toString(m));
+print("3. get test: " + toString(m["test"]));
+print("4. mapKeys: " + toString(mapKeys(m)));
+print("5. mapKeys len: " + toString(len(mapKeys(m))));

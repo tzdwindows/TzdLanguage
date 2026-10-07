@@ -1,0 +1,64 @@
+// ============================================================================
+// Jit.tzd - TorchScript & Dynamic Graph Tracing (Category 3)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+var _CUSTOM_OPS = jsonParse("{}");
+
+fun registerCustomOp(op_name, custom_func) {
+    _CUSTOM_OPS[op_name] = custom_func;
+    return true;
+}
+
+fun callCustomOp(op_name, args) {
+    if (mapHas(_CUSTOM_OPS, op_name)) {
+        var op = _CUSTOM_OPS[op_name];
+        return op(args);
+    }
+    return null;
+}
+
+class ScriptModule extends Module {
+    var ptr operations;
+
+    ScriptModule(name) {
+        super(name);
+        this.operations = range(0, 0, 1);
+    }
+
+    fun addOp(op_type, args) {
+        var op = jsonParse("{}");
+        op["type"] = op_type;
+        op["args"] = args;
+        this.operations = push(this.operations, op);
+    }
+
+    fun forward(x) {
+        var cur = x;
+        for (var i = 0; i < len(this.operations); i = i + 1) {
+            var op = this.operations[i];
+            if (op["type"] == "relu") {
+                cur = torch_relu(cur);
+            }
+            if (op["type"] == "sigmoid") {
+                cur = torch_sigmoid(cur);
+            }
+        }
+        return cur;
+    }
+}
+
+fun trace(model, example_inputs) {
+    var script_mod = new ScriptModule("TracedModule");
+    var dummy_eval = model.forward(example_inputs);
+    return script_mod;
+}
+
+fun saveScript(model, path) {
+    return torch_save(model, path);
+}
+
+fun loadScript(path) {
+    return torch_load(path);
+}

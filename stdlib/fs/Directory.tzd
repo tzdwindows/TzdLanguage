@@ -1,0 +1,29 @@
+/**
+ * TzdLang 文件系统标准库 - Directory 目录操作
+ */
+
+class Directory {
+    static fun create(path) {
+        return makeDir(path);
+    }
+
+    static fun delete(path) {
+        return removeDir(path);
+    }
+
+    static fun exists(path) {
+        return dirExists(path);
+    }
+
+    static fun list(path) {
+        return listDir(path);
+    }
+
+    static fun current() {
+        return currentDir();
+    }
+
+    static fun setCurrent(path) {
+        return changeDir(path);
+    }
+}

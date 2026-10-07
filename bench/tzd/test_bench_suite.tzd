@@ -1,0 +1,110 @@
+print("==================================================");
+print("        TzdLang Performance Benchmark Suite       ");
+print("==================================================");
+
+// ------------------------------------------------------------
+// 1. 深度递归压力测试 (Deep Recursion / Call Frame Overhead)
+// ------------------------------------------------------------
+print("[BENCH 1] Recursive Fibonacci fib(30)...");
+
+fun fib(int n) -> int {
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+// 预热一次小规模调用
+fib(10);
+
+var t1_start = clock();
+var fib_res = fib(30);
+var t1_elapsed = clock() - t1_start;
+
+print("fib(30) =", fib_res, "| Time:", t1_elapsed, "ms");
+if (fib_res != 832040) {
+    print("FAILED: fib(30) expected 832040");
+}
+
+// ------------------------------------------------------------
+// 2. 紧凑循环与整数运算 (Tight Loop / JIT OSR Check)
+// ------------------------------------------------------------
+print("\n[BENCH 2] Loop Accumulation (10,000,000 iterations)...");
+
+fun benchLoop(int count) -> int {
+    var sum = 0;
+    var i = 0;
+    while (i < count) {
+        sum = (sum + (i % 7)) ^ (i % 3);
+        i = i + 1;
+    }
+    return sum;
+}
+
+var t2_start = clock();
+var loop_res = benchLoop(10000000);
+var t2_elapsed = clock() - t2_start;
+
+print("Loop sum =", loop_res, "| Time:", t2_elapsed, "ms");
+
+// ------------------------------------------------------------
+// 3. 类与方法调用开销 (Method Dispatch & Field Access)
+// ------------------------------------------------------------
+print("\n[BENCH 3] Class Method Dispatch (2,000,000 calls)...");
+
+class Point {
+    var int x = 0;
+    var int y = 0;
+
+    fun translate(int dx, int dy) -> void {
+        x = x + dx;
+        y = y + dy;
+    }
+
+    fun checksum() -> int {
+        return x + y;
+    }
+}
+
+fun benchObjects(int iterations) -> int {
+    var p = new Point();
+    var i = 0;
+    while (i < iterations) {
+        p.translate(1, 2);
+        i = i + 1;
+    }
+    return p.checksum();
+}
+
+var t3_start = clock();
+var obj_res = benchObjects(2000000);
+var t3_elapsed = clock() - t3_start;
+
+print("Object final checksum =", obj_res, "| Time:", t3_elapsed, "ms");
+
+// ------------------------------------------------------------
+// 4. 函数/Lambda 调用吞吐量 (Function Call Throughput)
+// ------------------------------------------------------------
+print("\n[BENCH 4] Lambda Invocation (2,000,000 calls)...");
+
+var transform = fun(int val) -> int {
+    return val * 3 + 1;
+};
+
+fun benchLambda(int iterations) -> int {
+    var acc = 0;
+    var i = 0;
+    while (i < iterations) {
+        acc = transform(i % 100);
+        i = i + 1;
+    }
+    return acc;
+}
+
+var t4_start = clock();
+var lambda_res = benchLambda(2000000);
+var t4_elapsed = clock() - t4_start;
+
+print("Lambda final acc =", lambda_res, "| Time:", t4_elapsed, "ms");
+
+print("\n==================================================");
+print("                Benchmark Complete                ");
+print("==================================================");

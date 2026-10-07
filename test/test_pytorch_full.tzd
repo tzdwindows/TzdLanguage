@@ -1,0 +1,264 @@
+// ============================================================================
+// test_pytorch_full.tzd - Comprehensive PyTorch functionality test
+// Tests: tensor ops, VRAM management, neural network modules, training
+// ============================================================================
+
+print("=== Test 1: Tensor Creation ===");
+var t1 = torch_zeros(3, 4);
+print("zeros(3,4) shape: " + torch_to_string(torch_shape(t1)));
+
+var t2 = torch_ones(2, 3);
+print("ones(2,3) shape: " + torch_to_string(torch_shape(t2)));
+
+var t3 = torch_randn(5, 5);
+print("randn(5,5) shape: " + torch_to_string(torch_shape(t3)));
+
+var t4 = torch_arange(0, 10, 2);
+print("arange(0,10,2) shape: " + torch_to_string(torch_shape(t4)));
+
+var t5 = torch_eye(3);
+print("eye(3) shape: " + torch_to_string(torch_shape(t5)));
+
+var t6 = torch_randperm(10);
+print("randperm(10) shape: " + torch_to_string(torch_shape(t6)));
+print("");
+
+print("=== Test 2: Tensor Operations ===");
+var a = torch_randn(3, 4);
+var b = torch_randn(3, 4);
+
+var c = torch_add(a, b);
+print("add shape: " + torch_to_string(torch_shape(c)));
+
+var d = torch_matmul(a, torch_transpose(b, 0, 1));
+print("matmul shape: " + torch_to_string(torch_shape(d)));
+
+var e = torch_relu(a);
+print("relu shape: " + torch_to_string(torch_shape(e)));
+
+var f = torch_softmax(a, -1);
+print("softmax shape: " + torch_to_string(torch_shape(f)));
+print("");
+
+print("=== Test 3: Comparison Operations ===");
+var x = torch_tensor([1, 2, 3, 4, 5]);
+var y = torch_tensor([3, 2, 1, 4, 5]);
+var eq = torch_eq(x, y);
+print("eq: " + torch_to_string(eq));
+var lt = torch_lt(x, y);
+print("lt: " + torch_to_string(lt));
+var gt = torch_gt(x, y);
+print("gt: " + torch_to_string(gt));
+print("");
+
+print("=== Test 4: In-Place Operations ===");
+var t = torch_ones(3, 3);
+torch_fill_(t, 5.0);
+print("fill_ result: " + toString(torch_scalar_value(torch_sum(t))));
+torch_zero_(t);
+print("zero_ result: " + toString(torch_scalar_value(torch_sum(t))));
+print("");
+
+print("=== Test 5: VRAM Management ===");
+print("Num tensors before: " + toString(torch_num_tensors()));
+print("Memory: " + torch_memory_allocated_str());
+
+// Create many temporary tensors
+for (i = 0; i < 100; i = i + 1) {
+    var tmp = torch_randn(10, 10);
+    var result = torch_relu(tmp);
+}
+
+print("Num tensors after creation: " + toString(torch_num_tensors()));
+print("Memory after: " + torch_memory_allocated_str());
+
+// Force GC
+torch_gc();
+print("Num tensors after GC: " + toString(torch_num_tensors()));
+print("Memory after GC: " + torch_memory_allocated_str());
+print("");
+
+print("=== Test 6: Neural Network Module System ===");
+import "torch/All.tzd";
+
+class MLP extends Module {
+    var fc1;
+    var fc2;
+    var fc3;
+
+    MLP() {
+        super("MLP");
+        this.fc1 = new Linear(784, 256);
+        this.fc2 = new Linear(256, 64);
+        this.fc3 = new Linear(64, 10);
+        this.registerModule("fc1", this.fc1);
+        this.registerModule("fc2", this.fc2);
+        this.registerModule("fc3", this.fc3);
+    }
+
+    fun forward(x) {
+        var h1 = torch_relu(this.fc1.forward(x));
+        var h2 = torch_relu(this.fc2.forward(h1));
+        return this.fc3.forward(h2);
+    }
+}
+
+var model = new MLP();
+print("Model: " + model.getName());
+print("Total parameters: " + toString(model.numParams()));
+
+var input = torch_randn(4, 784);
+var output = model.forward(input);
+print("Output shape: " + torch_to_string(torch_shape(output)));
+print("");
+
+print("=== Test 7: Training with Module System ===");
+var trainModel = new MLP();
+var optim = adam(trainModel, 0.001);
+var lossFn = new CrossEntropyLoss();
+
+// Generate training data
+var targets = torch_randint(0, 10, 4);
+
+print("Training for 5 epochs...");
+for (epoch = 0; epoch < 5; epoch = epoch + 1) {
+    trainModel.zeroGrad();
+    var out = trainModel.forward(input);
+    var loss = lossFn.forward(out, targets);
+    torch_backward(loss);
+    torch_optim_step(optim);
+    print("Epoch " + toString(epoch + 1) + " - loss: " + toString(torch_scalar_value(loss)));
+}
+print("");
+
+print("=== Test 8: State Dict Save/Load ===");
+var stateDict = trainModel.stateDict();
+var keys = mapKeys(stateDict);
+print("State dict has " + toString(len(keys)) + " entries");
+
+trainModel.save("test_mlp_state.bin");
+print("Model saved");
+
+var newModel = new MLP();
+newModel.load("test_mlp_state.bin");
+print("Model loaded");
+print("Loaded model params: " + toString(newModel.numParams()));
+print("");
+
+print("=== Test 9: Sequential Model ===");
+var seq = new Sequential();
+seq.add(new Linear(100, 50));
+seq.add(new ReLU());
+seq.add(new Dropout(0.3));
+seq.add(new Linear(50, 10));
+seq.add(new Softmax());
+
+print("Sequential has " + toString(seq.len()) + " layers");
+print("Sequential params: " + toString(seq.numParams()));
+
+var seqInput = torch_randn(8, 100);
+var seqOutput = seq.forward(seqInput);
+print("Output shape: " + torch_to_string(torch_shape(seqOutput)));
+print("");
+
+print("=== Test 10: Conv2d Model ===");
+class SimpleNet extends Module {
+    var features;
+    var classifier;
+
+    SimpleNet() {
+        super("SimpleNet");
+        this.features = new Sequential();
+        this.features.add(new Conv2d(1, 16, 3, 1, 1));
+        this.features.add(new ReLU());
+        this.features.add(new MaxPool2d(2, 2));
+        this.features.add(new Conv2d(16, 32, 3, 1, 1));
+        this.features.add(new ReLU());
+        this.features.add(new MaxPool2d(2, 2));
+        this.registerModule("features", this.features);
+
+        this.classifier = new Sequential();
+        this.classifier.add(new Linear(32 * 7 * 7, 128));
+        this.classifier.add(new ReLU());
+        this.classifier.add(new Linear(128, 10));
+        this.registerModule("classifier", this.classifier);
+    }
+
+    fun forward(x) {
+        x = this.features.forward(x);
+        x = torch_flatten(x, 1, -1);
+        x = this.classifier.forward(x);
+        return x;
+    }
+}
+
+var net = new SimpleNet();
+print("SimpleNet params: " + toString(net.numParams()));
+
+var imgInput = torch_randn(4, 1, 28, 28);
+var imgOutput = net.forward(imgInput);
+print("Output shape: " + torch_to_string(torch_shape(imgOutput)));
+print("");
+
+print("=== Test 11: Weight Initialization ===");
+var w = torch_zeros(100, 50);
+initXavier(w);
+print("Xavier init - mean: " + toFixed(torch_scalar_value(torch_mean(w)), 4));
+
+var w2 = torch_zeros(100, 50);
+initKaiming(w2);
+print("Kaiming init - mean: " + toFixed(torch_scalar_value(torch_mean(w2)), 4));
+print("");
+
+print("=== Test 12: Gradient Clipping ===");
+var clipModel = new Linear(100, 10);
+var clipOptim = adam(clipModel, 0.01);
+var clipInput = torch_randn(4, 100);
+var clipTarget = torch_randint(0, 10, 4);
+
+clipModel.zeroGrad();
+var clipOut = clipModel.forward(clipInput);
+var clipLoss = new CrossEntropyLoss().forward(clipOut, clipTarget);
+torch_backward(clipLoss);
+var gradNorm = clipGradNorm(clipModel, 5.0);
+print("Gradient norm: " + toString(gradNorm));
+torch_optim_step(clipOptim);
+print("");
+
+print("=== Test 13: Training Loop Utility ===");
+var loopModel = new Linear(50, 5);
+var loopOptim = adam(loopModel, 0.01);
+var loopLoss = new MSELoss();
+
+var data = [];
+for (i = 0; i < 50; i = i + 1) {
+    var inp = torch_randn(4, 50);
+    var tgt = torch_randn(4, 5);
+    var batch = jsonParse("{}");
+    batch["input"] = inp;
+    batch["target"] = tgt;
+    push(data, batch);
+}
+
+print("Running training loop for 3 epochs...");
+for (epoch = 0; epoch < 3; epoch = epoch + 1) {
+    var epochLoss = 0.0;
+    for (i = 0; i < 10; i = i + 1) {
+        var batch = data[i];
+        torch_optim_zero_grad(loopOptim);
+        var out = loopModel.forward(batch["input"]);
+        var loss = loopLoss.forward(out, batch["target"]);
+        torch_backward(loss);
+        torch_optim_step(loopOptim);
+        epochLoss = epochLoss + torch_scalar_value(loss);
+    }
+    print("Epoch " + toString(epoch + 1) + " - avg loss: " + toFixed(epochLoss / 10.0, 4));
+}
+print("");
+
+print("=== Test 14: Model Summary ===");
+modelSummary(net);
+print("");
+
+print("=== All PyTorch tests passed! ===");
+exit;

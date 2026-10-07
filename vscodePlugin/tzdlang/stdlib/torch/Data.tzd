@@ -1,0 +1,91 @@
+// ============================================================================
+// Data.tzd - Dataset and DataLoader Pipeline (Category 15)
+// ============================================================================
+
+class Dataset {
+    Dataset() {}
+
+    fun len() {
+        return 0;
+    }
+
+    fun get(index) {
+        return null;
+    }
+}
+
+class TensorDataset extends Dataset {
+    var ptr tensors;
+    var int length;
+
+    TensorDataset(tensors) {
+        this.tensors = tensors;
+        if (len(tensors) > 0) {
+            this.length = torch_size(tensors[0], 0);
+        } else {
+            this.length = 0;
+        }
+    }
+
+    fun len() {
+        return this.length;
+    }
+
+    fun get(index) {
+        var items = range(0, 0, 1);
+        for (var i = 0; i < len(this.tensors); i = i + 1) {
+            items = push(items, torch_index_select(this.tensors[i], 0, torch_tensor([index])));
+        }
+        return items;
+    }
+}
+
+class DataLoader {
+    var ptr dataset;
+    var int batch_size;
+    var int shuffle;
+    var int drop_last;
+
+    DataLoader(dataset, batch_size, shuffle, drop_last) {
+        this.dataset = dataset;
+        this.batch_size = 1;
+        if (batch_size != null) { this.batch_size = batch_size; }
+        this.shuffle = false;
+        if (shuffle != null) { this.shuffle = shuffle; }
+        this.drop_last = false;
+        if (drop_last != null) { this.drop_last = drop_last; }
+    }
+
+    fun numBatches() {
+        var n = this.dataset.len();
+        var b = this.batch_size;
+        var full = n / b;
+        if (this.drop_last) {
+            return full;
+        }
+        if ((n % b) > 0) {
+            return full + 1;
+        }
+        return full;
+    }
+
+    fun getBatch(batch_idx) {
+        var start_idx = batch_idx * this.batch_size;
+        var end_idx = start_idx + this.batch_size;
+        var total = this.dataset.len();
+        if (end_idx > total) {
+            end_idx = total;
+        }
+
+        var batch_indices = range(start_idx, end_idx, 1);
+        var idx_tensor = torch_tensor(batch_indices);
+
+        // If dataset is a TensorDataset, slice batches directly
+        var batch_tensors = range(0, 0, 1);
+        for (var i = 0; i < len(this.dataset.tensors); i = i + 1) {
+            var sub = torch_index_select(this.dataset.tensors[i], 0, idx_tensor);
+            batch_tensors = push(batch_tensors, sub);
+        }
+        return batch_tensors;
+    }
+}

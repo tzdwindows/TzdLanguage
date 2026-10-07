@@ -1,0 +1,42 @@
+import "stdlib/net/Http.tzd";
+import "stdlib/net/Socket.tzd";
+
+fun main() {
+    print("=== Network Library Test ===");
+    var hostname = net_get_hostname();
+    print("Local Hostname:", hostname);
+    
+    var ip = net_resolve_ip("localhost");
+    print("Resolved localhost IP:", ip);
+
+    // Test TCP loopback
+    var server = new TcpServer(9876, "127.0.0.1");
+    if (server.listen(10)) {
+        print("TCP Server listening on 127.0.0.1:9876");
+        
+        var client = new TcpClient("127.0.0.1", 9876);
+        if (client.connect(2000)) {
+            print("TCP Client connected!");
+            var acceptedClient = server.accept(1000);
+            if (acceptedClient != null) {
+                print("Server accepted client!");
+                client.send("Hello TzdLang Sockets!");
+                var received = acceptedClient.recv(1024, 1000);
+                print("Server received:", received);
+                acceptedClient.send("Echo: " + received);
+                var echo = client.recv(1024, 1000);
+                print("Client received echo:", echo);
+                acceptedClient.close();
+            }
+            client.close();
+        }
+        server.close();
+        print("TCP Echo Test Passed!");
+    } else {
+        print("Failed to listen on port 9876");
+    }
+
+    print("\nNetwork Library Tests Finished!");
+}
+
+main();

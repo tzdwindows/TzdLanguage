@@ -1,0 +1,8 @@
+fun testFun() {
+    print("In testFun");
+    var x = undefinedVariable + 1;
+    print("x = " + toString(x));
+}
+print("Calling testFun...");
+testFun();
+print("Done");

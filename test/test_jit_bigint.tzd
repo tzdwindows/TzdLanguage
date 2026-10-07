@@ -1,0 +1,6 @@
+var x = 12345678901234567890;
+print("x = " + toString(x));
+var y = 98765432109876543210;
+print("y = " + toString(y));
+var p = x * y;
+print("x*y = " + toString(p));

@@ -1,0 +1,43 @@
+/**
+ * TzdLang 线程同步标准库 - Event 线程通知事件
+ * 支持手动复位 (manualReset) 与自动复位事件
+ */
+
+class Event {
+    var any id;
+
+    Event() {
+        this.id = sys_event_create(false);
+    }
+
+    Event(manualReset) {
+        this.id = sys_event_create(manualReset);
+    }
+
+    fun set() {
+        return sys_event_set(this.id);
+    }
+
+    fun reset() {
+        return sys_event_reset(this.id);
+    }
+
+    fun wait() {
+        return sys_event_wait(this.id, -1);
+    }
+
+    fun waitTimeout(timeoutMs) {
+        return sys_event_wait(this.id, timeoutMs);
+    }
+
+    fun isSet() {
+        return sys_event_is_set(this.id);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_event_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}

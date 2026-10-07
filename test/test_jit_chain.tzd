@@ -1,0 +1,1 @@
+fun add(a, b) { return a + b; } fun main() { print(add(3, 4)); print("val=" + toString(42)); print(toString(add(3, 4))); }  

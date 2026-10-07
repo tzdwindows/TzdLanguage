@@ -1,0 +1,56 @@
+import "time/DateTime.tzd";
+
+// A) Pure numeric recursion — confirms native-worker + FastCC recursion
+fun fibR(n) {
+    if (n < 2) { return n; }
+    return fibR(n - 1) + fibR(n - 2);
+}
+
+// B) Global array fill + read, dynamic-bound while loop (qsort's access pattern, no recursion)
+var A = range(0, 300000, 1);
+fun fillRead(n) {
+    var x = 1;
+    var i = 0;
+    while (i < n) {
+        x = (x * 16807) % 2147483647;
+        A[i] = x % 1000;
+        i = i + 1;
+    }
+    var sum = 0;
+    i = 0;
+    while (i < n) {
+        sum = sum + A[i];
+        i = i + 1;
+    }
+    return sum;
+}
+
+// C) Recursive over global array but trivial work (isolate recursion+array cost)
+var B = range(0, 100000, 1);
+fun recArr(lo, hi) {
+    if (lo >= hi) { return 0; }
+    var t = B[lo];
+    B[lo] = B[hi];
+    B[hi] = t;
+    return recArr(lo + 1, hi - 1);
+}
+
+var sw1 = new Stopwatch();
+sw1.start();
+var r1 = fibR(30);
+sw1.stop();
+print("fibR(30)=" + toString(r1) + " | " + toString(sw1.elapsedMs()) + " ms");
+
+var sw2 = new Stopwatch();
+sw2.start();
+var r2 = fillRead(300000);
+sw2.stop();
+print("fillRead sum=" + toString(r2) + " | " + toString(sw2.elapsedMs()) + " ms");
+
+var sw3 = new Stopwatch();
+sw3.start();
+var r3 = recArr(0, 99999);
+sw3.stop();
+print("recArr done | " + toString(sw3.elapsedMs()) + " ms");
+
+print("=== probe_rec done ===");

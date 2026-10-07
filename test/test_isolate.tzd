@@ -1,0 +1,39 @@
+// Minimal test to isolate hang
+print("start");
+var x = 3 + 4;
+print("after add: " + toString(x));
+
+fun check(name, actual, expected) {
+    if (toString(actual) == toString(expected)) {
+        print("PASS: " + name);
+    } else {
+        print("FAIL: " + name + " - expected " + toString(expected) + " got " + toString(actual));
+    }
+}
+
+check("int_add", 3 + 4, 7);
+check("str_concat", "Hello" + " " + "World", "Hello World");
+print("done basic");
+
+// Test recursion
+fun fib(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+print("about to call fib(10)");
+check("fib_10", fib(10), 55);
+print("after fib");
+
+// Test nested scope
+fun outer() {
+    var x = 10;
+    fun inner() {
+        return x + 5;
+    }
+    return inner();
+}
+print("about to call outer()");
+check("nested_scope", outer(), 15);
+print("after nested_scope");
+
+print("ALL DONE");

@@ -1,0 +1,54 @@
+fun benchAppend() {
+    var t0 = clock();
+    var s = "";
+    var i = 0;
+    while (i < 50000) {
+        s = s + "a";
+        i = i + 1;
+    }
+    var t1 = clock();
+    print("Append 50k chars (s = s + 'a'): " + (t1 - t0) + " ms, len=" + len(s));
+
+    var t2 = clock();
+    var s2 = "";
+    var j = 0;
+    while (j < 50000) {
+        s2 += "a";
+        j = j + 1;
+    }
+    var t3 = clock();
+    print("Compound 50k chars (s += 'a'): " + (t3 - t2) + " ms, len=" + len(s2));
+}
+
+fun benchMultiConcat() {
+    var t0 = clock();
+    var i = 0;
+    var last = "";
+    while (i < 100000) {
+        last = "prefix_" + i + "_suffix";
+        i = i + 1;
+    }
+    var t1 = clock();
+    print("Multi concat 100k ('prefix_' + i + '_suffix'): " + (t1 - t0) + " ms, last=" + last);
+}
+
+fun benchTwoStrings() {
+    var a = "Hello, World! This is a test string that is moderately long.";
+    var b = " Another piece of string to concatenate.";
+    var t0 = clock();
+    var i = 0;
+    var res = "";
+    while (i < 100000) {
+        res = a + b;
+        i = i + 1;
+    }
+    var t1 = clock();
+    print("Two strings 100k (a + b): " + (t1 - t0) + " ms, len=" + len(res));
+}
+
+fun main() {
+    print("=== String Benchmark ===");
+    benchTwoStrings();
+    benchMultiConcat();
+    benchAppend();
+}

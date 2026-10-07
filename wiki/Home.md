@@ -1,0 +1,113 @@
+# TzdLang (TZD) & TzdTools Technical Wiki
+
+<p align="right">
+  <a href="Home.md"><strong>English</strong></a> | <a href="Home-zh.md"><strong>中文</strong></a>
+</p>
+
+Welcome to the official technical documentation and architecture wiki for **TzdLang (TZD)** and **TzdTools**.
+
+TzdLang is an independently developed, high-performance object-oriented programming language featuring a hybrid tiered compilation model, native deep learning primitives, an ultra-fast GPU Number Theoretic Transform (NTT) BigInt multiplication engine, a native Base $10^9$ + Karatsuba CPU BigInt arithmetic engine, symbolic expression solver, and complete tooling support.
+
+> **v0.2.6 Highlights**: Comprehensive JIT diagnostic & precision exception unwinding (exact file, line, column and AST pointers for undefined identifiers/functions), OOP subclassing & inheritance validation (`extends` missing base class & constructor arity checks), array/string bounds safety, null-pointer member defense, and zero-overhead method dispatch (1M calls in 1.33 ms).
+
+---
+
+## 📑 Wiki Contents
+
+1. [**System Architecture Overview**](Home.md#system-architecture-overview)
+2. [**Language Specification & Syntax Guide**](Language-Specification.md)
+   - Types, dynamic and static annotations
+   - Functions, closures, first-class values
+   - Object-Oriented Programming (Classes, Inheritance, Virtual Dispatch, `super`)
+   - Control flow, exception handling (`try-catch-throw`), type matching (`in`)
+   - Native OS multithreading (`Thread`)
+3. [**GPU NTT BigInt Multiplication Deep-Dive**](GPU-NTT-BigInt.md)
+   - 3-Prime Chinese Remainder Theorem (CRT) algorithm
+   - Bailey's 4-Step 2D NTT decomposition
+   - Shared-memory Stockham kernels with bank-conflict-free padding
+   - 2-Round carry reduction & parallel Kogge-Stone prefix scan
+   - Performance benchmarks vs GNU MP (GMP) & Python
+4. [**CPU NTT High-Performance Engine (--experimental-compute)**](CPU-NTT-BigInt.md)
+   - 3-Prime Montgomery AVX2 SIMD vectorization (8 lanes per instruction)
+   - Cache-aware 4-step 2D matrix decomposition with 64x64 L1/L2 tile blocking
+   - Direct Garner CRT reconstruction & OpenMP multi-threading
+   - Reciprocal division-free base-10^9 conversion (fast_div_1e9)
+   - Benchmark: 175 ms on 4.74M digits, beating GMP by up to 14.5x
+5. [**JIT Compiler & Bytecode VM Internals**](JIT-Compiler-Internals.md)
+   - Tier 0: Ultra-Optimized Compact Bytecode VM (flat iterative dispatch, `INC_LOCAL`, fast scalar transfers, 83.5x speedup to 0.089s/1M calls)
+   - Tier 1: Asynchronous LLVM ORC JIT Engine
+   - Fine-grained optimization levels (`-O0` to `-O3`) & multi-stage inlining pipeline
+   - Native double worker specialization, loop unrolling & math intrinsics
+   - Zero-overhead JIT debugging interface with Selective Deoptimization
+   - Benchmark comparisons against JDK 20 HotSpot C2
+6. [**Deep Learning Engine (LibTorch Integration)**](Deep-Learning-and-PyTorch.md)
+   - First-class Tensor types & zero-lock memory lifecycle
+   - Automatic differentiation (Autograd)
+   - Neural network layers & optimizers (SGD, Adam, AdamW)
+   - GPU tensor offloading
+7. [**Building & Toolchain Guide**](Building-and-Toolchain.md)
+   - Standalone CMake build configuration
+   - Visual Studio 2022 / 2026 MSBuild setup
+   - Dependency management (CUDA, LibTorch, LLVM, vcpkg)
+8. [**VS Code Extension & DAP Debugger**](VSCode-Extension-and-Debugger.md)
+   - Official extension v0.2.5 with native JIT debugging & Selective Deoptimization
+   - Dedicated `JIT Engine` Scope in Variables panel for real-time status inspection
+   - Setting breakpoints, stepping, variable inspection, stack traces
+   - Dynamic LLVM IR dumping and syntax-highlighted inspection
+9. [**Standard Library Reference**](Standard-Library-Reference.md)
+   - `core/`: Error handling, reflection, I/O
+   - `thread/`: OS thread primitives, synchronization
+   - `torch/`: Neural network layers and deep learning utilities
+10. [**Built-in Functions Reference Manual**](Builtin-Functions-Reference.md)
+    - Comprehensive cheat-sheet and index for 350+ native functions across runtime, math, matrices, strings, arrays, containers, and LibTorch
+11. [**CLI Flags & Startup Parameters Reference Manual**](CLI-and-Startup-Options.md)
+    - Complete guide to CLI options: `--runMainTzd`, `--compile`, `--runbc`, `--setpd`, `--jit`, `--noJit`, `--interpreter`, `--forceGPU`, `--forceCPU`, `--experimental-compute`, `--bigTime`, `--silent`, `--antlrTime`, `--debug-port` and REPL system commands
+12. [**AOT Native Machine Code Compiler Architecture & Reference**](AOT-Compiler.md)
+    - True standalone Ahead-Of-Time compilation (Source/Bytecode -> Native x86_64 Machine Code)
+    - Zero third-party DLL guarantee (links only against OS `KERNEL32.dll`, completely eliminates `c10.dll` missing errors)
+    - Compact binary footprint (99.1% size reduction from 35MB fat stub down to ~300KB)
+    - Terminal progress bar, optimization levels (`-O0` to `-O3`), `--buildCpu` clean mode, and `--codegen` export
+
+---
+
+## 🏛️ System Architecture Overview
+
+```mermaid
+graph TD
+    Source["TzdLang Source (.tzd)"] --> Lexer["ANTLR4 Lexer & Parser"]
+    Lexer --> AST["Abstract Syntax Tree (AST)"]
+    
+    AST --> Tier0["Tier 0: Bytecode Compiler"]
+    Tier0 --> Bytecode["TzdBytecode Stream"]
+    Bytecode --> VM["Stack-Based Virtual Machine"]
+    
+    AST --> Tier1["Tier 1: Tiering Engine & JIT"]
+    Tier1 --> LLVMIR["LLVM IR Code Generator"]
+    LLVMIR --> OptPasses["LLVM Optimization Pipeline (CSE, mem2reg, Inlining)"]
+    OptPasses --> ObjectCache["Native Machine Code (.obj)"]
+    ObjectCache --> LLJIT["LLVM ORC JIT Execution Engine"]
+
+    AST --> AOT["AOT: Standalone Native Compiler"]
+    AOT --> NativeCodegen["TzdNativeCodegen C++20 IR Gen"]
+    NativeCodegen --> MSVC["MSVC cl.exe /MT Static Link"]
+    MSVC --> StandaloneExe["Zero-DLL Native Executable (.exe, ~300KB)"]
+    
+    VM <--> Runtime["Tzd Runtime System"]
+    LLJIT <--> Runtime
+    
+    Runtime --> BigIntGPU["CUDA GPU NTT BigInt Engine (29ms, 3-Prime CRT, Stockham, Kogge-Stone)"]
+    Runtime --> BigIntCPU["CPU AVX2 NTT BigInt Engine (--experimental-compute, 175ms, 4-Step Transpose)"]
+    Runtime --> LibTorch["LibTorch Deep Learning Engine (CUDA & CPU Tensors)"]
+    Runtime --> GC["Generational SATB Garbage Collector"]
+    Runtime --> DAP["DAP Interactive Debugger Server"]
+```
+
+---
+
+## 🎯 Quick Navigation
+
+- **Writing your first script?** Check the [Language Specification](Language-Specification.md).
+- **Curious about 29ms GPU 4.74M-digit multiplication?** Read the [GPU NTT Deep-Dive](GPU-NTT-BigInt.md).
+- **Need hardware-limit CPU BigInt without GPU?** See [CPU NTT Engine (--experimental-compute)](CPU-NTT-BigInt.md).
+- **Wondering how JIT beats Java HotSpot?** See [JIT Compiler Internals](JIT-Compiler-Internals.md).
+- **Building the project?** Head over to the [Building & Toolchain Guide](Building-and-Toolchain.md).

@@ -1,0 +1,30 @@
+import "ui/Window.tzd";
+import "ui/Control.tzd";
+import "ui/App.tzd";
+
+var gbBtnTriggered = false;
+
+var win = new Window("Test GroupBox Event", 400, 300, 100, 100);
+var gb = win.addGroupBox("Settings Panel", 20, 20, 300, 150);
+var btn = win.addButton("Inside GroupBox", 40, 60, 160, 35);
+
+btn.onClick(fun() {
+    print("[Event Triggered] Button inside GroupBox clicked!");
+    gbBtnTriggered = true;
+});
+
+win.show();
+App.pollEvents();
+
+print("[Testing] Performing click on button inside GroupBox...");
+btn.performClick();
+App.pollEvents();
+
+print("[Result] gbBtnTriggered = " + gbBtnTriggered);
+if (gbBtnTriggered == true) {
+    print("=== GROUPBOX EVENT TEST PASSED! ===");
+} else {
+    print("=== GROUPBOX EVENT TEST FAILED! ===");
+}
+
+win.close();

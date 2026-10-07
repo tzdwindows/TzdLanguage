@@ -1,0 +1,902 @@
+/* ==========================================================================
+   TzdLang Official Wiki — "From Beginner to Master" (从入门到精通)
+   Aesthetic: Apple Developer & HIG Dark Minimalism
+   Fluid Physics Motion: cubic-bezier(0.23, 1, 0.32, 1)
+   ========================================================================== */
+
+:root {
+  /* Canvas & Elevated Surfaces */
+  --apple-canvas: #0c0e14;
+  --apple-surface: #12151e;
+  --apple-surface-elevated: #161a26;
+  --apple-surface-card: rgba(20, 24, 35, 0.7);
+  --apple-surface-hover: rgba(255, 255, 255, 0.04);
+  --apple-surface-active: rgba(41, 151, 255, 0.1);
+  --apple-code-bg: #10131c;
+
+  /* Borders */
+  --apple-border: rgba(255, 255, 255, 0.07);
+  --apple-border-subtle: rgba(255, 255, 255, 0.04);
+  --apple-border-elevated: rgba(255, 255, 255, 0.12);
+  --apple-border-active: rgba(41, 151, 255, 0.4);
+
+  /* Typography Colors */
+  --apple-text-primary: #f5f5f7;
+  --apple-text-secondary: #9aa1b0;
+  --apple-text-tertiary: #636b7b;
+  --apple-text-accent: #2997ff;
+
+  /* Unified Accents */
+  --apple-blue: #2997ff;
+  --apple-blue-hover: #0077ed;
+  --apple-blue-subtle: rgba(41, 151, 255, 0.12);
+  --apple-green: #34d399;
+  --apple-amber: #f59e0b;
+  --apple-purple: #a78bfa;
+
+  /* Fonts & Typographic Hierarchy */
+  --apple-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF Pro", "Inter", -apple-system, sans-serif;
+  --apple-font-mono: "SF Mono", Menlo, Monaco, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+  /* Easing & Physics */
+  --apple-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --apple-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Dimensions */
+  --header-h: 56px;
+  --sidebar-w: 280px;
+  --toc-w: 240px;
+}
+
+/* Base Reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  background-color: var(--apple-canvas);
+  color: var(--apple-text-primary);
+  font-family: var(--apple-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--apple-canvas);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  line-height: 1.75;
+  color: var(--apple-text-secondary);
+}
+
+/* Top Slim Reading Progress Bar */
+#reading-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 0%;
+  background: linear-gradient(90deg, #2997ff 0%, #5ac8fa 50%, #34d399 100%);
+  z-index: 10000;
+  transition: width 0.12s ease-out;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Top Sticky Navigation Bar (Apple Frosted Glass)
+   ========================================================================== */
+.wiki-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  background: rgba(12, 14, 20, 0.76);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid var(--apple-border);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2rem;
+  transition: background-color 0.3s var(--apple-ease);
+}
+
+.wiki-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.brand-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  text-decoration: none;
+  color: inherit;
+  transition: opacity 0.2s var(--apple-ease);
+}
+
+.brand-wrapper:hover {
+  opacity: 0.88;
+}
+
+.brand-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #0071e3 0%, #0056b3 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.35);
+}
+
+.brand-name {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--apple-text-primary);
+  letter-spacing: -0.015em;
+}
+
+.version-badge {
+  font-size: 0.7rem;
+  font-family: var(--apple-font-mono);
+  padding: 0.15rem 0.55rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--apple-border);
+  border-radius: 9999px;
+  color: var(--apple-text-tertiary);
+  font-weight: 500;
+}
+
+.breadcrumb-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--apple-text-tertiary);
+}
+
+.breadcrumb-nav a {
+  color: var(--apple-text-tertiary);
+  text-decoration: none;
+  transition: color 0.15s var(--apple-ease);
+}
+
+.breadcrumb-nav a:hover {
+  color: var(--apple-text-primary);
+}
+
+.breadcrumb-active {
+  color: var(--apple-text-secondary);
+  font-weight: 500;
+}
+
+/* Apple Spotlight Style Search Input */
+.wiki-search-box {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--apple-border);
+  padding: 0.38rem 0.85rem;
+  border-radius: 10px;
+  width: 290px;
+  transition: width 0.3s var(--apple-ease), background 0.25s var(--apple-ease), border-color 0.25s var(--apple-ease), box-shadow 0.25s var(--apple-ease);
+}
+
+.wiki-search-box svg {
+  color: var(--apple-text-tertiary);
+  flex-shrink: 0;
+  transition: color 0.2s var(--apple-ease);
+}
+
+.wiki-search-box input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--apple-text-primary);
+  font-family: var(--apple-font-sans);
+  font-size: 0.825rem;
+  width: 100%;
+}
+
+.wiki-search-box input::placeholder {
+  color: var(--apple-text-tertiary);
+}
+
+.wiki-search-box kbd {
+  font-family: var(--apple-font-mono);
+  font-size: 0.65rem;
+  padding: 0.15rem 0.38rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--apple-border);
+  border-radius: 5px;
+  color: var(--apple-text-tertiary);
+  transition: transform 0.2s var(--apple-ease), color 0.2s var(--apple-ease);
+}
+
+.wiki-search-box:focus-within {
+  width: 350px;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(41, 151, 255, 0.45);
+  box-shadow: 0 0 0 3px rgba(41, 151, 255, 0.12), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.wiki-search-box:focus-within svg {
+  color: var(--apple-blue);
+}
+
+.wiki-search-box:focus-within kbd {
+  transform: scale(0.92);
+  color: var(--apple-text-secondary);
+}
+
+/* Header Right Actions */
+.wiki-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.header-link {
+  font-size: 0.84rem;
+  color: var(--apple-text-secondary);
+  text-decoration: none;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: color 0.18s var(--apple-ease), background 0.18s var(--apple-ease);
+}
+
+.header-link:hover {
+  color: var(--apple-text-primary);
+  background: var(--apple-surface-hover);
+}
+
+.btn-dl-header {
+  background: var(--apple-blue);
+  color: #fff;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.95rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  text-decoration: none;
+  box-shadow: 0 1px 4px rgba(41, 151, 255, 0.3);
+  transition: background-color 0.2s var(--apple-ease), transform 0.2s var(--apple-ease), box-shadow 0.2s var(--apple-ease);
+}
+
+.btn-dl-header:hover {
+  background: var(--apple-blue-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(41, 151, 255, 0.4);
+}
+
+/* Hamburger button for mobile */
+.btn-mobile-sidebar {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--apple-text-primary);
+  cursor: pointer;
+  padding: 0.35rem;
+}
+
+/* ==========================================================================
+   Documentation Grid Layout (Apple Negative Space & Precision)
+   ========================================================================== */
+.wiki-layout {
+  display: flex;
+  margin-top: var(--header-h);
+  min-height: calc(100vh - var(--header-h));
+  max-width: 1540px;
+  margin-left: auto;
+  margin-right: auto;
+  position: relative;
+}
+
+/* Left Sidebar (Frosted Glass Navigator) */
+.wiki-sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+  border-right: 1px solid var(--apple-border);
+  background: rgba(12, 14, 20, 0.4);
+  padding: 2rem 1.15rem 4rem 1.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.wiki-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wiki-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.sidebar-group-title {
+  font-family: var(--apple-font-sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--apple-text-tertiary);
+  text-transform: uppercase;
+  margin: 1.75rem 0 0.55rem 0.55rem;
+}
+
+.sidebar-group-title:first-child {
+  margin-top: 0.2rem;
+}
+
+.sidebar-nav-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.52rem 0.75rem;
+  border-radius: 8px;
+  color: var(--apple-text-secondary);
+  font-size: 0.84rem;
+  text-decoration: none;
+  transition: all 0.22s var(--apple-ease);
+  line-height: 1.4;
+  position: relative;
+}
+
+.sidebar-link:hover {
+  color: var(--apple-text-primary);
+  background: var(--apple-surface-hover);
+}
+
+.sidebar-link.active {
+  color: var(--apple-blue);
+  background: var(--apple-blue-subtle);
+  font-weight: 600;
+}
+
+.sidebar-link.active::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 20%;
+  bottom: 20%;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--apple-blue);
+  box-shadow: 0 0 8px rgba(41, 151, 255, 0.5);
+}
+
+.sidebar-link-num {
+  font-family: var(--apple-font-mono);
+  font-size: 0.72rem;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Center Article Area (Spacious Breathing Room)
+   ========================================================================== */
+.wiki-main {
+  flex: 1;
+  min-width: 0;
+  padding: 3.5rem 4.5rem 8rem 4.5rem;
+  max-width: 940px;
+}
+
+/* Right TOC Navigator */
+.wiki-toc-wrapper {
+  width: var(--toc-w);
+  flex-shrink: 0;
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+  padding: 2.75rem 1.5rem 2rem 1.5rem;
+  border-left: 1px solid var(--apple-border);
+}
+
+.toc-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--apple-text-tertiary);
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.toc-nav-container {
+  position: relative;
+}
+
+/* Apple Fluid Active Sliding Track Indicator */
+.toc-track-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+}
+
+.toc-active-pill {
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 24px;
+  background: var(--apple-blue);
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(41, 151, 255, 0.6);
+  transition: transform 0.3s var(--apple-ease), opacity 0.2s var(--apple-ease);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toc-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-left: 0.85rem;
+}
+
+.toc-item a {
+  font-size: 0.81rem;
+  color: var(--apple-text-tertiary);
+  text-decoration: none;
+  display: block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: color 0.2s var(--apple-ease), background 0.2s var(--apple-ease);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toc-item a:hover {
+  color: var(--apple-text-primary);
+}
+
+.toc-item.active a {
+  color: var(--apple-blue);
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Article Hierarchy & Typographic Detail
+   ========================================================================== */
+.wiki-article {
+  margin-bottom: 5.5rem;
+  padding-bottom: 4.5rem;
+  border-bottom: 1px solid var(--apple-border-subtle);
+  position: relative;
+}
+
+.wiki-article:last-child {
+  border-bottom: none;
+  margin-bottom: 2rem;
+}
+
+.wiki-ch-header {
+  margin-bottom: 2rem;
+}
+
+.wiki-ch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.75rem;
+  background: rgba(41, 151, 255, 0.08);
+  border: 1px solid rgba(41, 151, 255, 0.2);
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-family: var(--apple-font-mono);
+  color: var(--apple-blue);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 1rem;
+}
+
+.wiki-article h1 {
+  font-size: 2.35rem;
+  font-weight: 700;
+  color: var(--apple-text-primary);
+  letter-spacing: -0.025em;
+  line-height: 1.22;
+  margin-bottom: 0.95rem;
+}
+
+.wiki-article-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: 0.8rem;
+  color: var(--apple-text-tertiary);
+  margin-bottom: 2.25rem;
+}
+
+.wiki-article h2 {
+  font-size: 1.45rem;
+  font-weight: 600;
+  color: var(--apple-text-primary);
+  margin: 3.25rem 0 1.15rem 0;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wiki-article h3 {
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: #e5e7eb;
+  margin: 2.25rem 0 0.85rem 0;
+  letter-spacing: -0.01em;
+}
+
+.wiki-article p {
+  color: var(--apple-text-secondary);
+  font-size: 0.975rem;
+  margin-bottom: 1.35rem;
+  line-height: 1.78;
+}
+
+.wiki-article ul, .wiki-article ol {
+  margin: 1rem 0 1.5rem 1.65rem;
+  color: var(--apple-text-secondary);
+  font-size: 0.96rem;
+}
+
+.wiki-article li {
+  margin-bottom: 0.55rem;
+  line-height: 1.72;
+}
+
+.wiki-article strong {
+  color: var(--apple-text-primary);
+  font-weight: 600;
+}
+
+.wiki-article code:not(pre code) {
+  font-family: var(--apple-font-mono);
+  font-size: 0.84em;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--apple-border);
+  padding: 0.15em 0.45em;
+  border-radius: 5px;
+  color: #e2e8f0;
+}
+
+/* ==========================================================================
+   Apple Admonition Callout Boxes
+   ========================================================================== */
+.callout {
+  padding: 1.25rem 1.5rem;
+  border-radius: 12px;
+  margin: 2rem 0;
+  border: 1px solid;
+  position: relative;
+  background: var(--apple-surface);
+}
+
+.callout-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.callout p {
+  font-size: 0.91rem;
+  margin-bottom: 0;
+  color: #cbd5e1;
+  line-height: 1.68;
+}
+
+.callout-note {
+  border-color: rgba(41, 151, 255, 0.25);
+  background: rgba(41, 151, 255, 0.05);
+}
+.callout-note .callout-title { color: var(--apple-blue); }
+
+.callout-tip {
+  border-color: rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.05);
+}
+.callout-tip .callout-title { color: var(--apple-green); }
+
+.callout-warning {
+  border-color: rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.05);
+}
+.callout-warning .callout-title { color: var(--apple-amber); }
+
+.callout-important {
+  border-color: rgba(167, 139, 250, 0.25);
+  background: rgba(167, 139, 250, 0.05);
+}
+.callout-important .callout-title { color: var(--apple-purple); }
+
+/* ==========================================================================
+   Apple Cardified Code Blocks (macOS Header + Subtle Highlighting)
+   ========================================================================== */
+.code-block-wrapper {
+  position: relative;
+  background: var(--apple-code-bg);
+  border: 1px solid var(--apple-border);
+  border-radius: 14px;
+  margin: 1.85rem 0;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.25s var(--apple-ease);
+}
+
+.code-block-wrapper:hover {
+  border-color: var(--apple-border-elevated);
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1rem;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--apple-border);
+}
+
+.code-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* macOS Window Dots (Muted, Sophisticated) */
+.macos-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.macos-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  opacity: 0.65;
+  transition: opacity 0.2s var(--apple-ease);
+}
+
+.code-block-wrapper:hover .macos-dot {
+  opacity: 0.9;
+}
+
+.dot-red { background: #ff5f56; }
+.dot-yellow { background: #ffbd2e; }
+.dot-green { background: #27c93f; }
+
+.code-lang-tag {
+  font-family: var(--apple-font-mono);
+  font-size: 0.72rem;
+  color: var(--apple-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+/* Subtle Copy Button (Hover Fade-in + Physics Feedback) */
+.btn-copy-snippet {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.74rem;
+  font-family: var(--apple-font-sans);
+  color: var(--apple-text-tertiary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--apple-border);
+  padding: 0.25rem 0.65rem;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.22s var(--apple-ease);
+}
+
+.code-block-wrapper:hover .btn-copy-snippet {
+  opacity: 1;
+}
+
+.btn-copy-snippet:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--apple-text-primary);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.btn-copy-snippet.copied {
+  color: var(--apple-green);
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+pre.code-pre {
+  margin: 0;
+  padding: 1.35rem 1.45rem;
+  overflow-x: auto;
+  font-family: var(--apple-font-mono);
+  font-size: 0.88rem;
+  line-height: 1.72;
+  color: #e2e8f0;
+}
+
+/* ==========================================================================
+   Syntax Highlighting Palette (Xcode Dark / Solarized Fusion)
+   Harmonious, Soft, Balanced & Zero Eye-Strain
+   ========================================================================== */
+.kw { color: #c792ea; font-weight: 500; }  /* Soft Lilac / Violet */
+.tp { color: #7dd3fc; font-weight: 500; }  /* Gentle Sky / Cyan */
+.fn { color: #82aaff; }                   /* Calm Periwinkle Blue */
+.st { color: #c3e88d; }                   /* Soft Sage / Cream Green */
+.num { color: #ffcb6b; }                  /* Warm Champagne Gold */
+.cm { color: #6272a4; font-style: italic; } /* Muted Slate Gray */
+.op { color: #89ddff; }                   /* Pale Ice Slate */
+
+/* ==========================================================================
+   Minimalist Apple Spec Tables
+   ========================================================================== */
+.wiki-table-wrap {
+  overflow-x: auto;
+  margin: 2rem 0;
+  border-radius: 12px;
+  border: 1px solid var(--apple-border);
+  background: var(--apple-surface);
+}
+
+.wiki-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.wiki-table th {
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.85rem 1.25rem;
+  color: var(--apple-text-primary);
+  font-weight: 600;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--apple-border);
+}
+
+.wiki-table td {
+  padding: 0.95rem 1.25rem;
+  border-bottom: 1px solid var(--apple-border-subtle);
+  color: var(--apple-text-secondary);
+}
+
+.wiki-table tr:last-child td {
+  border-bottom: none;
+}
+
+.wiki-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* ==========================================================================
+   Chapter Pager (Apple Fluid Transition Cards)
+   ========================================================================== */
+.chapter-pager {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3.5rem;
+  gap: 1.25rem;
+}
+
+.pager-btn {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.35rem;
+  border-radius: 12px;
+  background: var(--apple-surface);
+  border: 1px solid var(--apple-border);
+  text-decoration: none;
+  min-width: 230px;
+  transition: all 0.25s var(--apple-ease);
+}
+
+.pager-btn:hover {
+  background: var(--apple-surface-hover);
+  border-color: var(--apple-border-elevated);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.pager-btn.next {
+  text-align: right;
+  margin-left: auto;
+}
+
+.pager-label {
+  font-size: 0.72rem;
+  font-family: var(--apple-font-mono);
+  color: var(--apple-text-tertiary);
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pager-title {
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--apple-text-primary);
+}
+
+/* ==========================================================================
+   Responsive Adaptations
+   ========================================================================== */
+@media (max-width: 1240px) {
+  .wiki-toc-wrapper {
+    display: none;
+  }
+  .wiki-main {
+    padding: 3rem 2.5rem 6rem 2.5rem;
+  }
+}
+
+@media (max-width: 860px) {
+  .wiki-search-box {
+    display: none;
+  }
+  .btn-mobile-sidebar {
+    display: block;
+  }
+  .wiki-sidebar {
+    position: fixed;
+    left: -100%;
+    top: var(--header-h);
+    z-index: 999;
+    background: var(--apple-canvas);
+    width: 280px;
+    transition: left 0.3s var(--apple-ease);
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+  }
+  .wiki-sidebar.open {
+    left: 0;
+  }
+  .wiki-main {
+    padding: 2rem 1.25rem 4rem 1.25rem;
+  }
+  .chapter-pager {
+    flex-direction: column;
+  }
+  .pager-btn.next {
+    text-align: left;
+    margin-left: 0;
+  }
+}

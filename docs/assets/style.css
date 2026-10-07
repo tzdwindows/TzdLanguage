@@ -1,0 +1,1835 @@
+/* ==========================================================================
+   TzdLang Official Website — Apple Developer & Vercel Design System (v2.0)
+   Strictly engineered from scratch: Zero AI templates, authentic Liquid Glassmorphism.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Design Tokens & CSS Custom Properties
+   -------------------------------------------------------------------------- */
+:root {
+  --bg-base: #090A0F;
+  --bg-panel: rgba(18, 20, 29, 0.6);
+  --bg-panel-hover: rgba(255, 255, 255, 0.04);
+  --bg-glass-card: rgba(255, 255, 255, 0.025);
+  
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-glass: rgba(255, 255, 255, 0.10);
+  --border-active: rgba(255, 255, 255, 0.15);
+  --border-highlight: rgba(56, 189, 248, 0.35);
+
+  --text-primary: #F5F5F7;
+  --text-secondary: #86868B;
+  --text-tertiary: #52525A;
+  --text-accent: #38BDF8;
+  --text-accent-glow: #00F2FE;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, Monaco, monospace;
+
+  --nav-height: 60px;
+  --workbench-sidebar-w: 240px;
+}
+
+/* --------------------------------------------------------------------------
+   2. Reset & Global Base
+   -------------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+
+body {
+  background-color: var(--bg-base);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: clip;
+  width: 100%;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   Lenis Physics Momentum Smooth Scrolling
+   -------------------------------------------------------------------------- */
+html.lenis, html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+/* --------------------------------------------------------------------------
+   3. Ambient Depth Lights (Strictly 2 Low-Saturation Deep Glows)
+   -------------------------------------------------------------------------- */
+.ambient-glow-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.ambient-light-teal {
+  position: absolute;
+  top: -100px;
+  right: -80px;
+  width: 720px;
+  height: 680px;
+  background: radial-gradient(circle, #0F2A38 0%, rgba(15, 42, 56, 0) 70%);
+  filter: blur(140px);
+  opacity: 0.55;
+}
+
+.ambient-light-indigo {
+  position: absolute;
+  top: 45%;
+  left: -120px;
+  width: 760px;
+  height: 720px;
+  background: radial-gradient(circle, #1E1035 0%, rgba(30, 16, 53, 0) 70%);
+  filter: blur(140px);
+  opacity: 0.45;
+}
+
+/* --------------------------------------------------------------------------
+   4. Top Fixed Navigation (Integrated Glassmorphism Header)
+   -------------------------------------------------------------------------- */
+.site-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--nav-height);
+  background: rgba(9, 10, 15, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-subtle);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+}
+
+.header-container {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.brand-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #1E293B, #0F172A);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.brand-icon svg {
+  width: 16px;
+  height: 16px;
+  color: #38BDF8;
+}
+
+.brand-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.version-badge {
+  font-size: 0.68rem;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  padding: 0.15rem 0.45rem;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.75rem;
+}
+
+.nav-link {
+  font-size: 0.85rem;
+  font-weight: 450;
+  color: var(--text-secondary);
+  transition: color 0.2s ease;
+}
+
+.nav-link:hover {
+  color: var(--text-primary);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-primary-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #000000;
+  background: #ffffff;
+  padding: 0.42rem 0.95rem;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.btn-primary-header:hover {
+  background: #f5f5f7;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.25);
+}
+
+.btn-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-glass);
+  padding: 0.42rem 0.85rem;
+  border-radius: 9999px;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.btn-github:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.btn-github svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mobile-menu-btn {
+  display: none;
+  padding: 0.4rem;
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   5. Hero Section (Apple Keynote & Vercel Developer Style)
+   -------------------------------------------------------------------------- */
+.hero-section {
+  position: relative;
+  z-index: 10;
+  padding-top: calc(var(--nav-height) + 5rem);
+  padding-bottom: 4rem;
+  text-align: center;
+}
+
+.hero-container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.hero-pill-announcement {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-glass);
+  border-radius: 9999px;
+  padding: 0.3rem 0.85rem;
+  margin-bottom: 1.75rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.hero-pill-announcement .indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #38BDF8;
+  box-shadow: 0 0 8px #38BDF8;
+}
+
+.hero-title {
+  font-size: clamp(2.3rem, 5.5vw, 3.8rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 1.25rem;
+  color: var(--text-primary);
+}
+
+.hero-title .text-gradient {
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.65) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-description {
+  font-size: clamp(1rem, 2vw, 1.15rem);
+  font-weight: 400;
+  color: var(--text-secondary);
+  max-width: 700px;
+  margin: 0 auto 2.25rem auto;
+  line-height: 1.65;
+}
+
+.hero-cta-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 3.5rem;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #090A0F;
+  background: #FFFFFF;
+  padding: 0.65rem 1.4rem;
+  border-radius: 9999px;
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.15);
+}
+
+.btn-primary:hover {
+  background: #E2E8F0;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(255, 255, 255, 0.25);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-glass);
+  padding: 0.65rem 1.4rem;
+  border-radius: 9999px;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+/* Hero Metric Stats Grid */
+.hero-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.25rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.stat-card {
+  background: var(--bg-glass-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 1.15rem 1rem;
+  text-align: left;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.stat-card:hover {
+  border-color: var(--border-glass);
+  transform: translateY(-2px);
+}
+
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.stat-value span {
+  color: #38BDF8;
+  font-size: 1rem;
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   6. Core Syntax Workbench (Xcode Desktop App Interface)
+   -------------------------------------------------------------------------- */
+.workbench-section {
+  position: relative;
+  z-index: 10;
+  padding: 3rem 1.5rem 6rem;
+  scroll-margin-top: calc(var(--nav-height) + 1.5rem);
+}
+
+.section-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.section-header-compact {
+  text-align: center;
+  margin-bottom: 2.25rem;
+}
+
+.section-badge-tiny {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #38BDF8;
+  margin-bottom: 0.5rem;
+}
+
+.section-title {
+  font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(255, 255, 255, 0.7) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.65rem;
+}
+
+.section-desc {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* Xcode Window Outer Shell */
+.xcode-window {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-panel);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 40px 80px -20px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Window Titlebar (macOS standard) */
+.xcode-titlebar {
+  height: 44px;
+  background: rgba(14, 16, 23, 0.75);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+}
+
+.traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 60px;
+}
+
+.traffic-light {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.traffic-light.red { background-color: #FF5F56; }
+.traffic-light.yellow { background-color: #FFBD2E; }
+.traffic-light.green { background-color: #27C93F; }
+
+.window-active-filename {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.2rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.window-active-filename svg {
+  width: 12px;
+  height: 12px;
+  color: #38BDF8;
+}
+
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 80px;
+  justify-content: flex-end;
+}
+
+.btn-copy-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.btn-copy-code:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-glass);
+}
+
+.btn-copy-code svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Xcode Window Body Split (Sidebar + Editor) */
+.xcode-body {
+  display: flex;
+  min-height: 540px;
+}
+
+/* Left Navigator Sidebar (width 240px) */
+.xcode-navigator {
+  width: var(--workbench-sidebar-w);
+  flex-shrink: 0;
+  background: rgba(12, 14, 20, 0.5);
+  border-right: 1px solid var(--border-subtle);
+  padding: 0.85rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.navigator-group-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 0 0.5rem 0.5rem;
+}
+
+.navigator-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+}
+
+.nav-item-btn {
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 0.65rem;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  text-align: left;
+  position: relative;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-item-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-panel-hover);
+}
+
+.nav-item-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.nav-item-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+.nav-item-btn.active svg {
+  opacity: 1;
+  color: #38BDF8;
+}
+
+/* 2px Bright Blue Vertical Indicator Bar */
+.nav-item-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background-color: #38BDF8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+}
+
+/* Right Editor Viewport */
+.xcode-editor-viewport {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: rgba(14, 16, 24, 0.4);
+}
+
+/* Editor Top Spec Summary */
+.editor-doc-header {
+  padding: 1.25rem 1.75rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.editor-doc-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.editor-doc-tag {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  padding: 0.15rem 0.45rem;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38BDF8;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.editor-doc-desc {
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.editor-doc-rule {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #94A3B8;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid #38BDF8;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Code Container (Line Numbers + Highlighting) */
+.code-container {
+  flex: 1;
+  display: flex;
+  overflow: auto;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.code-container::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.code-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.code-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.line-numbers-col {
+  padding: 1.25rem 0.75rem 1.25rem 1rem;
+  text-align: right;
+  user-select: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text-tertiary);
+  min-width: 44px;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.code-pane-wrapper {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.code-pane {
+  padding: 1.25rem 1.25rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre;
+  color: #C9D1D9;
+  opacity: 1;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.code-pane.fade-out {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Xcode Dark / GitHub Dark Muted Color Scheme */
+.tzd-keyword   { color: #FF7AB2; font-weight: 500; } /* Soft Rose / Violet */
+.tzd-type      { color: #79C0FF; }                   /* Sky Blue */
+.tzd-string    { color: #7EE787; }                   /* Mint Green */
+.tzd-number    { color: #E3B341; }                   /* Warm Amber */
+.tzd-comment   { color: #8B949E; font-style: italic; } /* Neutral Muted Gray */
+.tzd-fun       { color: #79C0FF; font-weight: 500; } /* Function Name */
+.tzd-class     { color: #D2A8FF; font-weight: 500; } /* Pastel Lavender */
+.tzd-annot     { color: #FFA657; }                   /* Orange Metadata */
+
+/* --------------------------------------------------------------------------
+   7. Architecture & Pipeline Section
+   -------------------------------------------------------------------------- */
+.arch-section {
+  position: relative;
+  z-index: 10;
+  padding: 4rem 1.5rem 6rem;
+  scroll-margin-top: calc(var(--nav-height) + 1.5rem);
+}
+
+.pipeline-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 2rem;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+  margin-bottom: 2rem;
+}
+
+.pipeline-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.pipeline-stage {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 1.25rem 1rem;
+  position: relative;
+}
+
+.stage-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: #38BDF8;
+  margin-bottom: 0.4rem;
+}
+
+.stage-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.4rem;
+}
+
+.stage-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.arch-duo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.feature-box {
+  background: var(--bg-glass-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 1.5rem;
+}
+
+.feature-box-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.feature-box-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+/* --------------------------------------------------------------------------
+   8. Benchmarks Section (Clean Apple Glass Table)
+   -------------------------------------------------------------------------- */
+.benchmarks-section {
+  position: relative;
+  z-index: 10;
+  padding: 2rem 1.5rem 6rem;
+  scroll-margin-top: calc(var(--nav-height) + 1.5rem);
+}
+
+.table-glass-wrapper {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.6);
+}
+
+.apple-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.apple-table th {
+  background: rgba(14, 16, 23, 0.7);
+  padding: 0.95rem 1.25rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.apple-table td {
+  padding: 1rem 1.25rem;
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.apple-table tr:last-child td {
+  border-bottom: none;
+}
+
+.apple-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cell-highlight {
+  color: #38BDF8;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.cell-ratio {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #34D399;
+  background: rgba(52, 211, 153, 0.1);
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  display: inline-block;
+}
+
+/* --------------------------------------------------------------------------
+   9. Toolchain & Quickstart Terminal
+   -------------------------------------------------------------------------- */
+.toolchain-section {
+  position: relative;
+  z-index: 10;
+  padding: 2rem 1.5rem 6rem;
+  scroll-margin-top: calc(var(--nav-height) + 1.5rem);
+}
+
+.terminal-window {
+  background: rgba(10, 12, 18, 0.85);
+  border: 1px solid var(--border-glass);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.7);
+}
+
+.terminal-titlebar {
+  height: 38px;
+  background: rgba(18, 20, 28, 0.8);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+}
+
+.terminal-body {
+  padding: 1.25rem 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+  color: #94A3B8;
+}
+
+.cmd-line {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
+}
+
+.cmd-prompt {
+  color: #38BDF8;
+  user-select: none;
+}
+
+.cmd-text {
+  color: #F8FAFC;
+}
+
+/* --------------------------------------------------------------------------
+   10. Site Footer
+   -------------------------------------------------------------------------- */
+.site-footer {
+  position: relative;
+  z-index: 10;
+  border-top: 1px solid var(--border-subtle);
+  padding: 3rem 1.5rem 4rem;
+  background: rgba(7, 8, 12, 0.9);
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footer-copy {
+  font-size: 0.82rem;
+  color: var(--text-tertiary);
+}
+
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.footer-links a:hover {
+  color: var(--text-primary);
+}
+
+/* --------------------------------------------------------------------------
+   11. Mobile & Tablet Responsiveness
+   -------------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .header-nav {
+    display: none;
+  }
+
+  .mobile-menu-btn {
+    display: block;
+  }
+
+  .mobile-nav-drawer {
+    display: none;
+    position: fixed;
+    top: var(--nav-height);
+    left: 0;
+    right: 0;
+    background: rgba(9, 10, 15, 0.95);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 1.25rem 1.5rem;
+    flex-direction: column;
+    gap: 1rem;
+    z-index: 999;
+  }
+
+  .mobile-nav-drawer.open {
+    display: flex;
+  }
+
+  .hero-stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pipeline-flow-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .arch-duo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Workbench on Mobile: Horizontal Scrollable Segmented Track */
+  .xcode-body {
+    flex-direction: column;
+  }
+
+  .xcode-navigator {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .navigator-group-label {
+    display: none;
+  }
+
+  .navigator-list {
+    flex-direction: row;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    gap: 0.4rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .navigator-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-item-btn {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 0 0.85rem;
+    border-radius: 9999px;
+  }
+
+  .nav-item-btn.active::before {
+    display: none;
+  }
+
+  .nav-item-btn.active {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .table-glass-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .apple-table {
+    min-width: 480px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-cta-group {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .btn-primary, .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .footer-container {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   8. Modern Effects: Canvas Background, Spotlight, Badges & Animations
+   -------------------------------------------------------------------------- */
+#bg-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+.pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+  animation: pulse-glow 2.5s infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@keyframes pulse-glow {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.5); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+}
+
+/* --------------------------------------------------------------------------
+   9. Dedicated Downloads Center Section (Apple Scroll-Driven Pinning 300vh Runway)
+   -------------------------------------------------------------------------- */
+.pin-download-runway {
+  position: relative;
+  height: 300vh;
+  background-color: #080808;
+  z-index: 20;
+  overflow-x: clip;
+}
+
+.pin-viewport-stage {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 1.5rem;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+.stage-container {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+.pin-stage-header {
+  text-align: center;
+  margin-bottom: 2rem;
+  will-change: transform, opacity;
+  transform-origin: center center;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.download-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.95rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  color: #a1a1a6;
+  font-weight: 500;
+  margin-bottom: 0.85rem;
+}
+
+/* 3D Perspective Container (Apple Mac Pro / iPhone Keynote stage) */
+.cards-perspective-container {
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform, opacity;
+  width: 100%;
+  position: relative;
+}
+
+.download-cards-grid, .cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.75rem;
+  width: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+}
+
+/* Motion Wrappers: controlled purely by GSAP ScrollTrigger timeline */
+.card-motion-wrapper {
+  will-change: transform, opacity, filter;
+  position: relative;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+}
+
+.card-motion-wrapper.featured-wrapper {
+  z-index: 5;
+}
+
+/* Inner Card: receives 3D mouse tilt & visual glass styling */
+.card-tilt-inner, .dl-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 2.35rem 2rem 2.15rem 2rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  will-change: transform, opacity;
+  box-shadow: 0 16px 40px -15px rgba(0, 0, 0, 0.6);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card-tilt-inner:hover, .dl-card:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.75), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+.dl-card-featured {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Pointer-events-none Cold-White Spotlight Shine Layer */
+.card-spotlight-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+/* Neutral Gray Capsule Badge */
+.dl-badge-neutral {
+  align-self: flex-start;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #a1a1a6;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 4px 11px;
+  border-radius: 9999px;
+  margin-bottom: 1.25rem;
+  position: relative;
+  z-index: 2;
+}
+
+/* Minimal Vector Icon */
+.dl-icon-minimal {
+  width: 36px;
+  height: 36px;
+  color: rgba(255, 255, 255, 0.85);
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  z-index: 2;
+}
+
+.dl-icon-minimal svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.5px;
+}
+
+.dl-title-wrap {
+  margin-bottom: 0.4rem;
+  position: relative;
+  z-index: 2;
+}
+
+.dl-card-title {
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #f5f5f7;
+  line-height: 1.25;
+  margin-bottom: 0.25rem;
+}
+
+.dl-card-subtitle {
+  font-size: 0.82rem;
+  color: #86868b;
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+}
+
+.dl-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.35rem;
+  padding-bottom: 1.15rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 2;
+}
+
+.dl-file-size {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.dl-file-badge {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #86868b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dl-feature-list {
+  list-style: none;
+  margin-bottom: 1.85rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  position: relative;
+  z-index: 2;
+}
+
+.dl-feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  font-size: 0.83rem;
+  color: #9aa1b0;
+  line-height: 1.55;
+}
+
+.dl-feature-item svg {
+  color: #636b7b;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.dl-feature-item strong {
+  color: #e5e5e7;
+  font-weight: 500;
+}
+
+/* Action Buttons (Primary High-Contrast White & Secondary Ghost) */
+.dl-btn {
+  width: 100%;
+  padding: 0.8rem 1.4rem;
+  border-radius: 9999px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  position: relative;
+  z-index: 2;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* Magnetic Button Wrapper */
+.magnetic-btn {
+  position: relative;
+  will-change: transform;
+}
+
+.dl-btn-white {
+  background: #EDEDED;
+  color: #000000;
+  border: 1px solid #EDEDED;
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.15);
+}
+
+.dl-btn-white:hover {
+  background: #FFFFFF;
+  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.35);
+}
+
+.dl-btn-ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: #EDEDED;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dl-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.dl-hint-row {
+  margin-top: 0.75rem;
+  text-align: center;
+  font-size: 0.73rem;
+  color: #636b7b;
+  position: relative;
+  z-index: 2;
+}
+
+/* Quick Installation Command Strip */
+.install-cmd-strip {
+  margin-top: 2.5rem;
+  background: rgba(18, 20, 29, 0.8);
+  border: 1px solid var(--border-glass);
+  border-radius: 14px;
+  padding: 1.25rem 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.install-cmd-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  overflow: hidden;
+}
+
+.install-cmd-icon {
+  color: #38BDF8;
+  flex-shrink: 0;
+}
+
+.install-cmd-text {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: #E2E8F0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-cmd-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.btn-cmd-copy:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38BDF8;
+}
+
+/* --------------------------------------------------------------------------
+   10. Wiki Portal Section (From Beginner to Master)
+   -------------------------------------------------------------------------- */
+.wiki-portal-section {
+  position: relative;
+  padding: 6rem 0;
+  z-index: 1;
+}
+
+.wiki-portal-banner {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 24px;
+  padding: 3rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.wiki-portal-banner::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.wiki-portal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2.5rem;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.wiki-portal-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.wiki-portal-desc {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  margin-top: 0.35rem;
+  max-width: 650px;
+}
+
+.btn-enter-wiki {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.9rem 1.8rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 20px rgba(2, 132, 199, 0.4);
+  transition: all 0.2s ease;
+}
+
+.btn-enter-wiki:hover {
+  background: linear-gradient(135deg, #38BDF8 0%, #0284C7 100%);
+  box-shadow: 0 6px 26px rgba(56, 189, 248, 0.5);
+  transform: translateY(-2px);
+}
+
+.wiki-chapters-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.25rem;
+}
+
+.wiki-ch-card {
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.25s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.wiki-ch-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(56, 189, 248, 0.35);
+  transform: translateY(-3px);
+}
+
+.wiki-ch-num {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: #38BDF8;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.wiki-ch-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 0.4rem;
+}
+
+.wiki-ch-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  flex: 1;
+}
+
+/* --------------------------------------------------------------------------
+   11. Toast Notification Floating System
+   -------------------------------------------------------------------------- */
+.toast-container {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+.toast-item {
+  pointer-events: auto;
+  background: rgba(18, 20, 29, 0.95);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: #fff;
+  padding: 0.85rem 1.25rem;
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  min-width: 260px;
+  max-width: 420px;
+  transform: translateY(20px);
+  opacity: 0;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+}
+
+.toast-item.show {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.toast-item.hide {
+  transform: translateY(10px);
+  opacity: 0;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  color: #38BDF8;
+}
+
+.toast-icon.success {
+  color: #34D399;
+}
+
+/* Responsive Overrides for Downloads & Wiki */
+@media (max-width: 1024px) {
+  .download-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .wiki-chapters-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .wiki-chapters-grid {
+    grid-template-columns: 1fr;
+  }
+  .wiki-portal-banner {
+    padding: 1.75rem;
+  }
+  .install-cmd-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toast-container {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+  .toast-item {
+    min-width: unset;
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   12. Accessibility & Cross-Browser Graceful Fallback (prefers-reduced-motion / No-GSAP)
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .pin-download-runway {
+    height: auto !important;
+    min-height: auto !important;
+    padding: 5rem 0 !important;
+  }
+
+  .pin-viewport-stage {
+    position: static !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 1.5rem !important;
+    transform: none !important;
+    -webkit-transform: none !important;
+  }
+
+  .card-motion-wrapper,
+  .card-motion-left,
+  .card-motion-center,
+  .card-motion-right,
+  .pin-stage-header {
+    transform: none !important;
+    -webkit-transform: none !important;
+    opacity: 1 !important;
+    filter: none !important;
+    will-change: auto !important;
+  }
+
+  .card-tilt-inner,
+  .dl-card {
+    transform: none !important;
+    -webkit-transform: none !important;
+    transition: none !important;
+  }
+}
+
+/* Safe fallback state when GSAP / ScrollTrigger fails to initialize or is offline */
+.motion-fallback .pin-download-runway,
+html.no-gsap .pin-download-runway {
+  height: auto !important;
+  min-height: auto !important;
+  padding: 5rem 0 !important;
+}
+
+.motion-fallback .pin-viewport-stage,
+html.no-gsap .pin-viewport-stage {
+  position: static !important;
+  height: auto !important;
+  overflow: visible !important;
+  padding: 0 1.5rem !important;
+  transform: none !important;
+  -webkit-transform: none !important;
+}
+
+.motion-fallback .card-motion-wrapper,
+.motion-fallback .card-motion-left,
+.motion-fallback .card-motion-center,
+.motion-fallback .card-motion-right,
+.motion-fallback .pin-stage-header,
+html.no-gsap .card-motion-wrapper,
+html.no-gsap .card-motion-left,
+html.no-gsap .card-motion-center,
+html.no-gsap .card-motion-right,
+html.no-gsap .pin-stage-header {
+  transform: none !important;
+  -webkit-transform: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+  will-change: auto !important;
+}
+
+.motion-fallback .card-tilt-inner,
+.motion-fallback .dl-card,
+html.no-gsap .card-tilt-inner,
+html.no-gsap .dl-card {
+  transform: none !important;
+  -webkit-transform: none !important;
+  transition: none !important;
+}
+

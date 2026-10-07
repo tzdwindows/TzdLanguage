@@ -1,0 +1,7 @@
+fun doWork() {
+    print("In doWork");
+    someUndefinedFunc(42);
+}
+print("Calling doWork...");
+doWork();
+print("Done");

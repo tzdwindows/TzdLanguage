@@ -1,0 +1,10 @@
+fun greet(name) {
+    print("Greeting started...");
+    msg = "Hello " + name;
+    print(msg);
+    print("Greeting ended.");
+}
+
+print("Main script started.");
+greet("TzdLang");
+print("Main script ended.");

@@ -1,0 +1,12 @@
+fun main() {
+  var x1=10^4096; var y1=2^2048; var t1=clock(); var z1=x1/y1; var t2=clock();
+  print("div 4096/2048: "+toString((t2-t1)*1000)+"us");
+  var x2=10^8192; var y2=2^4096; var t3=clock(); var z2=x2/y2; var t4=clock();
+  print("div 8192/4096: "+toString((t4-t3)*1000)+"us");
+  var x3=10^16384; var y3=2^8192; var t5=clock(); var z3=x3/y3; var t6=clock();
+  print("div 16384/8192: "+toString((t6-t5)*1000)+"us");
+  var x4=10^32768; var y4=2^16384; var t7=clock(); var z4=x4/y4; var t8=clock();
+  print("div 32768/16384: "+toString((t8-t7)*1000)+"us");
+  var x5=10^65536; var y5=2^32768; var t9=clock(); var z5=x5/y5; var t10=clock();
+  print("div 65536/32768: "+toString((t10-t9)*1000)+"us");
+}

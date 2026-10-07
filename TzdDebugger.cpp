@@ -1,0 +1,911 @@
+#define _WINSOCKAPI_
+
+#include "Generated/TzdInterpreter.h"
+#include "Generated/TzdJit.h"
+#include "TzdDebugger.h"
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <thread>
+#include <sstream>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <condition_variable>
+#include <map>
+#include <set>
+#include <vector>
+#include <algorithm>
+
+namespace TzdDebugger {
+
+bool g_DebugActive = false;
+
+struct Breakpoint {
+    int id;
+    std::string file;
+    int line;
+};
+
+struct DebugState {
+    std::mutex mutex;
+    std::condition_variable cond;
+    bool isSuspended = false;
+
+    // Stepping modes
+    bool stepInto = false;
+    bool stepOver = false;
+    bool stepOut = false;
+    size_t targetCallDepth = 0;
+
+    std::vector<Breakpoint> breakpoints;
+    int nextBreakpointId = 1;
+
+    SOCKET clientSocket = INVALID_SOCKET;
+    TzdInterpreter* interpreter = nullptr;
+
+    // State to avoid re-entry of debugger during eval
+    bool isEvaluating = false;
+
+    std::string currentFile = "";
+    int currentLine = 1;
+};
+
+static DebugState g_DebugState;
+static SOCKET g_DebugListenSocket = INVALID_SOCKET;
+
+std::string formatTzdValue(const TzdValue& val) {
+    switch (val.type) {
+        case TzdValue::NONE: return "null";
+        case TzdValue::BOOL: return val.bVal ? "true" : "false";
+        case TzdValue::STRING: return "\"" + val.sVal + "\"";
+        case TzdValue::DOUBLE:
+        case TzdValue::FLOAT: return std::to_string(val.dVal);
+        case TzdValue::LONG:
+        case TzdValue::INT:
+        case TzdValue::SHORT:
+        case TzdValue::SBYTE: return std::to_string(val.lVal);
+        case TzdValue::ULONG:
+        case TzdValue::UINT:
+        case TzdValue::USHORT:
+        case TzdValue::BYTE: return std::to_string(val.ulVal);
+        case TzdValue::POINTER: {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%p", val.ptrVal);
+            return std::string("pointer(") + buf + ")";
+        }
+        case TzdValue::ARRAY: return "array(size=" + std::to_string(val.arrVal.size()) + ")";
+        case TzdValue::MAP: return "map(size=" + std::to_string(val.mapVal.size()) + ")";
+        case TzdValue::FUNCTION: return "function " + val.name + "(" + std::to_string(val.params.size()) + " args)";
+        case TzdValue::NATIVE_FUNCTION: return "native_function " + val.name;
+        case TzdValue::CLASS_DEF: return "class " + val.name;
+        case TzdValue::INSTANCE: return "instance of class";
+        default: return "unknown_type";
+    }
+}
+
+bool isStepping() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    return g_DebugState.stepInto || g_DebugState.stepOver || g_DebugState.stepOut;
+}
+
+bool hasAnyBreakpoints() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    return !g_DebugState.breakpoints.empty();
+}
+
+bool hasBreakpointsInFunction(const std::string& file, int startLine, int endLine) {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    if (g_DebugState.breakpoints.empty()) return false;
+
+    std::string normFile = file;
+    std::replace(normFile.begin(), normFile.end(), '\\', '/');
+    std::transform(normFile.begin(), normFile.end(), normFile.begin(), ::tolower);
+
+    for (const auto& bp : g_DebugState.breakpoints) {
+        if (bp.file.empty()) continue;
+        std::string bpNorm = bp.file;
+        std::replace(bpNorm.begin(), bpNorm.end(), '\\', '/');
+        std::transform(bpNorm.begin(), bpNorm.end(), bpNorm.begin(), ::tolower);
+
+        bool fileMatch = false;
+        if (normFile == "memory") {
+            fileMatch = (bpNorm == "memory");
+        } else if (normFile == bpNorm || normFile.find(bpNorm) != std::string::npos || bpNorm.find(normFile) != std::string::npos) {
+            fileMatch = true;
+        } else {
+            try {
+                std::string fn1 = fs::path(normFile).filename().string();
+                std::string fn2 = fs::path(bpNorm).filename().string();
+                if (!fn1.empty() && fn1 == fn2) {
+                    fileMatch = true;
+                }
+            } catch (...) {}
+        }
+        if (fileMatch) {
+            if (endLine > 0) {
+                if (bp.line >= startLine && bp.line <= endLine) return true;
+            } else {
+                if (bp.line >= startLine) return true;
+            }
+        }
+    }
+    return false;
+}
+
+void checkBreakpointAndSuspend(TzdInterpreter* interpreter, const std::string& file, int line) {
+    if (g_DebugState.isEvaluating || !g_DebugActive) return;
+
+    // Check if we need to wait for debugger connection at startup
+    static bool firstStatement = true;
+    if (firstStatement && g_DebugState.interpreter != nullptr && g_DebugState.clientSocket == INVALID_SOCKET) {
+        std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+        if (g_DebugState.clientSocket == INVALID_SOCKET) {
+            std::cout << "[DEBUGGER] Paused at startup. Waiting for debugger client to connect..." << std::endl;
+            g_DebugState.cond.wait(lock, []() { return g_DebugState.clientSocket != INVALID_SOCKET || !g_DebugActive; });
+        }
+        firstStatement = false;
+        if (!g_DebugActive || g_DebugState.clientSocket == INVALID_SOCKET) return;
+
+        g_DebugState.isSuspended = true;
+        g_DebugState.currentFile = file;
+        g_DebugState.currentLine = line;
+
+        std::string msg = "\n*BREAK* Attached. Paused at startup (line " + std::to_string(line) + ")\n";
+        msg += "*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\nTzdDebug> ";
+        int ret = send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        if (ret == SOCKET_ERROR || ret <= 0) {
+            closesocket(g_DebugState.clientSocket);
+            g_DebugState.clientSocket = INVALID_SOCKET;
+            g_DebugState.isSuspended = false;
+            return;
+        }
+
+        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended || g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive; });
+        return;
+    }
+    firstStatement = false;
+
+    size_t currentDepth = interpreter->m_callStackFrames.size();
+    bool shouldSuspend = false;
+    std::string reason = "";
+
+    {
+        std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+
+        // A. Step Into
+        if (g_DebugState.stepInto) {
+            shouldSuspend = true;
+            reason = "step into";
+            g_DebugState.stepInto = false;
+        }
+        // B. Step Over
+        else if (g_DebugState.stepOver && currentDepth <= g_DebugState.targetCallDepth) {
+            shouldSuspend = true;
+            reason = "step over";
+            g_DebugState.stepOver = false;
+            g_DebugState.stepInto = false;
+            g_DebugState.stepOut = false;
+        }
+        // C. Step Out
+        else if (g_DebugState.stepOut && currentDepth < g_DebugState.targetCallDepth) {
+            shouldSuspend = true;
+            reason = "step out";
+            g_DebugState.stepOut = false;
+            g_DebugState.stepInto = false;
+            g_DebugState.stepOver = false;
+        }
+        // D. Breakpoint
+        else {
+            for (const auto& bp : g_DebugState.breakpoints) {
+                bool fileMatch = bp.file.empty();
+                if (!fileMatch) {
+                    std::string f1 = file;
+                    std::string f2 = bp.file;
+                    std::replace(f1.begin(), f1.end(), '\\', '/');
+                    std::replace(f2.begin(), f2.end(), '\\', '/');
+                    std::transform(f1.begin(), f1.end(), f1.begin(), ::tolower);
+                    std::transform(f2.begin(), f2.end(), f2.begin(), ::tolower);
+                    if (f1.find(f2) != std::string::npos || f2.find(f1) != std::string::npos) {
+                        fileMatch = true;
+                    } else {
+                        try {
+                            std::string fn1 = fs::path(f1).filename().string();
+                            std::string fn2 = fs::path(f2).filename().string();
+                            if (!fn1.empty() && fn1 == fn2) {
+                                fileMatch = true;
+                            }
+                        } catch (...) {}
+                    }
+                }
+
+                if (fileMatch && bp.line == line) {
+                    shouldSuspend = true;
+                    reason = "breakpoint " + std::to_string(bp.id);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (shouldSuspend) {
+        std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+        if (g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive) {
+            return;
+        }
+        g_DebugState.isSuspended = true;
+        g_DebugState.currentFile = file;
+        g_DebugState.currentLine = line;
+
+        std::string msg = "\n*BREAK* Hit " + reason + " at " + file + ":" + std::to_string(line);
+        if (!interpreter->m_callStackFrames.empty()) {
+            msg += " (frame: " + interpreter->m_callStackFrames.back() + ")";
+        }
+        msg += "\n*FILE* " + file + "\n*LINE* " + std::to_string(line) + "\n";
+        if (!interpreter->m_callStackFrames.empty()) {
+            msg += "*FRAME* " + interpreter->m_callStackFrames.back() + "\n";
+        }
+        msg += "TzdDebug> ";
+        int ret = send(g_DebugState.clientSocket, msg.c_str(), (int)msg.size(), 0);
+        if (ret == SOCKET_ERROR || ret <= 0) {
+            closesocket(g_DebugState.clientSocket);
+            g_DebugState.clientSocket = INVALID_SOCKET;
+            g_DebugState.isSuspended = false;
+            return;
+        }
+
+        g_DebugState.cond.wait(lock, []() { return !g_DebugState.isSuspended || g_DebugState.clientSocket == INVALID_SOCKET || !g_DebugActive; });
+    }
+}
+
+// Helper send function
+void sendStr(SOCKET sock, const std::string& str) {
+    if (sock != INVALID_SOCKET) {
+        send(sock, str.c_str(), (int)str.size(), 0);
+    }
+}
+
+void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const std::string& line) {
+    if (line.empty()) {
+        sendStr(clientSocket, "TzdDebug> ");
+        return;
+    }
+
+    if (line[0] == ':') {
+        std::string cmd = line.substr(1);
+        std::stringstream ss(cmd);
+        std::string action;
+        ss >> action;
+
+        if (action == "bp") {
+            std::string subAction;
+            ss >> subAction;
+            if (subAction == "add") {
+                std::string remainder;
+                std::getline(ss, remainder);
+                size_t first = remainder.find_first_not_of(" \t");
+                if (first == std::string::npos) {
+                    sendStr(clientSocket, "Usage: :bp add [file] <line>\n");
+                } else {
+                    remainder = remainder.substr(first);
+                    size_t lastSpace = remainder.find_last_of(" \t");
+                    std::string filePart = "";
+                    int bpLine = -1;
+                    if (lastSpace != std::string::npos) {
+                        std::string lineStr = remainder.substr(lastSpace + 1);
+                        try {
+                            bpLine = std::stoi(lineStr);
+                            filePart = remainder.substr(0, lastSpace);
+                            size_t fStart = filePart.find_first_not_of(" \t");
+                            size_t fEnd = filePart.find_last_not_of(" \t");
+                            if (fStart != std::string::npos && fEnd != std::string::npos) {
+                                filePart = filePart.substr(fStart, fEnd - fStart + 1);
+                            }
+                            if (filePart.size() >= 2 && filePart.front() == '"' && filePart.back() == '"') {
+                                filePart = filePart.substr(1, filePart.size() - 2);
+                            }
+                        } catch (...) {
+                            bpLine = -1;
+                        }
+                    }
+                    if (bpLine == -1) {
+                        try {
+                            bpLine = std::stoi(remainder);
+                            filePart = "";
+                        } catch (...) {
+                            bpLine = -1;
+                        }
+                    }
+                    if (bpLine > 0) {
+                        std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                        Breakpoint bp{ g_DebugState.nextBreakpointId++, filePart, bpLine };
+                        g_DebugState.breakpoints.push_back(bp);
+                        sendStr(clientSocket, "Breakpoint " + std::to_string(bp.id) + " added at " + (filePart.empty() ? "" : filePart + ":") + std::to_string(bpLine) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :bp add [file] <line>\n");
+                    }
+                }
+            }
+            else if (subAction == "list") {
+                std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                std::stringstream reply;
+                reply << "=== Active Breakpoints ===\n";
+                if (g_DebugState.breakpoints.empty()) {
+                    reply << "No breakpoints set.\n";
+                } else {
+                    for (const auto& bp : g_DebugState.breakpoints) {
+                        reply << "  [" << bp.id << "] " 
+                              << (bp.file.empty() ? "*any*" : bp.file) 
+                              << ":" << bp.line << "\n";
+                    }
+                }
+                sendStr(clientSocket, reply.str());
+            }
+            else if (subAction == "clear") {
+                std::string clearTarget;
+                std::getline(ss, clearTarget);
+                size_t cStart = clearTarget.find_first_not_of(" \t");
+                size_t cEnd = clearTarget.find_last_not_of(" \t");
+                if (cStart != std::string::npos && cEnd != std::string::npos) {
+                    clearTarget = clearTarget.substr(cStart, cEnd - cStart + 1);
+                    if (clearTarget.size() >= 2 && clearTarget.front() == '"' && clearTarget.back() == '"') {
+                        clearTarget = clearTarget.substr(1, clearTarget.size() - 2);
+                    }
+                } else {
+                    clearTarget.clear();
+                }
+
+                std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                if (clearTarget.empty()) {
+                    g_DebugState.breakpoints.clear();
+                    sendStr(clientSocket, "All breakpoints cleared.\n");
+                } else {
+                    std::string targetNorm = clearTarget;
+                    std::replace(targetNorm.begin(), targetNorm.end(), '\\', '/');
+                    std::transform(targetNorm.begin(), targetNorm.end(), targetNorm.begin(), ::tolower);
+
+                    auto it = std::remove_if(g_DebugState.breakpoints.begin(), g_DebugState.breakpoints.end(),
+                        [&targetNorm](const Breakpoint& bp) {
+                            if (bp.file.empty()) return false;
+                            std::string f = bp.file;
+                            std::replace(f.begin(), f.end(), '\\', '/');
+                            std::transform(f.begin(), f.end(), f.begin(), ::tolower);
+                            return (f.find(targetNorm) != std::string::npos || targetNorm.find(f) != std::string::npos);
+                        });
+                    int count = (int)std::distance(it, g_DebugState.breakpoints.end());
+                    g_DebugState.breakpoints.erase(it, g_DebugState.breakpoints.end());
+                    sendStr(clientSocket, "Cleared " + std::to_string(count) + " breakpoints for " + clearTarget + "\n");
+                }
+            }
+            else if (subAction == "del") {
+                int bpId = -1;
+                if (ss >> bpId) {
+                    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                    auto it = std::remove_if(g_DebugState.breakpoints.begin(), g_DebugState.breakpoints.end(),
+                        [bpId](const Breakpoint& bp) { return bp.id == bpId; });
+                    if (it != g_DebugState.breakpoints.end()) {
+                        g_DebugState.breakpoints.erase(it, g_DebugState.breakpoints.end());
+                        sendStr(clientSocket, "Breakpoint " + std::to_string(bpId) + " deleted.\n");
+                    } else {
+                        sendStr(clientSocket, "Breakpoint ID " + std::to_string(bpId) + " not found.\n");
+                    }
+                } else {
+                    sendStr(clientSocket, "Usage: :bp del <id>\n");
+                }
+            }
+            else {
+                sendStr(clientSocket, "Usage: :bp [add|list|del|clear] ...\n");
+            }
+        }
+        else if (action == "step" || action == "over") {
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            if (!g_DebugState.isSuspended) {
+                sendStr(clientSocket, "Not suspended. Cannot step.\n");
+            } else {
+                g_DebugState.stepOver = true;
+                g_DebugState.targetCallDepth = interpreter->m_callStackFrames.size();
+                g_DebugState.isSuspended = false;
+                g_DebugState.cond.notify_all();
+                return; // Do not send prompt, interpreter is running
+            }
+        }
+        else if (action == "into") {
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            if (!g_DebugState.isSuspended) {
+                sendStr(clientSocket, "Not suspended. Cannot step.\n");
+            } else {
+                g_DebugState.stepInto = true;
+                g_DebugState.isSuspended = false;
+                g_DebugState.cond.notify_all();
+                return;
+            }
+        }
+        else if (action == "out") {
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            if (!g_DebugState.isSuspended) {
+                sendStr(clientSocket, "Not suspended. Cannot step.\n");
+            } else {
+                g_DebugState.stepOut = true;
+                g_DebugState.targetCallDepth = interpreter->m_callStackFrames.size();
+                g_DebugState.isSuspended = false;
+                g_DebugState.cond.notify_all();
+                return;
+            }
+        }
+        else if (action == "resume" || action == "c") {
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            if (!g_DebugState.isSuspended) {
+                sendStr(clientSocket, "Not suspended. Cannot resume.\n");
+            } else {
+                g_DebugState.isSuspended = false;
+                g_DebugState.cond.notify_all();
+                return;
+            }
+        }
+        else if (action == "stack" || action == "bt") {
+            std::stringstream reply;
+            reply << "=== Call Stack (depth: " << interpreter->m_callStackFrames.size() << ") ===\n";
+            std::string curFile = g_DebugState.currentFile;
+            if (curFile.empty()) {
+                if (!interpreter->m_debugFileStack.empty() && !interpreter->m_debugFileStack.back().empty())
+                    curFile = interpreter->m_debugFileStack.back();
+                else if (!interpreter->m_scriptPathStack.empty())
+                    curFile = interpreter->m_scriptPathStack.back().string();
+                else if (!interpreter->m_currentExecutingFile.empty())
+                    curFile = interpreter->m_currentExecutingFile;
+                else
+                    curFile = "script.tzd";
+            }
+            int curLine = g_DebugState.currentLine > 0 ? g_DebugState.currentLine : 1;
+
+            if (interpreter->m_callStackFrames.empty()) {
+                reply << "  [0] <global_scope> (" << curFile << ":" << curLine << ")\n";
+            } else {
+                for (int i = (int)interpreter->m_callStackFrames.size() - 1; i >= 0; --i) {
+                    std::string frameDesc = interpreter->m_callStackFrames[i];
+                    if (i == (int)interpreter->m_callStackFrames.size() - 1 && !curFile.empty()) {
+                        size_t lparen = frameDesc.find(" (");
+                        if (lparen != std::string::npos) {
+                            std::string funcName = frameDesc.substr(0, lparen);
+                            size_t modePos = frameDesc.find(") (", lparen);
+                            std::string modeStr = (modePos != std::string::npos) ? frameDesc.substr(modePos + 2) : " (Interpreted)";
+                            frameDesc = funcName + " (" + curFile + ":" + std::to_string(curLine) + ")" + modeStr;
+                        }
+                    }
+                    reply << "  [" << i + 1 << "] " << frameDesc << "\n";
+                }
+                reply << "  [0] <global_scope> (" << curFile << ":" << curLine << ")\n";
+            }
+            sendStr(clientSocket, reply.str());
+        }
+        else if (action == "locals") {
+            if (interpreter->scopes.empty()) {
+                sendStr(clientSocket, "No active scope.\n");
+            } else {
+                std::stringstream reply;
+                reply << "=== Local Variables (frame depth: " << interpreter->m_callStackFrames.size() << ") ===\n";
+                const auto& currentScope = interpreter->scopes.back();
+                if (currentScope.empty()) {
+                    reply << "(empty scope)\n";
+                } else {
+                    for (const auto& [name, val] : currentScope) {
+                        reply << "  " << name << " = " << formatTzdValue(val) << "\n";
+                    }
+                }
+                sendStr(clientSocket, reply.str());
+            }
+        }
+        else if (action == "globals") {
+            if (interpreter->scopes.empty()) {
+                sendStr(clientSocket, "No active scope.\n");
+            } else {
+                std::stringstream reply;
+                reply << "=== Global Variables ===\n";
+                const auto& globalScope = interpreter->scopes.front();
+                if (globalScope.empty()) {
+                    reply << "(empty scope)\n";
+                } else {
+                    for (const auto& [name, val] : globalScope) {
+                        reply << "  " << name << " = " << formatTzdValue(val) << "\n";
+                    }
+                }
+                sendStr(clientSocket, reply.str());
+            }
+        }
+        else if (action == "fun") {
+            std::string sub;
+            if (ss >> sub) {
+                if (sub == "list") {
+                    if (interpreter->scopes.empty()) return;
+                    std::stringstream reply;
+                    reply << "=== User Functions ===\n";
+                    const auto& globalScope = interpreter->scopes.front();
+                    int count = 0;
+                    for (const auto& [name, val] : globalScope) {
+                        if (val.type == TzdValue::FUNCTION) {
+                            reply << "  " << name << " (defined at " << val.sourceFile << ":" << val.line << ")\n";
+                            count++;
+                        }
+                    }
+                    if (count == 0) {
+                        reply << "No user-defined functions found.\n";
+                    }
+                    sendStr(clientSocket, reply.str());
+                }
+                else if (sub == "view") {
+                    std::string funName;
+                    if (ss >> funName) {
+                        if (interpreter->scopes.empty()) return;
+                        const auto& globalScope = interpreter->scopes.front();
+                        if (!globalScope.count(funName)) {
+                            sendStr(clientSocket, "Function '" + funName + "' not found.\n");
+                        } else {
+                            const auto& val = globalScope.at(funName);
+                            if (val.type != TzdValue::FUNCTION) {
+                                sendStr(clientSocket, "'" + funName + "' is not a function.\n");
+                            } else {
+                                std::stringstream reply;
+                                reply << "Function: " << funName << "\n";
+                                reply << "File: " << val.sourceFile << "\n";
+                                reply << "Line: " << val.line << "\n";
+                                reply << "Parameters: ";
+                                for (size_t i = 0; i < val.params.size(); ++i) {
+                                    reply << val.params[i] << (i + 1 < val.params.size() ? ", " : "");
+                                }
+                                reply << "\n";
+                                sendStr(clientSocket, reply.str());
+                            }
+                        }
+                    } else {
+                        sendStr(clientSocket, "Usage: :fun view <name>\n");
+                    }
+                }
+            } else {
+                sendStr(clientSocket, "Usage: :fun [list|view] ...\n");
+            }
+        }
+        else if (action == "info") {
+            std::stringstream reply;
+            reply << "=== Debugger Info ===\n"
+                  << "  Status: " << (g_DebugState.isSuspended ? "SUSPENDED" : "RUNNING") << "\n"
+                  << "  Call Depth: " << interpreter->m_callStackFrames.size() << "\n"
+                  << "  Active Breakpoints: " << g_DebugState.breakpoints.size() << "\n";
+            sendStr(clientSocket, reply.str());
+        }
+        else if (action == "jit") {
+            std::string subAction;
+            if (ss >> subAction) {
+                if (subAction == "info" || subAction == "status") {
+                    std::stringstream reply;
+                    const auto& cfg = TzdJitEngine::getConfig();
+                    reply << "=== JIT Engine Status ===\n"
+                          << "  Optimization Level: -O" << cfg.optLevel << "\n"
+                          << "  AST Inlining: " << (cfg.enableAstInlining ? "Enabled" : "Disabled") << "\n"
+                          << "  LLVM Inlining Threshold: " << cfg.inlineThreshold << "\n"
+                          << "  Math Intrinsics: " << (cfg.enableMathIntrinsics ? "Enabled" : "Disabled") << "\n"
+                          << "  Loop Unroll Pass: " << (cfg.enableLoopUnroll ? "Enabled" : "Disabled") << "\n"
+                          << "  JIT Debug Interface: " << (cfg.enableJitDebug ? "Active" : "Inactive") << " (Zero runtime overhead)\n"
+                          << "  Max Inlining Depth: " << cfg.maxInlineDepth << "\n"
+                          << "  Max Inlined Statements: " << cfg.maxInlineStmts << "\n"
+                          << "  JIT Compiled Functions: " << TzdJitEngine::getJitCompiledCount() << "\n"
+                          << "  Total Inlined AST Calls: " << TzdJitEngine::getTotalInlinedCalls() << "\n";
+                    sendStr(clientSocket, reply.str());
+                }
+                else if (subAction == "list") {
+                    std::stringstream reply;
+                    auto list = TzdJitEngine::getJittedFunctions();
+                    reply << "=== JIT Compiled Functions (" << list.size() << ") ===\n";
+                    if (list.empty()) {
+                        reply << "  (No JIT functions compiled yet)\n";
+                    } else {
+                        for (size_t i = 0; i < list.size(); ++i) {
+                            const auto& f = list[i];
+                            char addrBuf[64];
+                            if (f.nativeAddress) {
+                                snprintf(addrBuf, sizeof(addrBuf), "0x%p", f.nativeAddress);
+                            } else {
+                                snprintf(addrBuf, sizeof(addrBuf), "unresolved");
+                            }
+                            reply << "  [" << i << "] " << f.functionName 
+                                  << " (sym: " << f.internalSymbolName << ")"
+                                  << " | args: " << f.paramCount
+                                  << " | -O" << f.optLevel
+                                  << " | inlined: " << (f.isInlined ? "yes" : "no")
+                                  << " | addr: " << addrBuf << "\n";
+                        }
+                    }
+                    sendStr(clientSocket, reply.str());
+                }
+                else if (subAction == "ir") {
+                    std::string funcName;
+                    if (ss >> funcName) {
+                        std::string ir = TzdJitEngine::dumpJitIR(funcName);
+                        if (ir.empty()) {
+                            sendStr(clientSocket, "No LLVM IR found for JIT function: '" + funcName + "'\n");
+                        } else {
+                            std::stringstream reply;
+                            reply << "=== LLVM IR: " << funcName << " ===\n" << ir << "\n";
+                            sendStr(clientSocket, reply.str());
+                        }
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit ir <function_name>\n");
+                    }
+                }
+                else if (subAction == "opt") {
+                    int lvl = -1;
+                    if (ss >> lvl && lvl >= 0 && lvl <= 3) {
+                        TzdJitEngine::setOptLevel(lvl);
+                        sendStr(clientSocket, "JIT optimization level set to: -O" + std::to_string(lvl) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit opt <0|1|2|3>\n");
+                    }
+                }
+                else if (subAction == "inlining") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::setAstInliningEnabled(enable);
+                        sendStr(clientSocket, std::string("AST inlining is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit inlining <on|off>\n");
+                    }
+                }
+                else if (subAction == "threshold") {
+                    int th = -1;
+                    if (ss >> th && th >= 0) {
+                        TzdJitEngine::setInlineThreshold(th);
+                        sendStr(clientSocket, "Inlining threshold set to: " + std::to_string(th) + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit threshold <number>\n");
+                    }
+                }
+                else if (subAction == "unroll") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::getConfig().enableLoopUnroll = enable;
+                        sendStr(clientSocket, std::string("Loop unrolling is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit unroll <on|off>\n");
+                    }
+                }
+                else if (subAction == "intrinsics") {
+                    std::string mode;
+                    if (ss >> mode) {
+                        bool enable = (mode == "on" || mode == "true" || mode == "1");
+                        TzdJitEngine::getConfig().enableMathIntrinsics = enable;
+                        sendStr(clientSocket, std::string("Math intrinsics inlining is now ") + (enable ? "ENABLED" : "DISABLED") + "\n");
+                    } else {
+                        sendStr(clientSocket, "Usage: :jit intrinsics <on|off>\n");
+                    }
+                }
+                else {
+                    sendStr(clientSocket, "Usage: :jit [status|list|ir <name>|opt <0-3>|inlining <on|off>|threshold <N>|unroll <on|off>|intrinsics <on|off>]\n");
+                }
+            } else {
+                std::stringstream reply;
+                const auto& cfg = TzdJitEngine::getConfig();
+                reply << "=== JIT Engine Status ===\n"
+                      << "  Optimization Level: -O" << cfg.optLevel << "\n"
+                      << "  AST Inlining: " << (cfg.enableAstInlining ? "Enabled" : "Disabled") << "\n"
+                      << "  LLVM Inlining Threshold: " << cfg.inlineThreshold << "\n"
+                      << "  Math Intrinsics: " << (cfg.enableMathIntrinsics ? "Enabled" : "Disabled") << "\n"
+                      << "  Loop Unroll Pass: " << (cfg.enableLoopUnroll ? "Enabled" : "Disabled") << "\n"
+                      << "  JIT Debug Interface: " << (cfg.enableJitDebug ? "Active" : "Inactive") << "\n"
+                      << "  JIT Compiled Functions: " << TzdJitEngine::getJitCompiledCount() << "\n"
+                      << "  Total Inlined AST Calls: " << TzdJitEngine::getTotalInlinedCalls() << "\n";
+                sendStr(clientSocket, reply.str());
+            }
+        }
+        else {
+            sendStr(clientSocket, "Unknown debug command: :" + action + "\n");
+        }
+    }
+    else {
+        // Normal expression evaluation
+        std::stringstream outputBuffer;
+        std::streambuf* oldCout = std::cout.rdbuf(outputBuffer.rdbuf());
+        std::streambuf* oldCerr = std::cerr.rdbuf(outputBuffer.rdbuf());
+
+        bool oldSilent = interpreter->m_silentMode;
+        interpreter->m_silentMode = false; // echo values inside debug terminal
+
+        g_DebugState.isEvaluating = true;
+
+        try {
+            interpreter->loadScript(line);
+        }
+        catch (const std::exception& ex) {
+            outputBuffer << "Error: " << ex.what() << "\n";
+        }
+
+        g_DebugState.isEvaluating = false;
+        interpreter->m_silentMode = oldSilent;
+
+        std::cout.rdbuf(oldCout);
+        std::cerr.rdbuf(oldCerr);
+
+        std::string response = outputBuffer.str();
+        if (response.empty()) {
+            response = "(no output)\n";
+        }
+        sendStr(clientSocket, response);
+    }
+
+    sendStr(clientSocket, "TzdDebug> ");
+}
+
+void startDebugServer(TzdInterpreter* interpreter, const std::string& host, int port) {
+    g_DebugActive = true;
+    g_DebugState.interpreter = interpreter;
+    if (interpreter) {
+        if (!TzdJitEngine::isJitDebugEnabled()) {
+            interpreter->m_noJit = true;
+        }
+        interpreter->m_useBytecodeVM = false;
+        interpreter->m_forceInterpreter = true;
+    }
+    
+    std::thread([host, port]() {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            std::cerr << "[DEBUGGER] WSAStartup failed" << std::endl;
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
+            return;
+        }
+        SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSocket == INVALID_SOCKET) {
+            std::cerr << "[DEBUGGER] socket creation failed" << std::endl;
+            WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
+            return;
+        }
+
+        int opt = 1;
+        setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+        g_DebugListenSocket = listenSocket;
+
+        sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+
+        if (bind(listenSocket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            std::cerr << "[DEBUGGER] bind failed for " << host << ":" << port << std::endl;
+            closesocket(listenSocket);
+            g_DebugListenSocket = INVALID_SOCKET;
+            WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
+            return;
+        }
+        if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+            std::cerr << "[DEBUGGER] listen failed" << std::endl;
+            closesocket(listenSocket);
+            g_DebugListenSocket = INVALID_SOCKET;
+            WSACleanup();
+            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+            g_DebugActive = false;
+            g_DebugState.cond.notify_all();
+            return;
+        }
+
+        std::cout << "[DEBUGGER] Server listening on " << host << ":" << port << "..." << std::endl;
+
+        while (true) {
+            SOCKET clientSocket = accept(listenSocket, NULL, NULL);
+            if (clientSocket == INVALID_SOCKET) break;
+
+            // Only allow one debug client at a time for state consistency
+            {
+                std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                if (g_DebugState.clientSocket != INVALID_SOCKET) {
+                    std::string busy = "Debugger is busy with another client connection.\n";
+                    send(clientSocket, busy.c_str(), (int)busy.size(), 0);
+                    closesocket(clientSocket);
+                    continue;
+                }
+                g_DebugState.clientSocket = clientSocket;
+                g_DebugState.cond.notify_all();
+            }
+
+            std::thread([clientSocket]() {
+                std::string welcome = "--- Tzd Remote Debugger Service ---\n";
+                welcome += "Use ':' prefix for debug actions (e.g. :bp add 10, :locals, :bt, :step, :into, :out, :c)\n";
+                welcome += "Or type any TzdLang expression to evaluate dynamically in the current scope.\n";
+                welcome += "Type 'exit' to disconnect.\n";
+                send(clientSocket, welcome.c_str(), (int)welcome.size(), 0);
+
+                char buf[4096];
+                std::string recvBuffer;
+                while (true) {
+                    int bytesReceived = recv(clientSocket, buf, sizeof(buf) - 1, 0);
+                    if (bytesReceived <= 0) break;
+                    buf[bytesReceived] = '\0';
+                    recvBuffer += buf;
+
+                    size_t pos;
+                    while ((pos = recvBuffer.find('\n')) != std::string::npos) {
+                        std::string line = recvBuffer.substr(0, pos);
+                        recvBuffer.erase(0, pos + 1);
+
+                        if (!line.empty() && line.back() == '\r') {
+                            line.pop_back();
+                        }
+
+                        if (line == "exit") {
+                            std::string goodbye = "Disconnecting...\n";
+                            send(clientSocket, goodbye.c_str(), (int)goodbye.size(), 0);
+                            closesocket(clientSocket);
+                            
+                            std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                            g_DebugState.clientSocket = INVALID_SOCKET;
+                            g_DebugState.isSuspended = false;
+                            g_DebugState.cond.notify_all();
+                            return;
+                        }
+
+                        processDebugCommand(clientSocket, g_DebugState.interpreter, line);
+                    }
+                }
+                closesocket(clientSocket);
+                
+                std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+                g_DebugState.clientSocket = INVALID_SOCKET;
+                g_DebugState.isSuspended = false;
+                g_DebugState.cond.notify_all();
+            }).detach();
+        }
+        closesocket(listenSocket);
+        g_DebugListenSocket = INVALID_SOCKET;
+        WSACleanup();
+    }).detach();
+}
+
+void shutdownServer() {
+    std::unique_lock<std::mutex> lock(g_DebugState.mutex);
+    if (g_DebugListenSocket != INVALID_SOCKET) {
+        closesocket(g_DebugListenSocket);
+        g_DebugListenSocket = INVALID_SOCKET;
+    }
+    if (g_DebugState.clientSocket != INVALID_SOCKET) {
+        std::string exitMsg = "\n*EXIT* Program exited with code 0\n";
+        send(g_DebugState.clientSocket, exitMsg.c_str(), (int)exitMsg.size(), 0);
+        shutdown(g_DebugState.clientSocket, SD_BOTH);
+        closesocket(g_DebugState.clientSocket);
+        g_DebugState.clientSocket = INVALID_SOCKET;
+    }
+    g_DebugActive = false;
+    g_DebugState.isSuspended = false;
+    g_DebugState.cond.notify_all();
+}
+
+} // namespace TzdDebugger
+
+// Implementation of TzdInterpreter::visit
+std::any TzdInterpreter::visit(antlr4::tree::ParseTree *tree) {
+    if (tree != nullptr) {
+        TzdLangParser::StatementContext* stmt = dynamic_cast<TzdLangParser::StatementContext*>(tree);
+        if (stmt != nullptr) {
+            antlr4::Token* startToken = stmt->getStart();
+            if (startToken != nullptr) {
+                int line = startToken->getLine();
+                std::string file = "memory";
+                if (!this->m_debugFileStack.empty() && !this->m_debugFileStack.back().empty()) {
+                    file = this->m_debugFileStack.back();
+                } else if (!this->m_scriptPathStack.empty()) {
+                    file = this->m_scriptPathStack.back().string();
+                } else if (!this->m_currentExecutingFile.empty()) {
+                    file = this->m_currentExecutingFile;
+                }
+                TzdDebugger::checkBreakpointAndSuspend(this, file, line);
+            }
+        }
+    }
+    return TzdLangBaseVisitor::visit(tree);
+}

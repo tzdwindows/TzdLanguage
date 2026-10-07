@@ -1,0 +1,10 @@
+class Test {
+    fun a() {
+        b();
+    }
+    fun b() {
+        a();
+    }
+}
+
+new Test().a();

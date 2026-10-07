@@ -1,0 +1,50 @@
+/**
+ * TzdLang 线程同步标准库 - Mutex 互斥锁与 LockGuard
+ */
+
+class Mutex {
+    var any id;
+
+    Mutex() {
+        this.id = sys_mutex_create();
+    }
+
+    fun lock() {
+        return sys_mutex_lock(this.id);
+    }
+
+    fun unlock() {
+        return sys_mutex_unlock(this.id);
+    }
+
+    fun tryLock() {
+        return sys_mutex_try_lock(this.id, 0);
+    }
+
+    fun tryLockTimeout(timeoutMs) {
+        return sys_mutex_try_lock(this.id, timeoutMs);
+    }
+
+    fun destroy() {
+        if (this.id != 0) {
+            sys_mutex_destroy(this.id);
+            this.id = 0;
+        }
+    }
+}
+
+class LockGuard {
+    var any mutex;
+
+    LockGuard(mutex) {
+        this.mutex = mutex;
+        this.mutex.lock();
+    }
+
+    fun unlock() {
+        if (this.mutex != null) {
+            this.mutex.unlock();
+            this.mutex = null;
+        }
+    }
+}

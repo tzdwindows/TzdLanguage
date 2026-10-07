@@ -1,0 +1,33 @@
+// ============================================================================
+// All.tzd - Single import for the complete PyTorch Ecosystem in TzdLanguage
+// Usage: import "torch/All.tzd";
+// ============================================================================
+
+// Core Module System
+import "torch/Module.tzd";
+import "torch/Sequential.tzd";
+import "torch/ModuleList.tzd";
+import "torch/Layer.tzd";
+import "torch/Loss.tzd";
+import "torch/Training.tzd";
+import "torch/Init.tzd";
+
+// 15 Advanced PyTorch Capabilities
+import "torch/FFT.tzd";          // 1. Signal Processing & FFT
+import "torch/Distributed.tzd";  // 2. Distributed Training & DDP
+import "torch/Jit.tzd";          // 3. TorchScript & Dynamic Tracing
+import "torch/Vision.tzd";       // 4. Advanced Vision Operators (NMS, RoIAlign)
+import "torch/RNN.tzd";          // 5. RNN / LSTM / GRU Networks
+import "torch/Transformer.tzd";  // 6. FlashAttention & Multi-Head Attention
+import "torch/Parallel.tzd";     // 7. Model Parallelism & Pipeline
+import "torch/Symbolic.tzd";     // 8. Dynamic Shapes & FX Graphs
+import "torch/Sparse.tzd";       // 9. Sparse Tensors (COO / CSR)
+import "torch/GNN.tzd";          // 10. Graph Neural Networks
+import "torch/RL.tzd";           // 11. Reinforcement Learning
+import "torch/Export.tzd";       // 12. ONNX & Edge Model Export
+import "torch/Compile.tzd";      // 13. Compilation & Operator Fusion
+import "torch/AMP.tzd";          // 14. Automatic Mixed Precision & Memory
+import "torch/Data.tzd";         // 15. Dataset & DataLoader
+import "torch/Profiler.tzd";     // 15. Performance Profiler
+import "torch/SummaryWriter.tzd";// 15. TensorBoard Integration
+import "torch/RNG.tzd";          // 15. RNG State Management

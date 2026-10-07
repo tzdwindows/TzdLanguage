@@ -1,0 +1,46 @@
+print("=== Class Test ===");
+
+class Base {
+    var ptr _data;
+
+    Base(name) {
+        this._data = jsonParse("{}");
+        print("  Base ctor: data keys = " + toString(len(mapKeys(this._data))));
+    }
+
+    fun setItem(key, val) {
+        this._data[key] = val;
+        print("  setItem: " + key + " = " + toString(val));
+    }
+
+    fun getItem(key) {
+        return this._data[key];
+    }
+}
+
+class Child extends Base {
+    var int size;
+
+    Child(s) {
+        super("Child");
+        this.size = s;
+        var w = torch_zeros(s);
+        this.setItem("weight", w);
+        print("  Child ctor: weight is tensor = " + toString(torch_is_tensor(this.getItem("weight"))));
+    }
+
+    fun forward(x) {
+        return this.getItem("weight");
+    }
+}
+
+print("1. Create Child...");
+var c = new Child(3);
+print("   OK");
+
+print("2. Forward...");
+var result = c.forward(42);
+print("   is tensor: " + toString(torch_is_tensor(result)));
+print("   shape: " + torch_shape(result));
+
+print("=== Done ===");

@@ -1,0 +1,17 @@
+﻿class Point {
+    var float x;
+    var float y;
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+fun testNewLoop() {
+    var i = 0;
+    while (i < 5) {
+        var p1 = new Point(i, i);
+        print("i: " + i);
+        i = i + 1;
+    }
+}
+testNewLoop();

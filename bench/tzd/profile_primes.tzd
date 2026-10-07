@@ -1,0 +1,133 @@
+import "time/DateTime.tzd";
+
+print("==================================================");
+print("     TzdLang True Polynomial-Time Benchmarks      ");
+print("==================================================");
+
+// ------------------------------------------------------------
+// 1. Floyd-Warshall 全源最短路径算法
+// 强多项式时间复杂度: 严格的三重循环 O(V^3)
+// 压测重点: 展平一维模拟二维连续内存寻址、分支预测与松弛优化
+// ------------------------------------------------------------
+fun benchFloydWarshall(v) {
+    var totalCells = v * v;
+    var dist = range(0, totalCells, 1);
+    
+    // 初始化权重矩阵 (伪随机生成非对称有向图)
+    var seed = 12345;
+    var i = 0;
+    while (i < v) {
+        var j = 0;
+        while (j < v) {
+            var idx = i * v + j;
+            if (i == j) {
+                dist[idx] = 0;
+            } else {
+                seed = (seed * 16807) % 2147483647;
+                dist[idx] = (seed % 1000) + 1; // 边权 1 ~ 1000
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    // 严格 O(V^3) 核心计算: 纯三重循环
+    var k = 0;
+    while (k < v) {
+        var rowK = k * v;
+        i = 0;
+        while (i < v) {
+            var rowI = i * v;
+            var ikDist = dist[rowI + k];
+            j = 0;
+            while (j < v) {
+                var throughK = ikDist + dist[rowK + j];
+                var ijIdx = rowI + j;
+                if (throughK < dist[ijIdx]) {
+                    dist[ijIdx] = throughK;
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+
+    // 计算校验和，防止编译器直接 DCE (死代码消除)
+    var checksum = 0;
+    var c = 0;
+    while (c < totalCells) {
+        checksum = (checksum + dist[c]) % 1000000007;
+        c = c + 1;
+    }
+    return checksum;
+}
+
+// ------------------------------------------------------------
+// 2. 密集整数矩阵乘法 (Square Matrix Multiply)
+// 强多项式时间复杂度: 严格 O(N^3)
+// 压测重点: 乘加运算流水线、跨步长访问 (Strided Memory Access)
+// ------------------------------------------------------------
+fun benchMatMul(n) {
+    var total = n * n;
+    var A = range(0, total, 1);
+    var B = range(0, total, 1);
+    var C = range(0, total, 1);
+
+    var idx = 0;
+    while (idx < total) {
+        A[idx] = (idx % 13) + 1;
+        B[idx] = (idx % 17) + 1;
+        C[idx] = 0;
+        idx = idx + 1;
+    }
+
+    var i = 0;
+    while (i < n) {
+        var rowA = i * n;
+        var j = 0;
+        while (j < n) {
+            var sum = 0;
+            var k = 0;
+            while (k < n) {
+                sum = sum + A[rowA + k] * B[k * n + j];
+                k = k + 1;
+            }
+            C[rowA + j] = sum;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    var chk = 0;
+    idx = 0;
+    while (idx < total) {
+        chk = (chk + C[idx]) % 1000000007;
+        idx = idx + 1;
+    }
+    return chk;
+}
+
+// ===== Driver =====
+
+// 1. Floyd-Warshall: V = 300, 循环内层严格执行 300^3 = 27,000,000 次松弛操作
+var v = 300;
+print("Running Floyd-Warshall with V = " + toString(v) + " (Operations: 2.7 x 10^7)...");
+var sw1 = new Stopwatch();
+sw1.start();
+var fwRes = benchFloydWarshall(v);
+sw1.stop();
+print("Floyd-Warshall Checksum: " + toString(fwRes));
+print("Time: " + toString(sw1.elapsedMs()) + " ms\n");
+
+// 2. 矩阵乘法: N = 200, 循环内层严格执行 200^3 = 8,000,000 次乘加
+var n = 200;
+print("Running Matrix Multiply with N = " + toString(n) + " (Operations: 8.0 x 10^6)...");
+var sw2 = new Stopwatch();
+sw2.start();
+var mmRes = benchMatMul(n);
+sw2.stop();
+print("MatMul Checksum: " + toString(mmRes));
+print("Time: " + toString(sw2.elapsedMs()) + " ms");
+
+print("==================================================");

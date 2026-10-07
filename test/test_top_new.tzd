@@ -1,0 +1,10 @@
+﻿class Point {
+    var float x;
+    var float y;
+    Point(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+var p1 = new Point(1, 1);
+print("Created at top level");

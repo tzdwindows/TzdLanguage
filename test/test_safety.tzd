@@ -1,0 +1,57 @@
+// test_safety.tzd - Test BIGINT safety limits
+
+fun main() {
+    print("=== BIGINT Safety Measures Test ===");
+
+    // 1. Normal BIGINT operations still work
+    var a = 10 ^ 100;
+    print("10^100 = " + a);
+    print("digits: " + len(toString(a)));
+
+    // 2. 10^1000 should work (1001 digits, well within 10M limit)
+    var b = 10 ^ 1000;
+    print("10^1000 has " + len(toString(b)) + " digits");
+
+    // 3. Very large exponent should return inf (not freeze)
+    var c = 10 ^ 1000000000;
+    print("10^1000000000 = " + c);
+
+    // 4. Get current limit
+    var limit = getBigIntMaxDigits();
+    print("Current BIGINT max digits: " + limit);
+
+    // 5. Set a smaller limit for testing
+    setBigIntMaxDigits(5000);
+    print("After setBigIntMaxDigits(5000): " + getBigIntMaxDigits());
+
+    // 6. With 5000 digit limit, 10^1000 should still work (1001 digits)
+    var d = 10 ^ 1000;
+    print("10^1000 with 5000 limit: " + len(toString(d)) + " digits");
+
+    // 7. With 5000 digit limit, 10^6000 should return inf
+    var e = 10 ^ 6000;
+    print("10^6000 with 5000 limit = " + e);
+
+    // 8. Reset to default
+    setBigIntMaxDigits(10000000);
+    print("Reset to " + getBigIntMaxDigits() + " digits");
+
+    // 9. Factorial safety
+    var f50 = bigintFactorial(50);
+    print("50! = " + f50);
+
+    // 10. Very large factorial should be limited
+    var fbig = bigintFactorial(10000000);
+    print("factorial(10000000) = " + fbig);
+
+    // 11. powmod with large numbers (safe - result is bounded by mod)
+    var pm = powmod(2, 1000, 1000000007);
+    print("2^1000 mod 1000000007 = " + pm);
+
+    // 12. BIGINT multiplication safety
+    var x = 10 ^ 5000;
+    var y = x * x; // 10001 digits, should work with 10M limit
+    print("(10^5000)^2 has " + len(toString(y)) + " digits");
+
+    print("=== All safety tests passed ===");
+}

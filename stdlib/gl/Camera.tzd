@@ -1,0 +1,53 @@
+/**
+ * TzdLang OpenGL 标准库 - 3D 摄像机控制器
+ */
+
+class Camera {
+    var float x;
+    var float y;
+    var float z;
+    var float targetX;
+    var float targetY;
+    var float targetZ;
+    var float upX;
+    var float upY;
+    var float upZ;
+
+    Camera(x, y, z) {
+        if (x != null) this.x = x; else this.x = 0.0;
+        if (y != null) this.y = y; else this.y = 0.0;
+        if (z != null) this.z = z; else this.z = 5.0;
+
+        this.targetX = 0.0;
+        this.targetY = 0.0;
+        this.targetZ = 0.0;
+
+        this.upX = 0.0;
+        this.upY = 1.0;
+        this.upZ = 0.0;
+    }
+
+    fun setTarget(tx, ty, tz) {
+        this.targetX = tx;
+        this.targetY = ty;
+        this.targetZ = tz;
+    }
+
+    fun setUp(ux, uy, uz) {
+        this.upX = ux;
+        this.upY = uy;
+        this.upZ = uz;
+    }
+
+    fun apply() {
+        gl_look_at(this.x, this.y, this.z,
+                   this.targetX, this.targetY, this.targetZ,
+                   this.upX, this.upY, this.upZ);
+    }
+
+    fun move(dx, dy, dz) {
+        this.x = this.x + dx;
+        this.y = this.y + dy;
+        this.z = this.z + dz;
+    }
+}

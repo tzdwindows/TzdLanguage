@@ -1,0 +1,102 @@
+import "time/DateTime.tzd";
+
+// ---- Benchmark kernels ----
+
+fun fib(n) {
+    if (n <= 2) {
+        return 1.0;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fun countPrimes(limit) {
+    var sieve = range(0, limit, 1);
+    var i = 0;
+    while (i < limit) {
+        sieve[i] = true;
+        i = i + 1;
+    }
+    sieve[0] = false;
+    sieve[1] = false;
+    var p = 2;
+    while (p * p < limit) {
+        if (sieve[p]) {
+            var m = p * p;
+            while (m < limit) {
+                sieve[m] = false;
+                m = m + p;
+            }
+        }
+        p = p + 1;
+    }
+    var count = 0;
+    var k = 0;
+    while (k < limit) {
+        if (sieve[k]) {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    return count;
+}
+
+fun mandelbrot(width, height, maxIter) {
+    var total = 0;
+    var py = 0;
+    while (py < height) {
+        var px = 0;
+        while (px < width) {
+            var x0 = (px * 1.0) / width * 3.5 - 2.5;
+            var y0 = (py * 1.0) / height * 2.0 - 1.0;
+            var x = 0.0;
+            var y = 0.0;
+            var iter = 0;
+            while (iter < maxIter && x * x + y * y <= 4.0) {
+                var xt = x * x - y * y + x0;
+                y = 2.0 * x * y + y0;
+                x = xt;
+                iter = iter + 1;
+            }
+            total = total + iter;
+            px = px + 1;
+        }
+        py = py + 1;
+    }
+    return total;
+}
+
+fun loopSum(n) {
+    var sum = 0;
+    var i = 0;
+    while (i < n) {
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}
+
+// ---- Driver ----
+
+var sw1 = new Stopwatch();
+sw1.start();
+var f = fib(34);
+sw1.stop();
+print("fib(34)=" + toString(f) + " | " + toString(sw1.elapsedMs()) + " ms");
+
+var sw2 = new Stopwatch();
+sw2.start();
+var primes = countPrimes(1000000);
+sw2.stop();
+print("primes<1e6=" + toString(primes) + " | " + toString(sw2.elapsedMs()) + " ms");
+
+var sw3 = new Stopwatch();
+sw3.start();
+var mb = mandelbrot(400, 400, 100);
+sw3.stop();
+print("mandelbrot_sum=" + toString(mb) + " | " + toString(sw3.elapsedMs()) + " ms");
+
+var sw4 = new Stopwatch();
+sw4.start();
+var s = loopSum(100000000);
+sw4.stop();
+print("loopSum_1e8=" + toString(s) + " | " + toString(sw4.elapsedMs()) + " ms");

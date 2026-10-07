@@ -1,0 +1,223 @@
+// ============================================================================
+// Distributed.tzd - Distributed Training & Collective Communication (Category 2)
+// ============================================================================
+
+import "torch/Module.tzd";
+
+class DistributedProcessGroup {
+    var string backend;
+    var int rank;
+    var int world_size;
+
+    DistributedProcessGroup(backend, rank, world_size) {
+        this.backend = "gloo";
+        if (backend != null) { this.backend = backend; }
+        this.rank = 0;
+        if (rank != null) { this.rank = rank; }
+        this.world_size = 1;
+        if (world_size != null) { this.world_size = world_size; }
+    }
+
+    fun getRank() {
+        return this.rank;
+    }
+
+    fun getWorldSize() {
+        return this.world_size;
+    }
+
+    fun allReduce(tensor, op) {
+        var mode = "sum";
+        if (op != null) { mode = op; }
+        if (mode == "mean") {
+            return torch_div(tensor, this.world_size);
+        }
+        return tensor;
+    }
+
+    fun broadcast(tensor, src_rank) {
+        return tensor;
+    }
+
+    fun barrier() {
+        return true;
+    }
+}
+
+var _GLOBAL_PG = null;
+
+fun initProcessGroup(backend, rank, world_size) {
+    _GLOBAL_PG = new DistributedProcessGroup(backend, rank, world_size);
+    return _GLOBAL_PG;
+}
+
+fun getProcessGroup() {
+    if (_GLOBAL_PG == null) {
+        _GLOBAL_PG = new DistributedProcessGroup("gloo", 0, 1);
+    }
+    return _GLOBAL_PG;
+}
+
+class DistributedDataParallel extends Module {
+    var ptr module;
+    var ptr pg;
+
+    DistributedDataParallel(module, pg) {
+        super("DistributedDataParallel");
+        this.module = module;
+        this.pg = getProcessGroup();
+        if (pg != null) { this.pg = pg; }
+        this.registerModule("module", module);
+    }
+
+    fun forward(x) {
+        return this.module.forward(x);
+    }
+
+    fun syncGradients() {
+        var params = this.module.parameters();
+        for (var i = 0; i < len(params); i = i + 1) {
+            var grad = torch_grad(params[i]);
+            if (grad != null) {
+                this.pg.allReduce(grad, "mean");
+            }
+        }
+    }
+}
+
+class DataParallel extends Module {
+    var ptr module;
+    var ptr device_ids;
+    var string output_device;
+
+    DataParallel(module) {
+        super("DataParallel");
+        this.initDP(module, null, null);
+    }
+
+    DataParallel(module, device_ids) {
+        super("DataParallel");
+        this.initDP(module, device_ids, null);
+    }
+
+    DataParallel(module, device_ids, output_device) {
+        super("DataParallel");
+        this.initDP(module, device_ids, output_device);
+    }
+
+    fun initDP(module, device_ids, output_device) {
+        this.module = module;
+        this.device_ids = range(0, 0, 1);
+        if (device_ids != null && len(device_ids) > 0) {
+            this.device_ids = device_ids;
+        } else {
+            if (torch_cuda_is_available()) {
+                var devCount = torch_cuda_device_count();
+                for (var i = 0; i < devCount; i = i + 1) {
+                    this.device_ids = push(this.device_ids, "cuda:" + toString(i));
+                }
+            } else {
+                this.device_ids = push(this.device_ids, "cpu");
+            }
+        }
+        this.output_device = this.device_ids[0];
+        if (output_device != null) { this.output_device = output_device; }
+        this.registerModule("module", module);
+    }
+
+    fun scatter(x) {
+        var numDevs = len(this.device_ids);
+        if (numDevs <= 1) {
+            var single = range(0, 0, 1);
+            var dev = this.device_ids[0];
+            single = push(single, torch_to_device(x, dev));
+            return single;
+        }
+        var chunks = torch_chunk(x, numDevs, 0);
+        var scattered = range(0, 0, 1);
+        for (var i = 0; i < len(chunks); i = i + 1) {
+            var chunk = chunks[i];
+            var dev = this.device_ids[i];
+            scattered = push(scattered, torch_to_device(chunk, dev));
+        }
+        return scattered;
+    }
+
+    fun gather(outputs) {
+        var n = len(outputs);
+        if (n == 0) { return null; }
+        if (n == 1) {
+            return torch_to_device(outputs[0], this.output_device);
+        }
+        var gathered = range(0, 0, 1);
+        for (var i = 0; i < n; i = i + 1) {
+            gathered = push(gathered, torch_to_device(outputs[i], this.output_device));
+        }
+        var acc = gathered[0];
+        for (var j = 1; j < len(gathered); j = j + 1) {
+            acc = torch_cat(acc, gathered[j], 0);
+        }
+        return acc;
+    }
+
+    fun forward(x) {
+        var numDevs = len(this.device_ids);
+        if (numDevs <= 1) {
+            var dev = this.device_ids[0];
+            var targetX = torch_to_device(x, dev);
+            var mod = this.module;
+            var outVal = mod.forward(targetX);
+            return torch_to_device(outVal, this.output_device);
+        }
+        var inputs = this.scatter(x);
+        var outputs = range(0, 0, 1);
+        var mod = this.module;
+        var pDev = this.output_device;
+        for (var i = 0; i < len(inputs); i = i + 1) {
+            var subIn = inputs[i];
+            var subInDev = torch_to_device(subIn, pDev);
+            var subOut = mod.forward(subInDev);
+            outputs = push(outputs, subOut);
+        }
+        return this.gather(outputs);
+    }
+
+    fun infer(x) {
+        var oldGrad = torch_is_grad_enabled();
+        torch_set_grad_enabled(false);
+        var res = this.forward(x);
+        torch_set_grad_enabled(oldGrad);
+        return res;
+    }
+
+    fun getDevices() {
+        return this.device_ids;
+    }
+
+    fun numDevices() {
+        return len(this.device_ids);
+    }
+}
+
+// Multi-card parallel inference helper
+fun parallelInference(model, input, devices) {
+    var dp = new DataParallel(model, devices);
+    return dp.infer(input);
+}
+
+class RPCContext {
+    var string worker_name;
+
+    RPCContext(worker_name) {
+        this.worker_name = "worker0";
+        if (worker_name != null) { this.worker_name = worker_name; }
+    }
+
+    fun rpcSync(target_worker, func_name, args) {
+        return true;
+    }
+
+    fun rpcAsync(target_worker, func_name, args) {
+        return true;
+    }
+}

@@ -1,0 +1,24 @@
+import "time/DateTime.tzd";
+
+// Minimal: does passing ANY array to a function lose its contents?
+fun readFirst(a) {
+    return a[0];
+}
+
+var literal = [10, 20, 30];
+print("literal[0] direct=" + toString(literal[0]));
+print("readFirst(literal)=" + toString(readFirst(literal)));
+
+var fromRange = range(0, 5, 1);
+print("fromRange[0] direct=" + toString(fromRange[0]));
+print("readFirst(fromRange)=" + toString(readFirst(fromRange)));
+
+fun lenOf(a) {
+    return len(a);
+}
+print("len(literal)=" + toString(len(literal)));
+print("lenOf(literal)=" + toString(lenOf(literal)));
+print("len(fromRange)=" + toString(len(fromRange)));
+print("lenOf(fromRange)=" + toString(lenOf(fromRange)));
+
+print("=== probe_arr done ===");

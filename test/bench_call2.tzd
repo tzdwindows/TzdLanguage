@@ -1,0 +1,24 @@
+// bench_call2.tzd - Minimal call overhead test
+fun noop(x) { return x + 1; }
+
+fun main() {
+    // Test: call noop once to verify it works
+    var r = noop(5);
+    print("noop(5)=" + toString(r));
+
+    // Test: 10 calls
+    var t1 = clock();
+    var s = 0;
+    var i = 0;
+    while (i < 10) { s = noop(s); i = i + 1; }
+    var t2 = clock();
+    print("10 calls: s=" + toString(s) + "  ticks=" + toString(t2-t1));
+
+    // Test: 1000 calls
+    t1 = clock();
+    s = 0;
+    i = 0;
+    while (i < 1000) { s = noop(s); i = i + 1; }
+    t2 = clock();
+    print("1000 calls: s=" + toString(s) + "  ticks=" + toString(t2-t1) + "  time=" + toString((t2-t1)/1000.0) + "s");
+}

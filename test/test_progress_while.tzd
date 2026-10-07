@@ -1,0 +1,12 @@
+﻿fun test() {
+  var i = 0;
+  while (i < 50000) {
+    if (i == 10000) { print("p1"); }
+    if (i == 20000) { print("p2"); }
+    if (i == 30000) { print("p3"); }
+    if (i == 40000) { print("p4"); }
+    i = i + 1;
+  }
+  print("done=" + i);
+}
+test();

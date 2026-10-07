@@ -1,0 +1,35 @@
+import "stdlib/gl/GL.tzd";
+import "stdlib/gl/GLWindow.tzd";
+import "stdlib/gl/Mesh.tzd";
+
+fun main() {
+    print("=== OpenGL Test ===");
+    var win = new GLWindow("TzdLang 3D Viewport", 640, 480);
+    if (!win.isOpen()) {
+        print("Failed to initialize OpenGL window!");
+        return;
+    }
+    print("OpenGL Window created successfully!");
+
+    GL.clearColor(0.1, 0.2, 0.3, 1.0);
+    GL.enable(GL.DEPTH_TEST);
+
+    // Render 10 frames as automated test
+    for (var f = 0; f < 10; f = f + 1) {
+        win.pollEvents();
+        win.clear(GL.COLOR_BUFFER_BIT + GL.DEPTH_BUFFER_BIT);
+
+        GL.matrixMode(GL.MODELVIEW);
+        GL.loadIdentity();
+        GL.translate(0.0, 0.0, -5.0);
+        GL.rotate(f * 5.0, 1.0, 1.0, 0.0);
+
+        Mesh.coloredCube(1.5);
+        win.swapBuffers();
+    }
+
+    win.close();
+    print("OpenGL 10 Frames Rendered & Window Closed Successfully!");
+}
+
+main();

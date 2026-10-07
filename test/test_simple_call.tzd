@@ -1,0 +1,6 @@
+fun test() {
+    return 42;
+}
+print("calling");
+var x = test();
+print(x);
