@@ -126,6 +126,47 @@ TZD_API const char* tzd_context_get_last_error(tzd_context_t* ctx);
 /* Clears thread-local and context error messages */
 TZD_API void        tzd_clear_last_error(void);
 
+/* ========================================================================= */
+/* 8. Thread Management API                                                  */
+/* ========================================================================= */
+typedef enum tzd_thread_state_e {
+    TZD_THREAD_STATE_NEW        = 0,
+    TZD_THREAD_STATE_RUNNING    = 1,
+    TZD_THREAD_STATE_BLOCKED    = 2,
+    TZD_THREAD_STATE_SLEEPING   = 3,
+    TZD_THREAD_STATE_PAUSED     = 4,
+    TZD_THREAD_STATE_TERMINATED = 5,
+    TZD_THREAD_STATE_FAILED     = 6
+} tzd_thread_state_t;
+
+typedef struct tzd_thread_info_s {
+    uint64_t id;
+    uint32_t os_thread_id;
+    char name[128];
+    int state;
+    char state_str[32];
+    uint64_t parent_id;
+    int is_alive;
+    int has_error;
+    int64_t start_time;
+    int64_t end_time;
+    int64_t duration_ms;
+} tzd_thread_info_t;
+
+/* Enumerate threads */
+TZD_API size_t   tzd_thread_get_count(void);
+TZD_API size_t   tzd_thread_get_all_ids(uint64_t* out_ids, size_t max_count);
+TZD_API int      tzd_thread_get_info(uint64_t thread_id, tzd_thread_info_t* out_info);
+TZD_API uint64_t tzd_thread_get_current_id(void);
+
+/* Thread control */
+TZD_API int      tzd_thread_pause(uint64_t thread_id);
+TZD_API int      tzd_thread_resume(uint64_t thread_id);
+TZD_API int      tzd_thread_join(uint64_t thread_id, int64_t timeout_ms);
+TZD_API int      tzd_thread_detach(uint64_t thread_id);
+TZD_API int      tzd_thread_get_dump(char* out_buf, size_t out_buf_size);
+TZD_API int      tzd_thread_detect_deadlocks(char* out_buf, size_t out_buf_size);
+
 #ifdef __cplusplus
 }
 #endif

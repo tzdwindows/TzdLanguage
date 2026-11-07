@@ -33,6 +33,11 @@
 #include "TzdInterpreter.h"
 #include "TzdOop.h"
 
+extern "C" {
+    void tzd_ti_notify_thread_start(struct tzd_context* ctx, uint64_t thread_id, const char* thread_name);
+    void tzd_ti_notify_thread_end(struct tzd_context* ctx, uint64_t thread_id, const char* thread_name);
+}
+
 namespace TzdThreading {
 
 enum class ThreadState {
@@ -319,7 +324,8 @@ public:
 
     void ensureMainThreadRegistered(TzdInterpreter* mainInterp) {
         std::lock_guard<std::recursive_mutex> lock(m_threadsMutex);
-        if (m_threads.find(1) == m_threads.end()) {
+        auto it = m_threads.find(1);
+        if (it == m_threads.end()) {
             auto tcb = std::make_shared<ThreadControlBlock>();
             tcb->id = 1;
 #ifdef _WIN32
@@ -334,6 +340,9 @@ public:
             m_osToThreadId[tcb->osThreadId] = 1;
             m_currentTcb = tcb;
             log(1, "MainThread", "INIT", "Main thread registered");
+            tzd_ti_notify_thread_start(nullptr, 1, "MainThread");
+        } else {
+            if (mainInterp) it->second->childInterp = mainInterp;
         }
     }
 
@@ -341,6 +350,16 @@ public:
         m_currentTcb = tcb;
         std::lock_guard<std::recursive_mutex> lock(m_threadsMutex);
         m_osToThreadId[tcb->osThreadId] = tcb->id;
+    }
+
+    void unregisterInterpreter(TzdInterpreter* interp) {
+        if (!interp) return;
+        std::lock_guard<std::recursive_mutex> lock(m_threadsMutex);
+        for (auto& pair : m_threads) {
+            if (pair.second && pair.second->childInterp == interp) {
+                pair.second->childInterp = nullptr;
+            }
+        }
     }
 
     uint64_t getCurrentThreadId() {
@@ -414,6 +433,7 @@ public:
             tcb->startTimestamp = nowMs();
             tcb->state = ThreadState::RUNNING;
             log(tcb->id, tcb->name, "START", "Thread started execution");
+            tzd_ti_notify_thread_start(nullptr, tcb->id, tcb->name.c_str());
 
             try {
                 TzdValue res = tcb->childInterp->callFunction(tcb->target, tcb->args);
@@ -448,6 +468,7 @@ public:
             }
 
             tcb->endTimestamp = nowMs();
+            tzd_ti_notify_thread_end(nullptr, tcb->id, tcb->name.c_str());
             {
                 std::lock_guard<std::mutex> lock(tcb->tcbMutex);
                 tcb->isFinished = true;

@@ -25,7 +25,9 @@ typedef enum tzd_ti_event_e {
     TZD_TI_EVENT_EXCEPTION_CATCH      = (1 << 7),
     TZD_TI_EVENT_CLASS_LOAD           = (1 << 8),
     TZD_TI_EVENT_COMPILED_METHOD_LOAD = (1 << 9),
-    TZD_TI_EVENT_GARBAGE_COLLECTION   = (1 << 10)
+    TZD_TI_EVENT_GARBAGE_COLLECTION   = (1 << 10),
+    TZD_TI_EVENT_THREAD_START         = (1 << 11),
+    TZD_TI_EVENT_THREAD_END           = (1 << 12)
 } tzd_ti_event_t;
 
 /* Stack frame structure for stack inspection */
@@ -51,6 +53,8 @@ typedef struct tzd_ti_callbacks_s {
     void (*on_class_load)(tzd_context_t* ctx, const char* class_name);
     void (*on_compiled_method_load)(const char* method_name, const void* code_addr, size_t code_size);
     void (*on_garbage_collection)(tzd_context_t* ctx, size_t freed_bytes, size_t total_alive);
+    void (*on_thread_start)(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
+    void (*on_thread_end)(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
 } tzd_ti_callbacks_t;
 
 /* Opaque Tool Interface Environment Handle */
@@ -88,12 +92,24 @@ TZD_API int tzd_ti_get_call_stack(tzd_ti_env_t* env, tzd_context_t* ctx,
 /* Force immediate Garbage Collection pass */
 TZD_API int tzd_ti_force_gc(tzd_ti_env_t* env, tzd_context_t* ctx);
 
+/* Query and retrieve all live declared instances of a given class by name.
+ * Inspects all scopes across the interpreter and active threads.
+ * Matches the specified class name or its subclasses.
+ * out_objects receives pointers to the object instances (tzd_object_t).
+ * Returns TZD_OK on success, and fills *out_count with the total number found.
+ */
+TZD_API int tzd_ti_get_objects_by_class(tzd_ti_env_t* env, tzd_context_t* ctx,
+                                        const char* class_name,
+                                        void** out_objects, size_t max_count, size_t* out_count);
+
 /* Trigger hooks programmatically (used internally by JIT and interpreter) */
 TZD_API void tzd_ti_notify_method_entry(tzd_context_t* ctx, const char* cls, const char* method, const char* file, int line);
 TZD_API void tzd_ti_notify_method_exit(tzd_context_t* ctx, const char* cls, const char* method, const char* ret_val_str);
 TZD_API void tzd_ti_notify_single_step(tzd_context_t* ctx, const char* file, int line, int column);
 TZD_API void tzd_ti_notify_exception_throw(tzd_context_t* ctx, const char* msg, const char* file, int line);
 TZD_API void tzd_ti_notify_compiled_method(const char* method, const void* code, size_t size);
+TZD_API void tzd_ti_notify_thread_start(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
+TZD_API void tzd_ti_notify_thread_end(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
 
 #ifdef __cplusplus
 }

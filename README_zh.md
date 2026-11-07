@@ -32,6 +32,13 @@
 - 💎 **现代面向对象机制**：支持单继承、虚方法动态多态、构造函数级联（`super`）、动态类型与可选静态强类型标注。
 - 🛡️ **健全的异常处理与并发模型**：结构化 `try-catch-throw` 异常体系、`in` 类型模式匹配以及原生多线程并发驱动（`Thread`）。
 - 🛠️ **工业级 VS Code 扩展与 DAP 调试器**：支持语法高亮、代码补全、断点管理、单步步入/步过、调用栈查看与变量实时监视。
+- 🔌 **独立动态库与多语言 SDK 体系 (`tzd.dll`)**：
+  - **核心解耦**：将核心运行时全部解耦导出至 `tzd.dll`，支持纯 C ABI (`tzd.h`) 与现代 C++20 (`tzd.hpp`) 面向对象嵌入。
+  - **低开销调试接口 (TZD TI)**：提供类似 **JVMTI** 的近零开销原子事件钩子，支持单步、断点、方法进出、异常捕获、**线程启停事件**，以及**依据类名检索所有声明/存活对象实例**（`tzd_ti_get_objects_by_class`）。
+  - **本地原生接口 (TNI)**：提供类似 **JNI** 的 `tzd_env_t` 函数表，支持 C/C++ 动态查询类、读写字段、反射调用及注册原生方法。
+  - **官方 Java 语言绑定**：提供基于 JNI 的 `com.tzd.TzdLanguage` 与面向对象的 `com.tzd.TzdContext`，无缝嵌入 Java 应用。
+  - **多线程纳管与死锁检测**：全方位线程生命周期状态追踪、堆栈 Dump 及死锁自动探测 API。
+- 📦 **自动规整的发布产物结构 (`dist/`)**：构建流水线自动打包归类至 `dist/`，清晰分离 `bin/`、`include/`、`lib/`、`licenses/` 与 `libs/`，拒绝文件混杂。
 - 📦 **双构建体系支持**：原生 Visual Studio 工程（`.sln` / `.vcxproj`）与独立的跨平台 `CMakeLists.txt`。
 
 ---
@@ -207,6 +214,119 @@ fun worker() {
 var t = new Thread(worker);
 t.start();
 t.join();
+```
+
+---
+
+## 🔌 SDK、公共 API 与跨语言集成体系
+
+TzdLanguage 核心运行时完全解耦为独立动态库 `tzd.dll` 与导入库 `tzd.lib`，提供工业级嵌入式与工具链支持：
+
+### 1. 现代化 C++20 嵌入式 API (`include/tzd/tzd.hpp`)
+```cpp
+#include <tzd.hpp>
+#include <iostream>
+
+int main() {
+    // 创建有状态执行上下文
+    tzd::Context ctx;
+    ctx.eval("var score = 95.5; fun calculate(x) { return x * 1.2; }");
+
+    // 双向变量交互与函数调用
+    double score = ctx.getDouble("score");
+    std::string res = ctx.call("calculate", { "100" });
+    std::cout << "Result: " << res << std::endl; // Output: 120
+    return 0;
+}
+```
+
+### 2. 线程管理与死锁检测 API (`tzd::ThreadManager`)
+```cpp
+#include <tzd.hpp>
+
+// 获取当前存活线程总数与 ID 列表
+size_t count = tzd::ThreadManager::getCount();
+auto threadIds = tzd::ThreadManager::getAllIds();
+
+// 打印完整线程堆栈 Dump（包含互斥锁占用关系与等待状态）
+std::string dump = tzd::ThreadManager::getDump();
+std::cout << dump << std::endl;
+
+// 自动检测多线程循环等待与死锁
+std::string deadlocks = tzd::ThreadManager::detectDeadlocks();
+```
+
+### 3. JVMTI 风格工具调试接口 (TZD TI: `include/tzd/tzd_ti.h`)
+- **超低开销设计**：未挂载钩子时，仅需单条原子位掩码检查，对运行时性能影响趋近于 0。
+- **线程启停事件**：`on_thread_start` 与 `on_thread_end`。
+- **依据类名检索所有对象**：
+```cpp
+void* objects[64];
+size_t found = 0;
+// 检索当前运行态中所有 UserAccount 类（及子类）的声明/存活对象实例
+tzd_ti_get_objects_by_class(nullptr, ctx.getContext(), "UserAccount", objects, 64, &found);
+```
+
+### 4. 类似 JNI 的本地调用接口 (TNI: `include/tzd/tzd_tni.h`)
+提供标准 `tzd_env_t` 函数表，允许 C/C++ 反射访问类结构、读写对象字段、调用类方法并动态注册原生 C 函数：
+```c
+tzd_class_t cls = env->FindClass(env, "MyNetwork");
+tzd_method_id_t mid = env->GetMethodID(env, cls, "forward", nullptr);
+tzd_object_t obj = env->NewObject(env, cls, 0, NULL);
+env->CallMethod(env, obj, mid, 0, NULL, out_buf, sizeof(out_buf));
+```
+
+### 5. 官方 Java 绑定与 JNI 桥接 (`com.tzd.*`)
+```java
+import com.tzd.TzdLanguage;
+import com.tzd.TzdContext;
+
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Tzd Version: " + TzdLanguage.getVersion());
+        
+        try (TzdContext ctx = new TzdContext()) {
+            ctx.eval("var name = 'TzdLanguage'; fun hello() { return 'Hello, ' + name; }");
+            String result = ctx.call("hello");
+            System.out.println(result); // Hello, TzdLanguage
+        }
+    }
+}
+```
+
+---
+
+## 📦 自动整理的发布产物目录 (`dist/`)
+
+运行构建或执行 `package.bat` 后，自动化流水线将发布文件归类规整至 `dist/` 目录，清晰分离各组件：
+
+```text
+dist/
+├── bin/                       # 核心执行程序、运行时动态库及标准库
+│   ├── TzdTools.exe           # Tzd 命令行主程序
+│   ├── tzd.dll                # Tzd 核心虚拟机与运行时动态库
+│   ├── stdlib/                # Tzd 标准库模块 (core, torch, thread, math 等)
+│   ├── torch.dll, c10.dll ... # LibTorch 原生依赖库
+│   └── nvrtc64_*.dll          # CUDA 运行时库
+├── include/                   # 公共 C / C++ 头文件与导出接口
+│   ├── tzd.h                  # 纯 C ABI 导出头文件
+│   ├── tzd.hpp                # 现代 C++20 面向对象封装
+│   └── tzd/                   # 模块化头文件
+│       ├── tzd_ti.h           # JVMTI 风格工具调试接口
+│       ├── tzd_tni.h          # 类似 JNI 的 TNI 本地接口
+│       └── tzd_export.h       # DLL 导入导出宏定义
+├── lib/                       # 链接用导入库
+│   ├── tzd.lib                # tzd.dll 对应的 MSVC 导入库
+│   └── TzdTools.lib           # TzdTools 导出库
+├── licenses/                  # 开源许可证与第三方声明
+│   ├── LICENSE.txt            # TzdLanguage MIT 开源许可证
+│   ├── LICENSE-LIBTORCH.txt   # LibTorch (BSD 3-Clause)
+│   ├── LICENSE-LLVM.txt       # LLVM (Apache 2.0 with LLVM Exception)
+│   ├── LICENSE-COLUNWIND.txt  # colunwind (MIT)
+│   ├── LICENSE-ANTLR4.txt     # ANTLR4 (BSD 3-Clause)
+│   └── THIRD_PARTY_LICENSES.md# 第三方组件授权综合清单
+└── libs/                      # 语言扩展包与依赖库
+    └── java/                  # Java 绑定编译后 class 文件与源码
 ```
 
 ---

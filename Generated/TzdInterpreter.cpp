@@ -3150,6 +3150,7 @@ TzdInterpreter::TzdInterpreter()
 
 TzdInterpreter::~TzdInterpreter()
 {
+    TzdThreading::TzdThreadManager::instance().unregisterInterpreter(this);
     for (auto mod : loadedModules)
         delete mod;
     loadedModules.clear();

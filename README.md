@@ -32,6 +32,13 @@
 - 💎 **Modern Object-Oriented Semantics**: Single inheritance, virtual method polymorphism, constructor cascading (`super`), dynamic typing with optional static typing.
 - 🛡️ **Robust Error & Concurrency Model**: Structured `try-catch-throw` exception handling, `in` type pattern matching, and native OS multi-threading (`Thread`).
 - 🛠️ **Full VS Code Extension & DAP Debugger**: Syntax highlighting, code completion, interactive step-by-step debugging (breakpoints, call stack, variable watches, expression evaluation).
+- 🔌 **Decoupled Dynamic Library & Multi-Language SDK (`tzd.dll`)**:
+  - **Modular Core**: Core VM and execution engines decoupled into `tzd.dll`, providing pure C ABI (`tzd.h`) and modern C++20 (`tzd.hpp`) object-oriented embedding.
+  - **Low-Overhead Tool Interface (TZD TI)**: JVMTI-style atomic event callbacks with near-zero runtime overhead, supporting breakpoints, stepping, exception hooks, **thread lifecycle events**, and **querying declared live instances by class name** (`tzd_ti_get_objects_by_class`).
+  - **Native Interface (TNI)**: JNI-like `tzd_env_t` function table for reflective class lookup, field access, method invocation, and native C function binding.
+  - **Official Java Language Bindings**: High-level `com.tzd.TzdLanguage` JNI bridge and `com.tzd.TzdContext` (`AutoCloseable`) for seamless JVM embedding.
+  - **Thread Management & Deadlock Detection**: Comprehensive thread monitoring, stack trace dumping, and automated deadlock cycle analysis.
+- 📦 **Structured Distribution Packaging (`dist/`)**: Automatic post-build packager organizing outputs into clean `bin/`, `include/`, `lib/`, `licenses/`, and `libs/` directories.
 - 📦 **Dual Build Systems**: Native Visual Studio project (`.sln` / `.vcxproj`) and standalone cross-platform `CMakeLists.txt`.
 
 ---
@@ -207,6 +214,104 @@ fun worker() {
 var t = new Thread(worker);
 t.start();
 t.join();
+```
+
+---
+
+## 🔌 SDK, Public APIs & Cross-Language Integration
+
+The TzdLanguage runtime is modularized into `tzd.dll` and `tzd.lib`, providing clean embedding and interop interfaces:
+
+### 1. Modern C++20 Embedding API (`include/tzd/tzd.hpp`)
+```cpp
+#include <tzd.hpp>
+#include <iostream>
+
+int main() {
+    tzd::Context ctx;
+    ctx.eval("var score = 95.5; fun calculate(x) { return x * 1.2; }");
+
+    double score = ctx.getDouble("score");
+    std::string res = ctx.call("calculate", { "100" });
+    std::cout << "Result: " << res << std::endl; // Output: 120
+    return 0;
+}
+```
+
+### 2. Native Thread Management & Deadlock Detection (`tzd::ThreadManager`)
+```cpp
+#include <tzd.hpp>
+
+// Query active threads
+size_t count = tzd::ThreadManager::getCount();
+auto threadIds = tzd::ThreadManager::getAllIds();
+
+// Obtain full thread dump with mutex dependency tracking
+std::string dump = tzd::ThreadManager::getDump();
+std::cout << dump << std::endl;
+
+// Automated deadlock cycle detection
+std::string deadlocks = tzd::ThreadManager::detectDeadlocks();
+```
+
+### 3. JVMTI-style Tool Interface (TZD TI: `include/tzd/tzd_ti.h`)
+- **Zero-overhead**: Single atomic flag check when no callbacks are attached.
+- **Thread lifecycle hooks**: `on_thread_start` and `on_thread_end`.
+- **Query live objects by class name**:
+```cpp
+void* objects[64];
+size_t found = 0;
+// Retrieve all live declared instances of "UserAccount" (and its subclasses)
+tzd_ti_get_objects_by_class(nullptr, ctx.getContext(), "UserAccount", objects, 64, &found);
+```
+
+### 4. JNI-style Native Interface (TNI: `include/tzd/tzd_tni.h`)
+Standard `tzd_env_t` function table for reflective access and native method binding:
+```c
+tzd_class_t cls = env->FindClass(env, "MyNetwork");
+tzd_method_id_t mid = env->GetMethodID(env, cls, "forward", NULL);
+tzd_object_t obj = env->NewObject(env, cls, 0, NULL);
+env->CallMethod(env, obj, mid, 0, NULL, out_buf, sizeof(out_buf));
+```
+
+### 5. Official Java Language Bindings (`com.tzd.*`)
+```java
+import com.tzd.TzdLanguage;
+import com.tzd.TzdContext;
+
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Tzd Version: " + TzdLanguage.getVersion());
+        
+        try (TzdContext ctx = new TzdContext()) {
+            ctx.eval("var name = 'TzdLanguage'; fun hello() { return 'Hello, ' + name; }");
+            String result = ctx.call("hello");
+            System.out.println(result); // Hello, TzdLanguage
+        }
+    }
+}
+```
+
+---
+
+## 📦 Structured Distribution Package (`dist/`)
+
+Running the build or executing `package.bat` automatically packages output files into structured directories:
+
+```text
+dist/
+├── bin/                       # Executables, runtime DLLs, and standard library
+│   ├── TzdTools.exe           # CLI executable
+│   ├── tzd.dll                # Core runtime library
+│   ├── stdlib/                # Standard library modules
+│   └── *.dll                  # LibTorch and CUDA runtime dependencies
+├── include/                   # Public C / C++ headers
+│   ├── tzd.h                  # Pure C ABI header
+│   ├── tzd.hpp                # Modern C++20 wrapper
+│   └── tzd/                   # Modular subheaders (tzd_ti.h, tzd_tni.h, etc.)
+├── lib/                       # Import libraries (tzd.lib, TzdTools.lib)
+├── licenses/                  # Open-source licenses for Tzd and dependencies
+└── libs/                      # Java bindings & companion modules
 ```
 
 ---

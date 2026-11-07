@@ -71,6 +71,39 @@ int main() {
     tzd_destroy_context(c_ctx);
     std::cout << "    [PASS] Pure C API Functions\n\n";
 
+    // 5. Thread Management API
+    std::cout << "[5] Testing Thread Management API...\n";
+    size_t threadCount = tzd::ThreadManager::getCount();
+    std::cout << "    Active thread count: " << threadCount << std::endl;
+    auto threadIds = tzd::ThreadManager::getAllIds();
+    std::cout << "    Enumerated thread IDs count: " << threadIds.size() << std::endl;
+    uint64_t currentTid = tzd::ThreadManager::getCurrentId();
+    std::cout << "    Current Thread ID: " << currentTid << std::endl;
+
+    tzd::ThreadInfo tinfo;
+    if (tzd::ThreadManager::getInfo(currentTid, tinfo)) {
+        std::cout << "    Thread info: ID=" << tinfo.id << ", Name=\"" << tinfo.name
+                  << "\", State=" << tinfo.stateStr << ", Alive=" << (tinfo.isAlive ? "true" : "false") << std::endl;
+    }
+    std::string threadDump = tzd::ThreadManager::getDump();
+    assert(!threadDump.empty());
+    std::cout << "    Thread dump length: " << threadDump.size() << " bytes\n";
+    std::cout << "    [PASS] Thread Management API\n\n";
+
+    // 6. TI Interface: get_objects_by_class & thread events
+    std::cout << "[6] Testing TZD TI (get_objects_by_class)...\n";
+    tzd::Context tiCtx;
+    tiCtx.eval("class UserAccount { var string name; UserAccount(n) { this.name = n; } }");
+    tiCtx.eval("var u1 = new UserAccount(\"Alice\"); var u2 = new UserAccount(\"Bob\");");
+
+    void* objs[16] = { nullptr };
+    size_t foundCount = 0;
+    int ti_rc = tzd_ti_get_objects_by_class(nullptr, tiCtx.getContext(), "UserAccount", objs, 16, &foundCount);
+    std::cout << "    tzd_ti_get_objects_by_class(\"UserAccount\") returned: " << foundCount << " instances\n";
+    assert(ti_rc == 0);
+    assert(foundCount >= 2);
+    std::cout << "    [PASS] TZD TI get_objects_by_class\n\n";
+
     std::cout << "========================================================\n";
     std::cout << "  >>> All Tzd C/C++ API tests PASSED successfully! <<<\n";
     std::cout << "========================================================\n";

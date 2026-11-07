@@ -150,6 +150,9 @@
     <Manifest>
       <AdditionalManifestFiles>$(ProjectDir)CommonControls.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
+    <PostBuildEvent>
+      <Command>call "$(SolutionDir)scripts\package_dist.bat" "$(SolutionDir)" "$(OutDir)"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="TzdTools.cpp" />

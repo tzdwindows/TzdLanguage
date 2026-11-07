@@ -9,6 +9,7 @@
 #include "Generated/TzdJit.h"
 #include "Generated/TzdGC.h"
 #include "Generated/TzdOop.h"
+#include "Generated/TzdThreadManager.h"
 #include "TzdCommandSystem.h"
 #include "TzdExeCompiler.h"
 #include <colunwind/colunwind.h>
@@ -752,6 +753,78 @@ TZD_API void tzd_ti_notify_compiled_method(const char* method, const void* code,
     }
 }
 
+TZD_API void tzd_ti_notify_thread_start(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name) {
+    if ((g_tzd_ti_event_mask.load(std::memory_order_relaxed) & TZD_TI_EVENT_THREAD_START) && g_tzd_ti_callbacks.on_thread_start) {
+        g_tzd_ti_callbacks.on_thread_start(ctx, thread_id, thread_name ? thread_name : "Thread");
+    }
+}
+
+TZD_API void tzd_ti_notify_thread_end(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name) {
+    if ((g_tzd_ti_event_mask.load(std::memory_order_relaxed) & TZD_TI_EVENT_THREAD_END) && g_tzd_ti_callbacks.on_thread_end) {
+        g_tzd_ti_callbacks.on_thread_end(ctx, thread_id, thread_name ? thread_name : "Thread");
+    }
+}
+
+TZD_API int tzd_ti_get_objects_by_class(tzd_ti_env_t* env, tzd_context_t* ctx,
+                                        const char* class_name,
+                                        void** out_objects, size_t max_count, size_t* out_count)
+{
+    if (!class_name || !out_count) return TZD_ERR_INVALID_ARG;
+    *out_count = 0;
+    std::string targetClass = class_name;
+    std::unordered_set<TzdInstance*> resultSet;
+
+    auto inspectValue = [&](const TzdValue& val, auto& selfRef) -> void {
+        if (val.type == TzdValue::INSTANCE && val.instanceVal) {
+            TzdInstance* inst = val.instanceVal;
+            if (inst->definition) {
+                if (inst->definition->name == targetClass || inst->definition->isSubclassOf(targetClass)) {
+                    resultSet.insert(inst);
+                }
+            }
+        } else if (val.type == TzdValue::ARRAY) {
+            for (const auto& elem : val.arrVal) {
+                selfRef(elem, selfRef);
+            }
+        } else if (val.type == TzdValue::MAP) {
+            for (const auto& kv : val.mapVal) {
+                selfRef(kv.second, selfRef);
+            }
+        }
+    };
+
+    auto scanInterpreter = [&](TzdInterpreter* interp) {
+        if (!interp) return;
+        for (const auto& scope : interp->scopes) {
+            for (const auto& kv : scope) {
+                inspectValue(kv.second, inspectValue);
+            }
+        }
+    };
+
+    if (ctx && ctx->interp) {
+        scanInterpreter(ctx->interp.get());
+    }
+
+    auto threadIds = TzdThreading::TzdThreadManager::instance().getAllThreadIds();
+    for (uint64_t tid : threadIds) {
+        auto tcb = TzdThreading::TzdThreadManager::instance().getThread(tid);
+        if (tcb && tcb->childInterp) {
+            scanInterpreter(tcb->childInterp);
+        }
+    }
+
+    size_t count = 0;
+    for (TzdInstance* inst : resultSet) {
+        if (out_objects && count < max_count) {
+            out_objects[count] = (void*)inst;
+        }
+        count++;
+    }
+    *out_count = count;
+    return TZD_OK;
+}
+
 // =========================================================================
 // 8. JNI-like Native Interface (TNI)
 // =========================================================================
@@ -1349,3 +1422,102 @@ JNIEXPORT jstring JNICALL Java_com_tzd_TzdLanguage_getLastError(JNIEnv* env, jcl
 }
 
 } // extern "C"
+
+// =========================================================================
+// 10. Thread Management API Implementation
+// =========================================================================
+TZD_API size_t tzd_thread_get_count(void) {
+    return TzdThreading::TzdThreadManager::instance().getAllThreadIds().size();
+}
+
+TZD_API size_t tzd_thread_get_all_ids(uint64_t* out_ids, size_t max_count) {
+    auto ids = TzdThreading::TzdThreadManager::instance().getAllThreadIds();
+    if (!out_ids || max_count == 0) return ids.size();
+    size_t n = (std::min)(ids.size(), max_count);
+    for (size_t i = 0; i < n; ++i) {
+        out_ids[i] = ids[i];
+    }
+    return n;
+}
+
+TZD_API int tzd_thread_get_info(uint64_t thread_id, tzd_thread_info_t* out_info) {
+    if (!out_info) return TZD_ERR_INVALID_ARG;
+    auto tcb = TzdThreading::TzdThreadManager::instance().getThread(thread_id);
+    if (!tcb) return TZD_ERR_NOT_FOUND;
+
+    memset(out_info, 0, sizeof(tzd_thread_info_t));
+    out_info->id = tcb->id;
+    out_info->os_thread_id = tcb->osThreadId;
+    strncpy_s(out_info->name, sizeof(out_info->name), tcb->name.c_str(), _TRUNCATE);
+    out_info->state = (int)tcb->state.load();
+    std::string stateStr = TzdThreading::threadStateToString(tcb->state.load());
+    strncpy_s(out_info->state_str, sizeof(out_info->state_str), stateStr.c_str(), _TRUNCATE);
+    out_info->parent_id = tcb->parentThreadId;
+    out_info->is_alive = (out_info->state >= 1 && out_info->state <= 4) ? 1 : 0;
+    out_info->has_error = tcb->hasError ? 1 : 0;
+    out_info->start_time = tcb->startTimestamp;
+    out_info->end_time = tcb->endTimestamp;
+    int64_t dur = (tcb->endTimestamp > 0 ? tcb->endTimestamp : (tcb->startTimestamp > 0 ? TzdThreading::nowMs() : 0)) - tcb->startTimestamp;
+    out_info->duration_ms = dur > 0 ? dur : 0;
+    return TZD_OK;
+}
+
+TZD_API uint64_t tzd_thread_get_current_id(void) {
+    return TzdThreading::TzdThreadManager::instance().getCurrentThreadId();
+}
+
+TZD_API int tzd_thread_pause(uint64_t thread_id) {
+    auto tcb = TzdThreading::TzdThreadManager::instance().getThread(thread_id);
+    if (!tcb) return TZD_ERR_NOT_FOUND;
+    tcb->pause();
+    return TZD_OK;
+}
+
+TZD_API int tzd_thread_resume(uint64_t thread_id) {
+    auto tcb = TzdThreading::TzdThreadManager::instance().getThread(thread_id);
+    if (!tcb) return TZD_ERR_NOT_FOUND;
+    tcb->resume();
+    return TZD_OK;
+}
+
+TZD_API int tzd_thread_join(uint64_t thread_id, int64_t timeout_ms) {
+    auto tcb = TzdThreading::TzdThreadManager::instance().getThread(thread_id);
+    if (!tcb) return TZD_ERR_NOT_FOUND;
+    return tcb->join(timeout_ms) ? TZD_OK : TZD_ERR_RUNTIME;
+}
+
+TZD_API int tzd_thread_detach(uint64_t thread_id) {
+    auto tcb = TzdThreading::TzdThreadManager::instance().getThread(thread_id);
+    if (!tcb) return TZD_ERR_NOT_FOUND;
+    tcb->detach();
+    return TZD_OK;
+}
+
+TZD_API int tzd_thread_get_dump(char* out_buf, size_t out_buf_size) {
+    if (!out_buf || out_buf_size == 0) return TZD_ERR_INVALID_ARG;
+    std::string dump = TzdThreading::TzdThreadManager::instance().dumpAllStackTraces();
+    copyToBuffer(dump, out_buf, out_buf_size);
+    return TZD_OK;
+}
+
+TZD_API int tzd_thread_detect_deadlocks(char* out_buf, size_t out_buf_size) {
+    if (!out_buf || out_buf_size == 0) return TZD_ERR_INVALID_ARG;
+    auto deadlocks = TzdThreading::TzdThreadManager::instance().detectDeadlocks();
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < deadlocks.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << "{";
+        size_t j = 0;
+        for (const auto& kv : deadlocks[i]) {
+            if (j > 0) oss << ", ";
+            oss << "\"" << kv.first << "\": " << formatTzdValue(kv.second);
+            j++;
+        }
+        oss << "}";
+    }
+    oss << "]";
+    std::string s = oss.str();
+    copyToBuffer(s, out_buf, out_buf_size);
+    return TZD_OK;
+}

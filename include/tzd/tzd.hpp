@@ -140,6 +140,10 @@ public:
         return tzd_has_global(ctx_, name.c_str()) != 0;
     }
 
+    tzd_context_t* getContext() const {
+        return ctx_;
+    }
+
 private:
     tzd_context_t* ctx_ = nullptr;
 };
@@ -163,6 +167,92 @@ public:
     static int runString(const std::string& code) { return tzd_run_string(code.c_str()); }
     static int runMain(int argc, char** argv) { return tzd_run_main(argc, argv); }
     static std::string getVersion() { return tzd_get_version_string(); }
+};
+
+// =========================================================================
+// Thread Management Wrapper
+// =========================================================================
+struct ThreadInfo {
+    uint64_t id = 0;
+    uint32_t osThreadId = 0;
+    std::string name;
+    int state = 0;
+    std::string stateStr;
+    uint64_t parentId = 0;
+    bool isAlive = false;
+    bool hasError = false;
+    int64_t startTime = 0;
+    int64_t endTime = 0;
+    int64_t durationMs = 0;
+};
+
+class ThreadManager {
+public:
+    static size_t getCount() {
+        return tzd_thread_get_count();
+    }
+
+    static std::vector<uint64_t> getAllIds() {
+        size_t count = getCount();
+        if (count == 0) return {};
+        std::vector<uint64_t> ids(count);
+        size_t n = tzd_thread_get_all_ids(ids.data(), count);
+        ids.resize(n);
+        return ids;
+    }
+
+    static bool getInfo(uint64_t threadId, ThreadInfo& outInfo) {
+        tzd_thread_info_t info{};
+        if (tzd_thread_get_info(threadId, &info) != TZD_OK) return false;
+        outInfo.id = info.id;
+        outInfo.osThreadId = info.os_thread_id;
+        outInfo.name = info.name;
+        outInfo.state = info.state;
+        outInfo.stateStr = info.state_str;
+        outInfo.parentId = info.parent_id;
+        outInfo.isAlive = info.is_alive != 0;
+        outInfo.hasError = info.has_error != 0;
+        outInfo.startTime = info.start_time;
+        outInfo.endTime = info.end_time;
+        outInfo.durationMs = info.duration_ms;
+        return true;
+    }
+
+    static uint64_t getCurrentId() {
+        return tzd_thread_get_current_id();
+    }
+
+    static bool pause(uint64_t threadId) {
+        return tzd_thread_pause(threadId) == TZD_OK;
+    }
+
+    static bool resume(uint64_t threadId) {
+        return tzd_thread_resume(threadId) == TZD_OK;
+    }
+
+    static bool join(uint64_t threadId, int64_t timeoutMs = -1) {
+        return tzd_thread_join(threadId, timeoutMs) == TZD_OK;
+    }
+
+    static bool detach(uint64_t threadId) {
+        return tzd_thread_detach(threadId) == TZD_OK;
+    }
+
+    static std::string getDump() {
+        std::vector<char> buf(32768, 0);
+        if (tzd_thread_get_dump(buf.data(), buf.size()) == TZD_OK) {
+            return std::string(buf.data());
+        }
+        return "";
+    }
+
+    static std::string detectDeadlocks() {
+        std::vector<char> buf(16384, 0);
+        if (tzd_thread_detect_deadlocks(buf.data(), buf.size()) == TZD_OK) {
+            return std::string(buf.data());
+        }
+        return "";
+    }
 };
 
 } // namespace tzd
