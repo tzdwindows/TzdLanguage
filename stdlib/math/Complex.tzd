@@ -1,0 +1,208 @@
+/**
+ * TzdLang 数学标准库 - Complex 复数
+ * 支持代数运算 (加减乘除、乘方)、共轭、模长、辐角、极坐标与复变超越函数 (exp, log, sqrt, sin, cos, tan 等)
+ */
+
+class Complex {
+    var float real;
+    var float imag;
+
+    Complex() {
+        this.real = 0.0;
+        this.imag = 0.0;
+    }
+
+    Complex(r) {
+        this.real = valToDouble(r);
+        this.imag = 0.0;
+    }
+
+    Complex(r, i) {
+        this.real = valToDouble(r);
+        this.imag = valToDouble(i);
+    }
+
+    fun getReal() {
+        return this.real;
+    }
+
+    fun getImag() {
+        return this.imag;
+    }
+
+    fun add(other) {
+        if (other != null && other.real != null && other.imag != null) {
+            return new Complex(this.real + other.real, this.imag + other.imag);
+        }
+        return new Complex(this.real + valToDouble(other), this.imag);
+    }
+
+    fun sub(other) {
+        if (other != null && other.real != null && other.imag != null) {
+            return new Complex(this.real - other.real, this.imag - other.imag);
+        }
+        return new Complex(this.real - valToDouble(other), this.imag);
+    }
+
+    fun mul(other) {
+        if (other != null && other.real != null && other.imag != null) {
+            var a = this.real;
+            var b = this.imag;
+            var c = other.real;
+            var d = other.imag;
+            return new Complex(a * c - b * d, a * d + b * c);
+        }
+        var s = valToDouble(other);
+        return new Complex(this.real * s, this.imag * s);
+    }
+
+    fun div(other) {
+        if (other != null && other.real != null && other.imag != null) {
+            var a = this.real;
+            var b = this.imag;
+            var c = other.real;
+            var d = other.imag;
+            var denom = c * c + d * d;
+            if (denom == 0.0) {
+                return new Complex(0.0, 0.0);
+            }
+            return new Complex((a * c + b * d) / denom, (b * c - a * d) / denom);
+        }
+        var s = valToDouble(other);
+        if (s == 0.0) {
+            return new Complex(0.0, 0.0);
+        }
+        return new Complex(this.real / s, this.imag / s);
+    }
+
+    fun negate() {
+        return new Complex(-this.real, -this.imag);
+    }
+
+    fun conjugate() {
+        return new Complex(this.real, -this.imag);
+    }
+
+    fun magnitude() {
+        return hypot(this.real, this.imag);
+    }
+
+    fun abs() {
+        return this.magnitude();
+    }
+
+    fun phase() {
+        return atan2(this.imag, this.real);
+    }
+
+    fun arg() {
+        return this.phase();
+    }
+
+    fun exp() {
+        var ea = exp(this.real);
+        return new Complex(ea * cos(this.imag), ea * sin(this.imag));
+    }
+
+    fun log() {
+        return new Complex(log(this.magnitude()), this.phase());
+    }
+
+    fun sqrt() {
+        var r = sqrt(this.magnitude());
+        var theta = this.phase() / 2.0;
+        return new Complex(r * cos(theta), r * sin(theta));
+    }
+
+    fun pow(other) {
+        if (this.real == 0.0 && this.imag == 0.0) {
+            return new Complex(0.0, 0.0);
+        }
+        var lz = this.log();
+        var p = null;
+        if (other != null && other.real != null && other.imag != null) {
+            p = lz.mul(other);
+        } else {
+            p = lz.mul(valToDouble(other));
+        }
+        return p.exp();
+    }
+
+    fun sin() {
+        var eb = exp(this.imag);
+        var emb = exp(-this.imag);
+        var ch = (eb + emb) / 2.0;
+        var sh = (eb - emb) / 2.0;
+        return new Complex(sin(this.real) * ch, cos(this.real) * sh);
+    }
+
+    fun cos() {
+        var eb = exp(this.imag);
+        var emb = exp(-this.imag);
+        var ch = (eb + emb) / 2.0;
+        var sh = (eb - emb) / 2.0;
+        return new Complex(cos(this.real) * ch, -sin(this.real) * sh);
+    }
+
+    fun tan() {
+        return this.sin().div(this.cos());
+    }
+
+    fun equals(other) {
+        if (other != null && other.real != null && other.imag != null) {
+            return this.real == other.real && this.imag == other.imag;
+        }
+        return this.real == valToDouble(other) && this.imag == 0.0;
+    }
+
+    fun toString() {
+        var r = this.real;
+        var i = this.imag;
+        if (i == 0.0) {
+            return str(r);
+        }
+        if (r == 0.0) {
+            if (i == 1.0) {
+                return "i";
+            }
+            if (i == -1.0) {
+                return "-i";
+            }
+            return str(i) + "i";
+        }
+        if (i > 0.0) {
+            if (i == 1.0) {
+                return str(r) + " + i";
+            }
+            return str(r) + " + " + str(i) + "i";
+        }
+        if (i == -1.0) {
+            return str(r) + " - i";
+        }
+        return str(r) + " - " + str(-i) + "i";
+    }
+
+    // --- 静态方法 ---
+
+    static fun from(r, i) {
+        return new Complex(r, i);
+    }
+
+    static fun fromPolar(r, theta) {
+        var mag = valToDouble(r);
+        var ang = valToDouble(theta);
+        return new Complex(mag * cos(ang), mag * sin(ang));
+    }
+
+    static fun i() {
+        return new Complex(0.0, 1.0);
+    }
+
+    static fun zero() {
+        return new Complex(0.0, 0.0);
+    }
+
+    static fun one() {
+        return new Complex(1.0, 0.0);
+    }
+}

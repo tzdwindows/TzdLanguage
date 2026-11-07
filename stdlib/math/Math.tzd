@@ -1,0 +1,209 @@
+/**
+ * TzdLang 数学标准库 - Math 通用数学函数工具集
+ * 提供标准数学常数、代数、三角/反三角、双曲、指数对数、组合排列与取整插值工具
+ */
+
+class Math {
+    const PI = 3.14159265358979323846;
+    const E = 2.71828182845904523536;
+    const LN2 = 0.69314718055994530941;
+    const LN10 = 2.30258509299404568402;
+    const SQRT2 = 1.41421356237309504880;
+
+    static fun pi() {
+        return 3.14159265358979323846;
+    }
+
+    static fun e() {
+        return 2.71828182845904523536;
+    }
+
+    static fun abs(x) {
+        return abs(x);
+    }
+
+    static fun sqrt(x) {
+        return sqrt(x);
+    }
+
+    static fun cbrt(x) {
+        var v = valToDouble(x);
+        if (v == 0.0) {
+            return 0.0;
+        }
+        if (v < 0.0) {
+            return -pow(-v, 1.0 / 3.0);
+        }
+        return pow(v, 1.0 / 3.0);
+    }
+
+    static fun hypot(x, y) {
+        return hypot(x, y);
+    }
+
+    static fun pow(base, exp) {
+        return pow(base, exp);
+    }
+
+    static fun exp(x) {
+        return exp(x);
+    }
+
+    static fun log(x) {
+        return log(x);
+    }
+
+    static fun log2(x) {
+        return log2(x);
+    }
+
+    static fun log10(x) {
+        return log10(x);
+    }
+
+    static fun sin(x) {
+        return sin(x);
+    }
+
+    static fun cos(x) {
+        return cos(x);
+    }
+
+    static fun tan(x) {
+        return tan(x);
+    }
+
+    static fun asin(x) {
+        return asin(x);
+    }
+
+    static fun acos(x) {
+        return acos(x);
+    }
+
+    static fun atan(x) {
+        return atan(x);
+    }
+
+    static fun atan2(y, x) {
+        return atan2(y, x);
+    }
+
+    static fun sinh(x) {
+        var v = valToDouble(x);
+        return (exp(v) - exp(-v)) / 2.0;
+    }
+
+    static fun cosh(x) {
+        var v = valToDouble(x);
+        return (exp(v) + exp(-v)) / 2.0;
+    }
+
+    static fun tanh(x) {
+        return Math.sinh(x) / Math.cosh(x);
+    }
+
+    static fun ceil(x) {
+        return ceil(x);
+    }
+
+    static fun floor(x) {
+        return floor(x);
+    }
+
+    static fun round(x) {
+        return round(x);
+    }
+
+    static fun clamp(x, lo, hi) {
+        return clamp(x, lo, hi);
+    }
+
+    static fun lerp(a, b, t) {
+        return lerp(a, b, t);
+    }
+
+    static fun sign(x) {
+        return sign(x);
+    }
+
+    static fun min(a, b) {
+        if (a < b) {
+            return a;
+        }
+        return b;
+    }
+
+    static fun max(a, b) {
+        if (a > b) {
+            return a;
+        }
+        return b;
+    }
+
+    static fun degrees(rad) {
+        return degrees(rad);
+    }
+
+    static fun radians(deg) {
+        return radians(deg);
+    }
+
+    static fun gcd(a, b) {
+        return gcd(a, b);
+    }
+
+    static fun lcm(a, b) {
+        return lcm(a, b);
+    }
+
+    static fun factorial(n) {
+        return factorial(n);
+    }
+
+    static fun perm(n, k) {
+        if (k > n || k < 0) {
+            return 0;
+        }
+        var res = 1;
+        var i = 0;
+        while (i < k) {
+            res = res * (n - i);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    static fun comb(n, k) {
+        if (k > n || k < 0) {
+            return 0;
+        }
+        if (k == 0 || k == n) {
+            return 1;
+        }
+        if (k > n - k) {
+            k = n - k;
+        }
+        var num = 1;
+        var den = 1;
+        var i = 1;
+        while (i <= k) {
+            num = num * (n - i + 1);
+            den = den * i;
+            i = i + 1;
+        }
+        return num / den;
+    }
+
+    static fun isPrime(n) {
+        return isPrime(n);
+    }
+
+    static fun random() {
+        return random();
+    }
+
+    static fun randomInt(lo, hi) {
+        return randomInt(lo, hi);
+    }
+}

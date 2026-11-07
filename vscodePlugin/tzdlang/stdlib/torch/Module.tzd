@@ -6,9 +6,9 @@ import "torch/Init.tzd";
 
 class Module {
     var int _training;
-    var ptr _params;
-    var ptr _modules;
-    var ptr _buffers;
+    var map _params;
+    var map _modules;
+    var map _buffers;
     var string _name;
     var string _device;
 

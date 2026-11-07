@@ -1,0 +1,3 @@
+import "torch/Layer.tzd";
+var l = new Linear(4, 8);
+print("Linear in_features: " + toString(l.in_features));

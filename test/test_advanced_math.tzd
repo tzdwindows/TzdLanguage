@@ -1,0 +1,225 @@
+import "math.Complex";
+import "math.FFT";
+import "math.Polynomial";
+import "math.Calculus";
+import "math.SpecialFunctions";
+import "math.Optimization";
+
+fun assertClose(name, actual, expected, tol) {
+    var diff = abs(actual - expected);
+    if (diff > tol) {
+        print("  [FAIL] " + name + ": actual=" + str(actual) + ", expected=" + str(expected) + ", diff=" + str(diff));
+        return false;
+    }
+    print("  [PASS] " + name + ": " + str(actual) + " (误差 " + str(diff) + " < " + str(tol) + ")");
+    return true;
+}
+
+fun testF(x) {
+    return x * x * x - 2.0 * x + 1.0;
+}
+
+fun decayOde(t, y) {
+    return -y;
+}
+
+fun cubeRoot2(x) {
+    return x * x * x - 2.0;
+}
+
+fun dottieFunc(x) {
+    return cos(x) - x;
+}
+
+fun quadOpt(x) {
+    return (x - 3.0) * (x - 3.0) + 4.0;
+}
+
+fun sphereFunc(p) {
+    var x = p[0];
+    var y = p[1];
+    return (x - 2.0) * (x - 2.0) + (y + 3.0) * (y + 3.0);
+}
+
+fun main() {
+    print("=================================================");
+    print("      TzdLang 高级数学标准库综合测试套件         ");
+    print("=================================================\n");
+
+    // =========================================================
+    // 1. FFT 快速傅里叶变换测试
+    // =========================================================
+    print("--- 1. 测试 FFT / IFFT / 卷积 / 频域分析 ---");
+
+    // 8 点测试信号
+    var signal = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    var spectrum = FFT.fft(signal);
+    print("FFT 长度: " + str(len(spectrum)));
+
+    // 直流分量 DC (k=0) 应该是 sum(signal) = 36
+    var sp0 = spectrum[0];
+    assertClose("FFT DC 分量实部", sp0.real, 36.0, 0.0000001);
+    assertClose("FFT DC 分量虚部", sp0.imag, 0.0, 0.0000001);
+
+    // IFFT 逆变换重构验证
+    var recovered = FFT.ifft(spectrum);
+    var i = 0;
+    var maxReconErr = 0.0;
+    while (i < len(signal)) {
+        var recElem = recovered[i];
+        var err = abs(recElem.real - signal[i]);
+        if (err > maxReconErr) maxReconErr = err;
+        i = i + 1;
+    }
+    assertClose("IFFT 逆变换最大重构误差", maxReconErr, 0.0, 0.0000001);
+
+    // RFFT / IRFFT 测试
+    var rspec = FFT.rfft(signal);
+    print("RFFT 分量数: " + str(len(rspec)) + " (期望 5)");
+    var rRecovered = FFT.irfft(rspec, 8);
+    assertClose("IRFFT 第0项重构", rRecovered[0], 1.0, 0.0000001);
+    assertClose("IRFFT 第7项重构", rRecovered[7], 8.0, 0.0000001);
+
+    // 快速卷积: [1, 2, 3] * [4, 5] = [4, 13, 22, 15]
+    var convRes = FFT.convolve([1.0, 2.0, 3.0], [4.0, 5.0]);
+    assertClose("卷积 [0]", convRes[0], 4.0, 0.0000001);
+    assertClose("卷积 [1]", convRes[1], 13.0, 0.0000001);
+    assertClose("卷积 [2]", convRes[2], 22.0, 0.0000001);
+    assertClose("卷积 [3]", convRes[3], 15.0, 0.0000001);
+
+    // 窗函数测试
+    var hWin = FFT.hanning(4);
+    assertClose("Hanning 窗首项", hWin[0], 0.0, 0.0000001);
+    assertClose("Hanning 窗末项", hWin[3], 0.0, 0.0000001);
+
+    // =========================================================
+    // 2. Polynomial 多项式代数测试
+    // =========================================================
+    print("\n--- 2. 测试 Polynomial 多项式类与 Durand-Kerner 根求解 ---");
+
+    // P(x) = 2x^2 + 3x + 1  => (2x + 1)(x + 1) = 0, 根为 -0.5, -1.0
+    var p1 = new Polynomial([1.0, 3.0, 2.0]);
+    print("多项式 p1(x) = " + p1.toString());
+    assertClose("p1.eval(2) (应为 2*4 + 3*2 + 1 = 15)", p1.eval(2.0), 15.0, 0.0000001);
+
+    // 导数 P'(x) = 4x + 3
+    var dp1 = p1.derivative();
+    print("导数 p1'(x) = " + dp1.toString());
+    assertClose("dp1.eval(2) (应为 4*2 + 3 = 11)", dp1.eval(2.0), 11.0, 0.0000001);
+
+    // 定积分 ∫_0^1 (2x^2 + 3x + 1) dx = [2/3 x^3 + 3/2 x^2 + x]_0^1 = 2/3 + 3/2 + 1 = 19/6 ≈ 3.1666667
+    var intVal = p1.definiteIntegral(0.0, 1.0);
+    assertClose("定积分 ∫_0^1 p1(x) dx", intVal, 19.0 / 6.0, 0.0000001);
+
+    // 求解根: x^2 - 5x + 6 = 0, 根为 2, 3
+    var pQuadratic = new Polynomial([6.0, -5.0, 1.0]);
+    var qRoots = pQuadratic.roots();
+    var qr0 = qRoots[0];
+    var qr1 = qRoots[1];
+    print("x^2 - 5x + 6 求解根: " + qr0.toString() + ", " + qr1.toString());
+    var r1 = qr0.real;
+    var r2 = qr1.real;
+    var sumRoots = r1 + r2;
+    var prodRoots = r1 * r2;
+    assertClose("韦达定理 根之和 (应为 5)", sumRoots, 5.0, 0.00001);
+    assertClose("韦达定理 根之积 (应为 6)", prodRoots, 6.0, 0.00001);
+
+    // 三次复数根: x^3 - 1 = 0 (1, 以及两个共轭复数根 -0.5 ± 0.866025i)
+    var pCubic = new Polynomial([-1.0, 0.0, 0.0, 1.0]);
+    var cRoots = pCubic.roots();
+    print("x^3 - 1 的复数根:");
+    i = 0;
+    while (i < len(cRoots)) {
+        var cr = cRoots[i];
+        print("  根 #" + str(i) + ": " + cr.toString() + ", 模长: " + str(cr.magnitude()));
+        assertClose("立方根模长 (应为 1.0)", cr.magnitude(), 1.0, 0.0001);
+        i = i + 1;
+    }
+
+    // 多项式拟合: y = 2x + 1
+    var fitPoly = Polynomial.fit([0.0, 1.0, 2.0], [1.0, 3.0, 5.0], 1);
+    print("拟合直线: " + fitPoly.toString());
+    assertClose("拟合斜率 (应为 2.0)", fitPoly.get(1), 2.0, 0.00001);
+    assertClose("拟合截距 (应为 1.0)", fitPoly.get(0), 1.0, 0.00001);
+
+    // =========================================================
+    // 3. Calculus 数值微积分与微分方程测试
+    // =========================================================
+    print("\n--- 3. 测试 Calculus 数值微分、积分与 ODE 求解 ---");
+
+    // f(x) = x^3 - 2x + 1, f'(2) = 3*(4) - 2 = 10, f''(2) = 6*2 = 12
+    var df_at_2 = Calculus.derivative(testF, 2.0, 0.00001);
+    assertClose("五点数值一阶导数 f'(2)", df_at_2, 10.0, 0.00001);
+
+    var d2f_at_2 = Calculus.secondDerivative(testF, 2.0, 0.0001);
+    assertClose("五点数值二阶导数 f''(2)", d2f_at_2, 12.0, 0.0001);
+
+    // 辛普森求积: ∫_0^π sin(x) dx = 2.0
+    var sinInt = Calculus.simpson(sin, 0.0, 3.14159265358979323846, 100);
+    assertClose("辛普森求积 ∫_0^π sin(x) dx", sinInt, 2.0, 0.00001);
+
+    // 自适应辛普森求积: ∫_0^1 e^x dx = e - 1 ≈ 1.718281828459
+    var expInt = Calculus.adaptiveSimpson(exp, 0.0, 1.0, 0.00000001);
+    assertClose("自适应辛普森求积 ∫_0^1 e^x dx", expInt, 1.718281828459, 0.00001);
+
+    // 微分方程初值问题: y' = -y, y(0) = 1, 解析解 y(1) = 1/e ≈ 0.36787944117
+    var rk4Sol = Calculus.rk4(decayOde, 1.0, 0.0, 1.0, 50);
+    var y1_rk4 = rk4Sol["y"][50];
+    assertClose("RK4 解初值问题 y' = -y 在 t=1", y1_rk4, 0.36787944117, 0.00001);
+
+    // =========================================================
+    // 4. SpecialFunctions 特殊函数测试
+    // =========================================================
+    print("\n--- 4. 测试 SpecialFunctions 特殊函数 ---");
+
+    // Γ(5) = 4! = 24
+    assertClose("Gamma(5) (应为 24)", SpecialFunctions.gamma(5.0), 24.0, 0.0000001);
+    // Γ(0.5) = √π ≈ 1.7724538509
+    assertClose("Gamma(0.5) (应为 √π)", SpecialFunctions.gamma(0.5), 1.7724538509, 0.00001);
+
+    // Beta(2, 3) = Γ(2)Γ(3)/Γ(5) = 1*2/24 = 1/12 ≈ 0.0833333333
+    assertClose("Beta(2, 3)", SpecialFunctions.beta(2.0, 3.0), 1.0 / 12.0, 0.0000001);
+
+    // erf(0) = 0, erf(1) ≈ 0.84270079
+    assertClose("erf(0)", SpecialFunctions.erf(0.0), 0.0, 0.0000001);
+    assertClose("erf(1.0)", SpecialFunctions.erf(1.0), 0.84270079, 0.0001);
+    assertClose("erfinv(erf(0.5))", SpecialFunctions.erfinv(SpecialFunctions.erf(0.5)), 0.5, 0.0001);
+
+    // Bessel J0(0) = 1.0
+    assertClose("Bessel J0(0)", SpecialFunctions.besselJ0(0.0), 1.0, 0.0000001);
+
+    // 激活函数测试
+    assertClose("sigmoid(0)", SpecialFunctions.sigmoid(0.0), 0.5, 0.0000001);
+    assertClose("sinc(0)", SpecialFunctions.sinc(0.0), 1.0, 0.0000001);
+
+    // =========================================================
+    // 5. Optimization 数值优化与寻根测试
+    // =========================================================
+    print("\n--- 5. 测试 Optimization 数值优化与寻根 ---");
+
+    // 寻根: x^3 - 2 = 0 => x = 2^(1/3) ≈ 1.25992104989
+    var rootBisect = Optimization.bisection(cubeRoot2, 1.0, 2.0, 0.00000001, 100);
+    assertClose("二分法求根 2^(1/3)", rootBisect, 1.25992104989, 0.00001);
+
+    // 牛顿法求根: cos(x) - x = 0 (Dottie 数 ≈ 0.7390851332)
+    var rootNewton = Optimization.newton(dottieFunc, null, 0.5, 0.00000001, 100);
+    assertClose("牛顿法求根 (Dottie 数)", rootNewton, 0.7390851332, 0.00001);
+
+    // Brent 法求根
+    var rootBrent = Optimization.brent(dottieFunc, 0.0, 1.0, 0.00000001, 100);
+    assertClose("Brent 法求根 (Dottie 数)", rootBrent, 0.7390851332, 0.00001);
+
+    // 黄金分割单变量极值搜索: f(x) = (x - 3)^2 + 4 => 极小值在 x = 3, f = 4
+    var opt1D = Optimization.goldenSection(quadOpt, 0.0, 5.0, 0.0000001, 100);
+    assertClose("黄金分割极小值点 x*", opt1D["x"], 3.0, 0.0001);
+    assertClose("黄金分割极小值 f(x*)", opt1D["f"], 4.0, 0.0001);
+
+    // Nelder-Mead 单纯形多维无导数极小化: Sphere 函数 f(x, y) = (x - 2)^2 + (y + 3)^2
+    var nmRes = Optimization.nelderMead(sphereFunc, [0.0, 0.0], 0.000001, 300);
+    var optPoint = nmRes["point"];
+    assertClose("Nelder-Mead 最优点 x (应为 2.0)", optPoint[0], 2.0, 0.001);
+    assertClose("Nelder-Mead 最优点 y (应为 -3.0)", optPoint[1], -3.0, 0.001);
+    assertClose("Nelder-Mead 极小值 (应为 0.0)", nmRes["value"], 0.0, 0.00001);
+
+    print("\n>>> 所有高级数学标准库测试 (FFT, Polynomial, Calculus, SpecialFunctions, Optimization) 全部通过！<<<");
+}

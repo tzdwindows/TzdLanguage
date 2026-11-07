@@ -24,6 +24,7 @@ statement
     | KW_IF '(' expression ')' statement (KW_ELSE statement)?               # IfStmt
     | KW_WHILE '(' expression ')' statement                                 # WhileStmt
     | KW_FOR '(' forInit? ';' cond=expression? ';' step=expression? ')' statement # ForStmt
+    | KW_FOR '(' forEachInit ':' expression ')' statement                   # ForEachStmt
     | KW_BREAK ';'                                                          # BreakStmt
     | KW_CONTINUE ';'                                                       # ContinueStmt
     | KW_SWITCH '(' expression ')' '{' switchCase* switchDefault? '}'     # SwitchStmt
@@ -113,9 +114,12 @@ variableDeclaration
     ;
 
 forInit : variableDeclaration | expression ;
+forEachInit : (typeType | KW_VAR)? IDENTIFIER ;
 importStatement : KW_IMPORT STRING ';' ;
 paramList : param (',' param)* ;
-param : typeType IDENTIFIER
+param : typeType ELLIPSIS IDENTIFIER
+      | ELLIPSIS IDENTIFIER
+      | typeType IDENTIFIER
       | (IDENTIFIER | T_INT | T_STRING | T_FLOAT | T_BOOL | T_VOID | T_PTR | T_FUNCTION | KW_RET) (':' typeType)? ;
 block : '{' statement* '}' ;
 
@@ -178,8 +182,8 @@ mapKey : STRING | IDENTIFIER | INTEGER | '(' expression ')' ;
 // ???????
 typeType 
     : T_INT | T_FLOAT | T_STRING | T_BOOL | T_VOID | T_PTR | T_FUNCTION
-    | qualifiedName  // ?????????????????? (?? org.tzd.Test)
-    | typeType '[]' 
+    | qualifiedName  // 类型限定名 (如 org.tzd.Test)
+    | typeType '[' ']' 
     ;
 
 // --- 6. ??????? (Lexer) ---
@@ -264,6 +268,7 @@ NOT         : '!';
 GT          : '>';
 LT          : '<';
 ASSIGN      : '=';
+ELLIPSIS    : '...';
 
 IDENTIFIER : [a-zA-Z_] [a-zA-Z0-9_]* ;
 INTEGER : [0-9]+ | '0' [xX] [0-9a-fA-F]+ ;

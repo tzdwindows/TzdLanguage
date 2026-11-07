@@ -71,6 +71,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitForEachStmt(TzdLangParser::ForEachStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitBreakStmt(TzdLangParser::BreakStmtContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -192,6 +196,10 @@ public:
   }
 
   virtual std::any visitForInit(TzdLangParser::ForInitContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitForEachInit(TzdLangParser::ForEachInitContext *ctx) override {
     return visitChildren(ctx);
   }
 

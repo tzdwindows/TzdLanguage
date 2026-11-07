@@ -199,6 +199,8 @@ static double valToDouble(const TzdValue &v)
     case TzdValue::BOOL:
         return v.bVal ? 1.0 : 0.0;
     case TzdValue::STRING:
+    case TzdValue::BIGINT:
+    case TzdValue::BIGFLOAT:
         try
         {
             return std::stod(v.sVal);
@@ -207,6 +209,38 @@ static double valToDouble(const TzdValue &v)
         {
             return 0.0;
         }
+    case TzdValue::RATIONAL:
+        try
+        {
+            auto pos = v.sVal.find('/');
+            if (pos != std::string::npos)
+            {
+                double num = std::stod(v.sVal.substr(0, pos));
+                double den = std::stod(v.sVal.substr(pos + 1));
+                return den != 0.0 ? num / den : 0.0;
+            }
+            return std::stod(v.sVal);
+        }
+        catch (...)
+        {
+            return 0.0;
+        }
+    case TzdValue::INSTANCE:
+        if (v.instanceVal && v.instanceVal->definition && v.instanceVal->definition->findField("val"))
+        {
+            try
+            {
+                auto fVal = v.instanceVal->getMember("val");
+                if (fVal.type != TzdValue::NONE && fVal.type != TzdValue::INSTANCE)
+                {
+                    return valToDouble(fVal);
+                }
+            }
+            catch (...)
+            {
+            }
+        }
+        return 0.0;
     default:
         return 0.0;
     }
@@ -788,7 +822,8 @@ void TzdNativeModule::regSystem(TzdInterpreter *interp)
             return TzdValue(0.0);
         if (args[0].type == TzdValue::ARRAY)
             return TzdValue((double)(args[0].isNativeDoubleArr ? args[0].nativeArr.size() : args[0].arrVal.size()));
-        if (args[0].type == TzdValue::STRING)
+        if (args[0].type == TzdValue::STRING || args[0].type == TzdValue::BIGINT ||
+            args[0].type == TzdValue::RATIONAL || args[0].type == TzdValue::BIGFLOAT)
             return TzdValue((double)args[0].sVal.length());
         if (args[0].type == TzdValue::MAP)
             return TzdValue((double)args[0].mapVal.size());
@@ -1339,7 +1374,7 @@ void TzdNativeModule::regSystem(TzdInterpreter *interp)
         }
         return TzdValue(arraysMap); });
 
-    reg("len", [](auto args) -> TzdValue
+    reg("memSize", [](auto args) -> TzdValue
         {
         if (args.empty()) {
             return TzdValue(0);
@@ -1347,6 +1382,9 @@ void TzdNativeModule::regSystem(TzdInterpreter *interp)
         std::function<int(const TzdValue&)> auditSize = [&](const TzdValue& val) -> int {
             switch (val.type) {
             case TzdValue::STRING:
+            case TzdValue::BIGINT:
+            case TzdValue::RATIONAL:
+            case TzdValue::BIGFLOAT:
                 return (int)(sizeof(std::string) + val.sVal.capacity());
 
             case TzdValue::ARRAY: {
@@ -1405,7 +1443,8 @@ void TzdNativeModule::regSystem(TzdInterpreter *interp)
 
         const auto& target = args[0];
 
-        if (target.type == TzdValue::STRING) {
+        if (target.type == TzdValue::STRING || target.type == TzdValue::BIGINT ||
+            target.type == TzdValue::RATIONAL || target.type == TzdValue::BIGFLOAT) {
             return TzdValue((int)target.sVal.length());
         }
         if (target.type == TzdValue::ARRAY) {
@@ -1758,8 +1797,38 @@ void TzdNativeModule::regArray(TzdInterpreter *interp)
         if (args.empty() || args[0].type != TzdValue::ARRAY)
             return TzdValue();
         TzdValue result = args[0];
+        if (result.isNativeDoubleArr)
+        {
+            bool allDouble = true;
+            for (size_t i = 1; i < args.size(); ++i)
+            {
+                if (args[i].type != TzdValue::DOUBLE && args[i].type != TzdValue::INT &&
+                    args[i].type != TzdValue::FLOAT && args[i].type != TzdValue::LONG)
+                {
+                    allDouble = false;
+                    break;
+                }
+            }
+            if (allDouble)
+            {
+                for (size_t i = 1; i < args.size(); ++i)
+                    result.nativeArr.push_back(valToDouble(args[i]));
+                result.syncFastBuf();
+                return result;
+            }
+            else
+            {
+                result.arrVal.reserve(result.nativeArr.size() + args.size() - 1);
+                for (double d : result.nativeArr)
+                    result.arrVal.push_back(TzdValue(d));
+                result.nativeArr.clear();
+                result.isNativeDoubleArr = false;
+                result.syncFastBuf();
+            }
+        }
         for (size_t i = 1; i < args.size(); ++i)
             result.arrVal.push_back(args[i]);
+        result.syncFastBuf();
         return result;
     };
     reg("push", pushFn);
@@ -1767,7 +1836,14 @@ void TzdNativeModule::regArray(TzdInterpreter *interp)
 
     auto popFn = [](auto args) -> TzdValue
     {
-        if (args.empty() || args[0].type != TzdValue::ARRAY || args[0].arrVal.empty())
+        if (args.empty() || args[0].type != TzdValue::ARRAY)
+            return TzdValue();
+        if (args[0].isNativeDoubleArr)
+        {
+            if (args[0].nativeArr.empty()) return TzdValue();
+            return TzdValue(args[0].nativeArr.back());
+        }
+        if (args[0].arrVal.empty())
             return TzdValue();
         return args[0].arrVal.back();
     };
@@ -2360,9 +2436,23 @@ void TzdNativeModule::regConv(TzdInterpreter *interp)
 
     reg("toInt", [](auto args) -> TzdValue
         {
-        if (args.empty()) return TzdValue(0);
-        if (args[0].type == TzdValue::STRING) { try { return TzdValue((double)std::stoll(args[0].sVal)); } catch (...) { return TzdValue(0.0); } }
-        return TzdValue((double)(long long)valToDouble(args[0])); });
+        if (args.empty()) return TzdValue(0LL);
+        if (args[0].type == TzdValue::STRING) { try { return TzdValue((long long)std::stoll(args[0].sVal)); } catch (...) { return TzdValue(0LL); } }
+        return TzdValue((long long)valToDouble(args[0])); });
+
+    reg("valToInt", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue(0LL);
+        if (args[0].type == TzdValue::STRING) { try { return TzdValue((long long)std::stoll(args[0].sVal)); } catch (...) { return TzdValue(0LL); } }
+        return TzdValue((long long)valToDouble(args[0])); });
+
+    auto toDoubleNativeFn = [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue(0.0);
+        return TzdValue(valToDouble(args[0])); };
+    reg("toDouble", toDoubleNativeFn);
+    reg("toFloat", toDoubleNativeFn);
+    reg("valToDouble", toDoubleNativeFn);
 
     reg("toHex", [](auto args) -> TzdValue
         {
@@ -2701,6 +2791,443 @@ void TzdNativeModule::regExtraMath(TzdInterpreter *interp)
         std::string r = rational_mul(to_rational_str(args[0]), to_rational_str(args[1]));
         TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
         return v; });
+
+    // Additional Rational operations
+    reg("rationalSub", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue();
+        std::string r = rational_sub(to_rational_str(args[0]), to_rational_str(args[1]));
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v; });
+
+    reg("rationalDiv", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue();
+        std::string r = rational_div(to_rational_str(args[0]), to_rational_str(args[1]));
+        TzdValue v; v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT; v.sVal = r;
+        return v; });
+
+    reg("rationalCompare", [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue(0LL);
+        return TzdValue((long long)rational_compare(to_rational_str(args[0]), to_rational_str(args[1]))); });
+
+    reg("rationalNum", [](auto args) -> TzdValue {
+        if (args.empty()) return make_bigint("0");
+        std::string num, den;
+        rational_parse(to_rational_str(args[0]), num, den);
+        return make_bigint(num); });
+
+    reg("rationalDen", [](auto args) -> TzdValue {
+        if (args.empty()) return make_bigint("1");
+        std::string num, den;
+        rational_parse(to_rational_str(args[0]), num, den);
+        return make_bigint(den); });
+
+    // --- Additional BigInt native arithmetic & utility functions ---
+    auto biAddFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return args.empty() ? make_bigint("0") : make_bigint(to_bigint_str(args[0]));
+        return make_bigint(bigint_add(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biAdd", biAddFunc);
+    reg("bigintAdd", biAddFunc);
+
+    auto biSubFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return args.empty() ? make_bigint("0") : make_bigint(bigint_sub("0", to_bigint_str(args[0])));
+        return make_bigint(bigint_sub(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biSub", biSubFunc);
+    reg("bigintSub", biSubFunc);
+
+    auto biMulFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return args.empty() ? make_bigint("0") : make_bigint(to_bigint_str(args[0]));
+        return make_bigint(bigint_mul(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biMul", biMulFunc);
+    reg("bigintMul", biMulFunc);
+
+    auto biDivFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        std::string b = to_bigint_str(args[1]);
+        if (b == "0" || b == "-0") throw std::runtime_error("BigInt 除以零错误");
+        return make_bigint(bigint_div(to_bigint_str(args[0]), b));
+    };
+    reg("biDiv", biDivFunc);
+    reg("bigintDiv", biDivFunc);
+
+    auto biModFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        std::string b = to_bigint_str(args[1]);
+        if (b == "0" || b == "-0") throw std::runtime_error("BigInt 模零错误");
+        return make_bigint(bigint_mod(to_bigint_str(args[0]), b));
+    };
+    reg("biMod", biModFunc);
+    reg("bigintMod", biModFunc);
+
+    auto biPowFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("1");
+        return make_bigint(bigint_pow(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biPow", biPowFunc);
+    reg("bigintPow", biPowFunc);
+
+    auto biPowModFunc = [](auto args) -> TzdValue {
+        if (args.size() < 3) return make_bigint("0");
+        return make_bigint(bigint_powmod(to_bigint_str(args[0]), to_bigint_str(args[1]), to_bigint_str(args[2])));
+    };
+    reg("biPowMod", biPowModFunc);
+    reg("bigintPowMod", biPowModFunc);
+
+    auto biAndFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        return make_bigint(bigint_and(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biAnd", biAndFunc);
+    reg("bigintAnd", biAndFunc);
+
+    auto biOrFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        return make_bigint(bigint_or(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biOr", biOrFunc);
+    reg("bigintOr", biOrFunc);
+
+    auto biXorFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        return make_bigint(bigint_xor(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biXor", biXorFunc);
+    reg("bigintXor", biXorFunc);
+
+    auto biNotFunc = [](auto args) -> TzdValue {
+        if (args.empty()) return make_bigint("0");
+        return make_bigint(bigint_not(to_bigint_str(args[0])));
+    };
+    reg("biNot", biNotFunc);
+    reg("bigintNot", biNotFunc);
+
+    auto biShlFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        return make_bigint(bigint_shl(to_bigint_str(args[0]), (int64_t)valToDouble(args[1])));
+    };
+    reg("biShl", biShlFunc);
+    reg("bigintShl", biShlFunc);
+
+    auto biShrFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        return make_bigint(bigint_shr(to_bigint_str(args[0]), (int64_t)valToDouble(args[1])));
+    };
+    reg("biShr", biShrFunc);
+    reg("bigintShr", biShrFunc);
+
+    auto biAbsFunc = [](auto args) -> TzdValue {
+        if (args.empty()) return make_bigint("0");
+        return make_bigint(bigint_abs(to_bigint_str(args[0])));
+    };
+    reg("biAbs", biAbsFunc);
+    reg("bigintAbs", biAbsFunc);
+
+    auto biCompareFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue(0LL);
+        return TzdValue((long long)bigint_compare(to_bigint_str(args[0]), to_bigint_str(args[1])));
+    };
+    reg("biCompare", biCompareFunc);
+    reg("bigintCompare", biCompareFunc);
+
+    auto biGcdFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return TzdValue(0LL);
+        std::string a = bigint_abs(to_bigint_str(args[0]));
+        std::string b = bigint_abs(to_bigint_str(args[1]));
+        while (b != "0") {
+            std::string r = bigint_divmod_abs(a, b, true);
+            a = b; b = r;
+        }
+        return make_bigint(a.empty() ? "0" : a);
+    };
+    reg("biGcd", biGcdFunc);
+
+    auto biLcmFunc = [](auto args) -> TzdValue {
+        if (args.size() < 2) return make_bigint("0");
+        std::string a = bigint_abs(to_bigint_str(args[0]));
+        std::string b = bigint_abs(to_bigint_str(args[1]));
+        if (a == "0" || b == "0") return make_bigint("0");
+        std::string ga = a, gb = b;
+        while (gb != "0") {
+            std::string r = bigint_divmod_abs(ga, gb, true);
+            ga = gb; gb = r;
+        }
+        if (ga == "0") return make_bigint("0");
+        std::string q = bigint_div(a, ga);
+        return make_bigint(bigint_mul(q, b));
+    };
+    reg("biLcm", biLcmFunc);
+    reg("bigintLcm", biLcmFunc);
+
+    auto biIsProbablePrimeFunc = [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue(false);
+        int rounds = (args.size() > 1) ? (int)valToDouble(args[1]) : 20;
+        return TzdValue(bigint_is_probable_prime(to_bigint_str(args[0]), rounds));
+    };
+    reg("biIsProbablePrime", biIsProbablePrimeFunc);
+    reg("bigintIsProbablePrime", biIsProbablePrimeFunc);
+
+    auto biToStringFunc = [](auto args) -> TzdValue {
+        if (args.empty()) return TzdValue("0");
+        return TzdValue(to_bigint_str(args[0]));
+    };
+    reg("biToString", biToStringFunc);
+    reg("bigintToString", biToStringFunc);
+
+    // --- BIGFLOAT (arbitrary precision floating-point) functions ---
+    reg("bigfloat", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return make_bigfloat("0.0");
+        return make_bigfloat(to_bigfloat_str(args[0])); });
+
+    reg("toBigFloat", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return make_bigfloat("0.0");
+        return make_bigfloat(to_bigfloat_str(args[0])); });
+
+    reg("isBigfloat", [](auto args) -> TzdValue
+        { return TzdValue(!args.empty() && args[0].type == TzdValue::BIGFLOAT); });
+
+    reg("setBigFloatPrecision", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue((long long)getBigFloatPrecision());
+        long long bits = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
+        setBigFloatPrecision((size_t)bits);
+        return TzdValue((long long)getBigFloatPrecision()); });
+
+    reg("getBigFloatPrecision", [](auto args) -> TzdValue
+        { return TzdValue((long long)getBigFloatPrecision()); });
+
+    reg("setBigFloatMaxPrecision", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue((long long)getBigFloatMaxPrecision());
+        long long bits = (long long)TzdInterpreter::getAsDoubleInternal(args[0]);
+        setBigFloatMaxPrecision((size_t)bits);
+        return TzdValue((long long)getBigFloatMaxPrecision()); });
+
+    reg("getBigFloatMaxPrecision", [](auto args) -> TzdValue
+        { return TzdValue((long long)getBigFloatMaxPrecision()); });
+
+    reg("bfAdd", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_add(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfSub", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_sub(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfMul", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_mul(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfDiv", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_div(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfPow", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_pow(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfSqrt", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_sqrt(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfCbrt", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_cbrt(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfHypot", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_hypot(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfExp", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_exp(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfLog", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_log(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfLog10", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_log10(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfLog2", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_log2(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfSin", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_sin(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfCos", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_cos(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfTan", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_tan(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfAsin", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_asin(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfAcos", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_acos(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfAtan", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_atan(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfAtan2", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue();
+        size_t p = (args.size() > 2) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[2]) : 0;
+        return make_bigfloat(bigfloat_atan2(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]), p)); });
+
+    reg("bfSinh", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_sinh(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfCosh", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_cosh(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfTanh", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_tanh(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfGamma", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_gamma(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfZeta", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_zeta(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfPi", [](auto args) -> TzdValue
+        {
+        size_t p = !args.empty() ? (size_t)TzdInterpreter::getAsDoubleInternal(args[0]) : 0;
+        return make_bigfloat(bigfloat_pi(p)); });
+
+    reg("bfPiDigits", [](auto args) -> TzdValue
+        {
+        size_t d = !args.empty() ? (size_t)TzdInterpreter::getAsDoubleInternal(args[0]) : 78;
+        return make_bigfloat(bigfloat_pi_digits(d)); });
+
+    reg("bfE", [](auto args) -> TzdValue
+        {
+        size_t p = !args.empty() ? (size_t)TzdInterpreter::getAsDoubleInternal(args[0]) : 0;
+        return make_bigfloat(bigfloat_e(p)); });
+
+    reg("bfFloor", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_floor(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfCeil", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_ceil(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfRound", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        size_t p = (args.size() > 1) ? (size_t)TzdInterpreter::getAsDoubleInternal(args[1]) : 0;
+        return make_bigfloat(bigfloat_round(to_bigfloat_str(args[0]), p)); });
+
+    reg("bfAbs", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue();
+        return make_bigfloat(bigfloat_abs(to_bigfloat_str(args[0]))); });
+
+    reg("bfCompare", [](auto args) -> TzdValue
+        {
+        if (args.size() < 2) return TzdValue(0LL);
+        return TzdValue((long long)bigfloat_compare(to_bigfloat_str(args[0]), to_bigfloat_str(args[1]))); });
+
+    reg("bfToString", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("");
+        return TzdValue(to_bigfloat_str(args[0])); });
+
+    reg("str", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("");
+        if (args[0].type == TzdValue::STRING) return args[0];
+        std::string s;
+        TzdInterpreter::appendValueToString(s, args[0]);
+        return TzdValue(s); });
+
+    reg("type", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("None");
+        return TzdValue(getTzdValueTypeName(args[0])); });
+
+    reg("typeof", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("None");
+        return TzdValue(getTzdValueTypeName(args[0])); });
+
+    reg("typeName", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("None");
+        return TzdValue(getTzdValueTypeName(args[0])); });
+
+    reg("getType", [](auto args) -> TzdValue
+        {
+        if (args.empty()) return TzdValue("None");
+        return TzdValue(getTzdValueTypeName(args[0])); });
 }
 
 // ============================================================================

@@ -1,0 +1,33 @@
+// Test 1: Import with relative path
+import "time/DateTime.tzd";
+
+// Test 2: Import with dot notation
+import "time.DateTime";
+
+// Test 3: Import with short name
+import "DateTime";
+
+print("[TEST] All DateTime imports succeeded!");
+
+// Test Stopwatch and DateTime functionality
+var now = DateTime.now();
+print("[TEST] DateTime.now() = " + now.toString());
+
+fun fib(n) {
+    if (n <= 2) {
+        return 1.0;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fun testFib() {
+    var sw = new Stopwatch();
+    sw.start();
+    var res = fib(34);
+    sw.stop();
+    print("Fib(34) <: " + toString(res) + ", : " + toString(sw.elapsedMs()) + " ms");
+}
+
+print("[TEST] Running testFib()...");
+testFib();
+print("[TEST] All tests completed successfully!");

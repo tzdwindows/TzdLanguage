@@ -154,6 +154,7 @@ public:
     virtual std::any visitIfStmt(TzdLangParser::IfStmtContext* ctx) override;
     virtual std::any visitForStmt(TzdLangParser::ForStmtContext* ctx) override;
     virtual std::any visitForInit(TzdLangParser::ForInitContext* ctx) override;
+    virtual std::any visitForEachStmt(TzdLangParser::ForEachStmtContext* ctx) override;
     virtual std::any visitWhileStmt(TzdLangParser::WhileStmtContext* ctx) override;
     virtual std::any visitBlock(TzdLangParser::BlockContext* ctx) override;
     virtual std::any visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) override;

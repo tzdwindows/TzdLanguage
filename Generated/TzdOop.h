@@ -28,6 +28,7 @@ struct ClassConstructor {
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
     int paramCount = 0;
+    bool isVararg = false;
     TzdLangParser::BlockContext* body = nullptr;
     TzdLangParser::ConstructorDeclContext* declCtx = nullptr;
     void (*jittedPtr)(void*, void*) = nullptr;
@@ -40,11 +41,13 @@ struct ClassConstructor {
 
 struct ClassMethod {
     std::string name;
+    std::string declaringClass = "";
     bool isStatic = false;
     bool isNative = false;
     TzdFFIAdapter::WrapperFunc nativeWrapper;
     bool isAbstract = false;
     bool isAnnotation = false;
+    bool isVararg = false;
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
     std::string returnType = "";

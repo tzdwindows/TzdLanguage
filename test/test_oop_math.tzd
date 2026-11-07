@@ -1,0 +1,192 @@
+import "math.BigInt";
+import "math.BigFloat";
+import "math.Rational";
+import "math.Complex";
+import "math.Vector";
+import "math.Matrix";
+import "math.Statistics";
+import "math.Math";
+
+print("=================================================");
+print("       TzdLang OOP Math 综合测试套件              ");
+print("=================================================");
+
+// -----------------------------------------------------------------------------
+// 1. BigInt 面向对象大整数与操作符重载
+// -----------------------------------------------------------------------------
+print("\n--- 1. 测试 BigInt 面向对象大整数 ---");
+var b1 = new BigInt("12345678901234567890");
+var b2 = new BigInt("98765432109876543210");
+print("b1: ", b1.toString(), " (位数: ", b1.digits(), ")");
+print("b2: ", b2.toString(), " (位数: ", b2.digits(), ")");
+
+// 方法式调用
+var bAdd = b1.add(b2);
+var bSub = b2.sub(b1);
+var bMul = b1.mul(b2);
+var bDiv = b2.div(b1);
+var bMod = b2.mod(b1);
+print("b1.add(b2) = ", bAdd.toString());
+print("b2.sub(b1) = ", bSub.toString());
+print("b1.mul(b2) = ", bMul.toString());
+print("b2.div(b1) = ", bDiv.toString());
+print("b2.mod(b1) = ", bMod.toString());
+
+// 操作符调用 (运算符重载与无缝解包)
+var opAdd = b1 + b2;
+var opSub = b2 - b1;
+var opMul = b1 * b2;
+var opDiv = b2 / b1;
+var opMod = b2 % b1;
+print("操作符 (b1 + b2) = ", opAdd.toString());
+print("操作符 (b1 * b2) = ", opMul.toString());
+print("比较操作 (b1 < b2): ", b1 < b2);
+print("比较操作 (b1 == b1): ", b1 == b1);
+print("比较操作 (opAdd == bAdd): ", opAdd == bAdd);
+
+// 位运算
+var b3 = new BigInt(12);
+var b4 = new BigInt(10);
+print("12 & 10 = ", (b3 & b4).toString());
+print("12 | 10 = ", (b3 | b4).toString());
+print("12 ^ 10 = ", (b3 ^ b4).toString());
+print("12 << 2 = ", (b3 << 2).toString());
+print("12 >> 1 = ", (b3 >> 1).toString());
+
+// 模幂与数论
+var base = new BigInt(3);
+var exp = new BigInt(100);
+var mod = new BigInt(1000);
+var powModRes = base.powMod(exp, mod);
+print("3^100 mod 1000 = ", powModRes.toString()); // 应为 1 (3^100 = 81^25 = ...001)
+
+var gcdVal = BigInt.gcd(b1, b2);
+print("GCD(b1, b2) = ", gcdVal.toString());
+var fact20 = BigInt.factorial(20);
+print("20! = ", fact20.toString());
+
+var isP1 = BigInt.isProbablePrime(new BigInt("1000000007"));
+var isP2 = BigInt.isProbablePrime(new BigInt("1000000008"));
+print("1000000007 是素数? ", isP1);
+print("1000000008 是素数? ", isP2);
+
+// -----------------------------------------------------------------------------
+// 2. Rational 有理数 (分数) 测试
+// -----------------------------------------------------------------------------
+print("\n--- 2. 测试 Rational 精确有理数 ---");
+var r1 = new Rational(1, 3);
+var r2 = new Rational(1, 6);
+print("r1 = ", r1.toString());
+print("r2 = ", r2.toString());
+var rSum = r1 + r2; // 1/3 + 1/6 = 1/2
+print("r1 + r2 = ", rSum.toString(), " (小数: ", rSum.toDouble(), ")");
+var rProd = r1 * r2; // 1/3 * 1/6 = 1/18
+print("r1 * r2 = ", rProd.toString());
+var rDiv = r1 / r2; // 1/3 / 1/6 = 2/1
+print("r1 / r2 = ", rDiv.toString());
+var rApprox = Rational.fromDouble(0.125);
+print("0.125 分数表示 = ", rApprox.toString());
+
+// -----------------------------------------------------------------------------
+// 3. Complex 复数类测试
+// -----------------------------------------------------------------------------
+print("\n--- 3. 测试 Complex 复数类 ---");
+var z1 = new Complex(3.0, 4.0);
+var z2 = new Complex(1.0, 2.0);
+print("z1 = ", z1.toString());
+print("z2 = ", z2.toString());
+print("z1 + z2 = ", z1.add(z2).toString());
+print("z1 * z2 = ", z1.mul(z2).toString()); // (3+4i)(1+2i) = 3+6i+4i-8 = -5+10i
+print("|z1| (模长) = ", z1.magnitude());   // 5.0
+print("z1 共轭 = ", z1.conjugate().toString());
+
+// 验证欧拉公式: e^(i * pi) + 1 ≈ 0
+var iPi = new Complex(0.0, Math.PI);
+var eEuler = iPi.exp().add(1.0);
+print("e^(i*pi) + 1 = ", eEuler.toString(), " (模长: ", eEuler.magnitude(), ")");
+
+// -----------------------------------------------------------------------------
+// 4. Vector 向量类测试
+// -----------------------------------------------------------------------------
+print("\n--- 4. 测试 Vector, Vector2D, Vector3D 向量类 ---");
+var v1 = new Vector([1.0, 2.0, 3.0, 4.0]);
+var v2 = new Vector([2.0, 0.0, -1.0, 1.0]);
+print("v1 = ", v1.toString());
+print("v2 = ", v2.toString());
+print("v1 + v2 = ", v1.add(v2).toString());
+print("v1 . v2 (点积) = ", v1.dot(v2)); // 1*2 + 2*0 + 3*(-1) + 4*1 = 2 - 3 + 4 = 3
+print("|v1| (模长) = ", v1.norm());
+
+var u3 = new Vector3D(1.0, 0.0, 0.0);
+var w3 = new Vector3D(0.0, 1.0, 0.0);
+var crossRes = u3.cross(w3); // i x j = k = (0, 0, 1)
+print("Vector3D: (1,0,0) x (0,1,0) = ", crossRes.toString());
+
+// -----------------------------------------------------------------------------
+// 5. Matrix 矩阵类测试
+// -----------------------------------------------------------------------------
+print("\n--- 5. 测试 Matrix 线性代数矩阵类 ---");
+var m1 = Matrix.fromArray([
+    [1.0, 2.0],
+    [3.0, 4.0]
+]);
+var m2 = Matrix.fromArray([
+    [2.0, 0.0],
+    [1.0, 2.0]
+]);
+print("m1:\n", m1.toString());
+print("m2:\n", m2.toString());
+print("m1 + m2:\n", m1.add(m2).toString());
+var mMul = m1.mul(m2);
+print("m1 * m2:\n", mMul.toString());
+print("m1 转置:\n", m1.transpose().toString());
+print("m1 行列式 det(m1) = ", m1.det()); // 1*4 - 2*3 = -2
+print("m1 逆矩阵:\n", m1.inverse().toString());
+var mIdentityCheck = m1.mul(m1.inverse());
+print("m1 * m1^(-1) (应为单位阵):\n", mIdentityCheck.toString());
+
+// 解线性方程组: 
+// 2x + y = 5
+//  x + 3y = 5
+// 解为 x = 2, y = 1
+var aMat = Matrix.fromArray([
+    [2.0, 1.0],
+    [1.0, 3.0]
+]);
+var bVec = [5.0, 5.0];
+var sol = aMat.solve(bVec);
+print("解方程组 [2 1; 1 3] * x = [5; 5]: x = ", str(sol));
+
+// -----------------------------------------------------------------------------
+// 6. Statistics 统计类测试
+// -----------------------------------------------------------------------------
+print("\n--- 6. 测试 Statistics 统计类 ---");
+var data = [10.0, 20.0, 30.0, 40.0, 50.0];
+print("数据: ", str(data));
+print("均值 (mean): ", Statistics.mean(data));
+print("中位数 (median): ", Statistics.median(data));
+print("方差 (variance): ", Statistics.variance(data, true));
+print("标准差 (stdDev): ", Statistics.stdDev(data, true));
+print("极差 (range): ", Statistics.range(data));
+print("25% 分位数: ", Statistics.percentile(data, 25));
+print("75% 分位数: ", Statistics.percentile(data, 75));
+
+var xData = [1.0, 2.0, 3.0, 4.0, 5.0];
+var yData = [2.0, 4.0, 6.0, 8.0, 10.0];
+print("完全正相关 x与y 皮尔逊相关系数: ", Statistics.correlation(xData, yData));
+
+// -----------------------------------------------------------------------------
+// 7. Math 静态类测试
+// -----------------------------------------------------------------------------
+print("\n--- 7. 测试 Math 统一工具类 ---");
+print("Math.PI = ", Math.PI);
+print("Math.E = ", Math.E);
+print("Math.sin(PI / 6) = ", Math.sin(Math.PI / 6.0));
+print("Math.hypot(3, 4) = ", Math.hypot(3.0, 4.0));
+print("Math.cbrt(27) = ", Math.cbrt(27.0));
+print("Math.comb(10, 3) (组合数 C(10,3)) = ", Math.comb(10, 3)); // 120
+print("Math.perm(5, 2) (排列数 P(5,2)) = ", Math.perm(5, 2));   // 20
+print("Math.clamp(150, 0, 100) = ", Math.clamp(150, 0, 100));
+print("Math.lerp(10, 20, 0.5) = ", Math.lerp(10.0, 20.0, 0.5));
+
+print("\n>>> 所有 OOP Math 扩展测试全部顺利通过！ <<<");

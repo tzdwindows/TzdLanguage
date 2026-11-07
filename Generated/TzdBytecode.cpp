@@ -184,14 +184,29 @@ static bool isSameVarId(TzdLangParser::ExpressionContext* expr, const std::strin
     return false;
 }
 
-// Check if either operand requires BIGINT/RATIONAL arithmetic
+// Check if either operand requires BIGFLOAT/BIGINT/RATIONAL arithmetic
 static bool bcNeedsBigint(const TzdValue& a, const TzdValue& b) {
     return a.type == TzdValue::BIGINT || b.type == TzdValue::BIGINT ||
-           a.type == TzdValue::RATIONAL || b.type == TzdValue::RATIONAL;
+           a.type == TzdValue::RATIONAL || b.type == TzdValue::RATIONAL ||
+           a.type == TzdValue::BIGFLOAT || b.type == TzdValue::BIGFLOAT;
 }
 
-// Perform BIGINT/RATIONAL binary arithmetic: op is '+','-','*','/','%'
+// Perform BIGFLOAT/BIGINT/RATIONAL binary arithmetic: op is '+','-','*','/','%'
 static TzdValue bcBigintArith(const TzdValue& a, const TzdValue& b, char op) {
+    if (needs_bigfloat(a, b)) {
+        std::string sa = to_bigfloat_str(a), sb = to_bigfloat_str(b);
+        switch (op) {
+            case '+': return make_bigfloat(bigfloat_add(sa, sb));
+            case '-': return make_bigfloat(bigfloat_sub(sa, sb));
+            case '*': return make_bigfloat(bigfloat_mul(sa, sb));
+            case '/': return make_bigfloat(bigfloat_div(sa, sb));
+            default: {
+                std::string q = bigfloat_floor(bigfloat_div(sa, sb));
+                std::string rem = bigfloat_sub(sa, bigfloat_mul(q, sb));
+                return make_bigfloat(rem);
+            }
+        }
+    }
     bool useRational = needs_rational(a, b);
     std::string r;
     if (useRational) {
@@ -418,6 +433,9 @@ std::vector<std::string> TzdBytecodeCompiler::extractParamNames(
     std::vector<std::string> names;
     if (!pl) return names;
     for (auto p : pl->param()) {
+        if (p->ELLIPSIS()) {
+            throw std::runtime_error("Bytecode compiler does not support varargs");
+        }
         if (p->IDENTIFIER()) names.push_back(p->IDENTIFIER()->getText());
         else names.push_back(p->getText());
     }
@@ -435,6 +453,13 @@ BytecodeModule TzdBytecodeCompiler::compile(TzdLangParser::ProgramContext* tree,
             if (auto funStmt = dynamic_cast<TzdLangParser::FunDeclStmtContext*>(stmt)) {
                 auto fdecl = funStmt->functionDeclaration();
                 if (!fdecl) continue;
+                if (fdecl->paramList()) {
+                    for (auto p : fdecl->paramList()->param()) {
+                        if (p->ELLIPSIS()) {
+                            throw std::runtime_error("Bytecode compiler does not support varargs");
+                        }
+                    }
+                }
                 std::string fname = fdecl->IDENTIFIER()->getText();
                 m_moduleFuncNames[fname] = (size_t)-1; // placeholder
             }
@@ -459,6 +484,7 @@ BytecodeModule TzdBytecodeCompiler::compile(TzdLangParser::ProgramContext* tree,
     std::string verifyErr;
     if (!verifyModule(m_module, &verifyErr)) {
         std::cerr << "[Bytecode Verifier] " << verifyErr << std::endl;
+        throw std::runtime_error(verifyErr);
     }
 
     return m_module;
@@ -835,6 +861,10 @@ std::any TzdBytecodeCompiler::visitForStmt(TzdLangParser::ForStmtContext* ctx) {
 
     popScope();
     return std::any();
+}
+
+std::any TzdBytecodeCompiler::visitForEachStmt(TzdLangParser::ForEachStmtContext* ctx) {
+    throw std::runtime_error("Bytecode compiler does not support forEach statement");
 }
 
 std::any TzdBytecodeCompiler::visitReturnStmt(TzdLangParser::ReturnStmtContext* ctx) {

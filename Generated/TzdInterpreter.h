@@ -343,7 +343,8 @@ struct TzdValue {
         ANY_REF,         // Generic type-erased reference (std::any wrapper)
         TENSOR,          // PyTorch tensor (auto-managed VRAM lifecycle)
         BIGINT,          // Arbitrary-precision integer (stored as decimal string in sVal)
-        RATIONAL         // Exact fraction "num/den" stored in sVal (uses BIGINT arithmetic)
+        RATIONAL,        // Exact fraction "num/den" stored in sVal (uses BIGINT arithmetic)
+        BIGFLOAT         // Arbitrary-precision floating-point (stored as decimal string in sVal)
     };
     std::vector<std::string> annotations;
     Type type = NONE;
@@ -363,6 +364,8 @@ struct TzdValue {
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
     std::string returnType = "";
+    std::string declaringClass = "";
+    bool isVararg = false;
     TzdLangParser::BlockContext* funcBody = nullptr;
     using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
     NativeFuncType nativeFunc;
@@ -481,6 +484,10 @@ std::string to_bigint_str(const TzdValue& v);
 TzdValue make_bigint(const std::string& digits);
 bool is_bigint(const TzdValue& v);
 bool needs_bigint(const TzdValue& a, const TzdValue& b);
+bool is_bigint_like(const TzdValue& v);
+bool is_rational_like(const TzdValue& v);
+bool is_bigfloat_like(const TzdValue& v);
+bool bigint_is_probable_prime(const std::string& n_str, int rounds = 20);
 
 // FFT-based multiplication using ATen/libtorch (O(n log n) vs Karatsuba O(n^1.585))
 // Implemented in TzdPyTorch.cpp. Used automatically by bigint_mul for large numbers.
@@ -513,6 +520,50 @@ TzdValue make_rational(const std::string& num, const std::string& den);
 bool needs_rational(const TzdValue& a, const TzdValue& b);
 void rational_parse(const std::string& s, std::string& num, std::string& den);
 
+// --- BigFloat (arbitrary precision floating-point) functions ---
+size_t getBigFloatPrecision();
+void setBigFloatPrecision(size_t bits);
+size_t getBigFloatMaxPrecision();
+void setBigFloatMaxPrecision(size_t maxBits);
+std::string bigfloat_pi_digits(size_t digits);
+
+std::string bigfloat_add(const std::string& a, const std::string& b, size_t prec = 0);
+std::string bigfloat_sub(const std::string& a, const std::string& b, size_t prec = 0);
+std::string bigfloat_mul(const std::string& a, const std::string& b, size_t prec = 0);
+std::string bigfloat_div(const std::string& a, const std::string& b, size_t prec = 0);
+std::string bigfloat_pow(const std::string& base, const std::string& exp, size_t prec = 0);
+std::string bigfloat_sqrt(const std::string& a, size_t prec = 0);
+std::string bigfloat_cbrt(const std::string& a, size_t prec = 0);
+std::string bigfloat_hypot(const std::string& a, const std::string& b, size_t prec = 0);
+std::string bigfloat_exp(const std::string& a, size_t prec = 0);
+std::string bigfloat_log(const std::string& a, size_t prec = 0);
+std::string bigfloat_log10(const std::string& a, size_t prec = 0);
+std::string bigfloat_log2(const std::string& a, size_t prec = 0);
+std::string bigfloat_sin(const std::string& a, size_t prec = 0);
+std::string bigfloat_cos(const std::string& a, size_t prec = 0);
+std::string bigfloat_tan(const std::string& a, size_t prec = 0);
+std::string bigfloat_asin(const std::string& a, size_t prec = 0);
+std::string bigfloat_acos(const std::string& a, size_t prec = 0);
+std::string bigfloat_atan(const std::string& a, size_t prec = 0);
+std::string bigfloat_atan2(const std::string& y, const std::string& x, size_t prec = 0);
+std::string bigfloat_sinh(const std::string& a, size_t prec = 0);
+std::string bigfloat_cosh(const std::string& a, size_t prec = 0);
+std::string bigfloat_tanh(const std::string& a, size_t prec = 0);
+std::string bigfloat_gamma(const std::string& a, size_t prec = 0);
+std::string bigfloat_zeta(const std::string& a, size_t prec = 0);
+std::string bigfloat_pi(size_t prec = 0);
+std::string bigfloat_e(size_t prec = 0);
+std::string bigfloat_floor(const std::string& a, size_t prec = 0);
+std::string bigfloat_ceil(const std::string& a, size_t prec = 0);
+std::string bigfloat_round(const std::string& a, size_t prec = 0);
+std::string bigfloat_abs(const std::string& a);
+int bigfloat_compare(const std::string& a, const std::string& b);
+
+std::string to_bigfloat_str(const TzdValue& v);
+TzdValue make_bigfloat(const std::string& s);
+bool is_bigfloat(const TzdValue& v);
+bool needs_bigfloat(const TzdValue& a, const TzdValue& b);
+
 struct JitValuePool {
     static const size_t POOL_SIZE = 4096;
     std::vector<TzdValue> storage;
@@ -525,15 +576,14 @@ struct JitValuePool {
         cursor = next_cursor;
         // Before reusing the slot, release the reference of the previous instance - the interception point for JIT hot path leaks
         tzdPoolSlotReleaseInstance(v);
-        [[unlikely]] if (v->type >= TzdValue::STRING) {
-            switch (v->type) {
-            case TzdValue::STRING: v->sVal.clear(); break;
-            case TzdValue::ARRAY:  v->arrVal.clear(); break;
-            case TzdValue::MAP:    v->mapVal.clear(); break;
-            default:
-                break;
-            }
-        }
+        v->nativeArr.clear();
+        v->isNativeDoubleArr = false;
+        v->arrVal.clear();
+        v->mapVal.clear();
+        v->sVal.clear();
+        v->fastBuf = nullptr;
+        v->fastLen = 0;
+        v->ptrVal = nullptr;
         v->type = TzdValue::NONE;
         return v;
     }
@@ -547,6 +597,14 @@ struct JitValuePool {
     void reset() {
         for (auto& item : storage) {
             tzdPoolSlotReleaseInstance(&item);
+            item.nativeArr.clear();
+            item.isNativeDoubleArr = false;
+            item.arrVal.clear();
+            item.mapVal.clear();
+            item.sVal.clear();
+            item.fastBuf = nullptr;
+            item.fastLen = 0;
+            item.ptrVal = nullptr;
             item.type = TzdValue::NONE;
         }
         cursor = 0;
@@ -734,6 +792,8 @@ public:
 
     virtual std::any visitPostfixExpr(TzdLangParser::PostfixExprContext* ctx) override;
     virtual std::any visitForStmt(TzdLangParser::ForStmtContext* ctx) override;
+    virtual std::any visitForEachStmt(TzdLangParser::ForEachStmtContext* ctx) override;
+    virtual std::any visitForEachInit(TzdLangParser::ForEachInitContext* ctx) override;
 
     virtual std::any visitPrefixExpr(TzdLangParser::PrefixExprContext* ctx) override;
 
@@ -812,14 +872,20 @@ public:
         m_callDepth = 0;
     }
 
-    void reportJitError(const std::string& msg, size_t line = 0, size_t col = 0) {
-        m_hasJitError = true;
-        m_lastJitError = msg;
-        if (line > 0) {
-            m_jitLine = line;
-            m_jitColumn = col;
+    void reportJitError(const std::string& msg, size_t line = 0, size_t col = 0, const std::vector<std::string>& trace = {}) {
+        if (!m_hasJitError) {
+            m_hasJitError = true;
+            m_lastJitError = msg;
+            if (line > 0) {
+                m_jitLine = line;
+                m_jitColumn = col;
+            }
+            if (!trace.empty()) {
+                m_jitErrorTrace = trace;
+            } else {
+                m_jitErrorTrace = m_callStackFrames;
+            }
         }
-        m_jitErrorTrace = m_callStackFrames;
     }
 
     std::string m_lastJitError;
@@ -903,7 +969,8 @@ private:
         const std::vector<TzdValue>& args,
         const std::string& sourceFile,
         int line,
-        std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope = nullptr);
+        std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope = nullptr,
+        bool isVararg = false);
 
     // Resolve (and cache) the TzdSelector + member name for a member-access
     // AST site. The cache is keyed by the AST node pointer and is stable for

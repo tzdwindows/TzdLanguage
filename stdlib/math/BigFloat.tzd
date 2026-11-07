@@ -1,0 +1,189 @@
+/**
+ * TzdLang 数学高精度标准库 - BigFloat 任意精度浮点数
+ * 基于 GNU MPFR 工业级快速大数浮点计算引擎
+ */
+
+class BigFloat {
+    var BigFloat val;
+
+    BigFloat() {
+        this.val = bigfloat("0.0");
+    }
+
+    BigFloat(raw) {
+        this.val = bigfloat(raw);
+    }
+
+    fun get() {
+        return this.val;
+    }
+
+    fun set(v) {
+        this.val = bigfloat(v);
+    }
+
+    fun toString() {
+        return bfToString(this.val);
+    }
+
+    fun add(other) {
+        return new BigFloat(bfAdd(this.val, other));
+    }
+
+    fun sub(other) {
+        return new BigFloat(bfSub(this.val, other));
+    }
+
+    fun mul(other) {
+        return new BigFloat(bfMul(this.val, other));
+    }
+
+    fun div(other) {
+        return new BigFloat(bfDiv(this.val, other));
+    }
+
+    fun pow(other) {
+        return new BigFloat(bfPow(this.val, other));
+    }
+
+    fun sqrt() {
+        return new BigFloat(bfSqrt(this.val));
+    }
+
+    fun cbrt() {
+        return new BigFloat(bfCbrt(this.val));
+    }
+
+    fun exp() {
+        return new BigFloat(bfExp(this.val));
+    }
+
+    fun log() {
+        return new BigFloat(bfLog(this.val));
+    }
+
+    fun log10() {
+        return new BigFloat(bfLog10(this.val));
+    }
+
+    fun log2() {
+        return new BigFloat(bfLog2(this.val));
+    }
+
+    fun sin() {
+        return new BigFloat(bfSin(this.val));
+    }
+
+    fun cos() {
+        return new BigFloat(bfCos(this.val));
+    }
+
+    fun tan() {
+        return new BigFloat(bfTan(this.val));
+    }
+
+    fun asin() {
+        return new BigFloat(bfAsin(this.val));
+    }
+
+    fun acos() {
+        return new BigFloat(bfAcos(this.val));
+    }
+
+    fun atan() {
+        return new BigFloat(bfAtan(this.val));
+    }
+
+    fun sinh() {
+        return new BigFloat(bfSinh(this.val));
+    }
+
+    fun cosh() {
+        return new BigFloat(bfCosh(this.val));
+    }
+
+    fun tanh() {
+        return new BigFloat(bfTanh(this.val));
+    }
+
+    fun abs() {
+        return new BigFloat(bfAbs(this.val));
+    }
+
+    fun floor() {
+        return new BigFloat(bfFloor(this.val));
+    }
+
+    fun ceil() {
+        return new BigFloat(bfCeil(this.val));
+    }
+
+    fun round() {
+        return new BigFloat(bfRound(this.val));
+    }
+
+    fun compareTo(other) {
+        return bfCompare(this.val, other);
+    }
+
+    fun equals(other) {
+        return bfCompare(this.val, other) == 0;
+    }
+
+    static fun from(v) {
+        return new BigFloat(v);
+    }
+
+    static fun pi(bits) {
+        if (bits != null && bits > 0) {
+            return new BigFloat(bfPi(bits));
+        }
+        return new BigFloat(bfPi());
+    }
+
+    static fun piDigits(digits) {
+        if (digits != null && digits > 0) {
+            return new BigFloat(bfPiDigits(digits));
+        }
+        return new BigFloat(bfPi());
+    }
+
+    static fun e(bits) {
+        if (bits != null && bits > 0) {
+            return new BigFloat(bfE(bits));
+        }
+        return new BigFloat(bfE());
+    }
+
+    static fun setPrecision(bits) {
+        return setBigFloatPrecision(bits);
+    }
+
+    static fun getPrecision() {
+        return getBigFloatPrecision();
+    }
+
+    static fun setMaxPrecision(bits) {
+        return setBigFloatMaxPrecision(bits);
+    }
+
+    static fun getMaxPrecision() {
+        return getBigFloatMaxPrecision();
+    }
+
+    static fun hypot(a, b) {
+        return new BigFloat(bfHypot(a, b));
+    }
+
+    static fun atan2(y, x) {
+        return new BigFloat(bfAtan2(y, x));
+    }
+
+    static fun gamma(x) {
+        return new BigFloat(bfGamma(x));
+    }
+
+    static fun zeta(x) {
+        return new BigFloat(bfZeta(x));
+    }
+}

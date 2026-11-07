@@ -1,0 +1,489 @@
+/**
+ * TzdLang 数学标准库 - Optimization 数值优化与非线性方程求解
+ * 提供单变量高精度求根 (二分法、割线法、牛顿-拉夫逊法、Brent 布伦特混合法)、
+ * 单变量极小值优化 (黄金分割搜索法)、以及多变量无约束优化 (带动量梯度下降法、Nelder-Mead 单纯形无导数极小化)。
+ */
+
+import "math.Calculus";
+
+class Optimization {
+
+    // =========================================================================
+    // 1. 单变量方程求根 (Root Finding)
+    // =========================================================================
+
+    /**
+     * 二分法求解方程 f(x) = 0
+     * @param f 连续函数
+     * @param a 区间下界
+     * @param b 区间上界 (需满足 f(a) * f(b) <= 0)
+     * @param tol 容差 (默认 1e-10)
+     * @param maxIter 最大迭代步数 (默认 100)
+     */
+    static fun bisection(f, a, b, tol, maxIter) {
+        var low = valToDouble(a);
+        var high = valToDouble(b);
+        var eps = 0.0000000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 100;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        var fLow = f(low);
+        var fHigh = f(high);
+
+        if (abs(fLow) < eps) return low;
+        if (abs(fHigh) < eps) return high;
+
+        if (fLow * fHigh > 0.0) {
+            return null; // 区间两端同号，不满足介值定理前提
+        }
+
+        var iter = 0;
+        var mid = (low + high) / 2.0;
+        while (iter < limit) {
+            mid = (low + high) / 2.0;
+            var fMid = f(mid);
+
+            if (abs(fMid) < eps || (high - low) / 2.0 < eps) {
+                return mid;
+            }
+
+            if (fLow * fMid < 0.0) {
+                high = mid;
+                fHigh = fMid;
+            } else {
+                low = mid;
+                fLow = fMid;
+            }
+            iter = iter + 1;
+        }
+        return mid;
+    }
+
+    /**
+     * 割线法 (弦截法) 求解方程 f(x) = 0 (无需导数，超线性收敛)
+     */
+    static fun secant(f, x0, x1, tol, maxIter) {
+        var p0 = valToDouble(x0);
+        var p1 = valToDouble(x1);
+        var eps = 0.0000000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 100;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        var f0 = f(p0);
+        var f1 = f(p1);
+
+        var iter = 0;
+        while (iter < limit) {
+            if (abs(f1 - f0) < 0.000000000000001) {
+                break;
+            }
+            var p2 = p1 - f1 * (p1 - p0) / (f1 - f0);
+            if (abs(p2 - p1) < eps || abs(f(p2)) < eps) {
+                return p2;
+            }
+            p0 = p1; f0 = f1;
+            p1 = p2; f1 = f(p2);
+            iter = iter + 1;
+        }
+        return p1;
+    }
+
+    /**
+     * 牛顿-拉夫逊法 (Newton-Raphson Method) - 二次收敛速度
+     * @param f 目标函数
+     * @param f_prime 导数函数 (若传 null 则自动采用高精度中心数值微分)
+     */
+    static fun newton(f, f_prime, x0, tol, maxIter) {
+        var curX = valToDouble(x0);
+        var eps = 0.0000000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 100;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        var iter = 0;
+        while (iter < limit) {
+            var fx = f(curX);
+            if (abs(fx) < eps) {
+                return curX;
+            }
+
+            var dfx = 0.0;
+            if (f_prime != null) {
+                dfx = f_prime(curX);
+            } else {
+                dfx = Calculus.derivative(f, curX, 0.000001);
+            }
+
+            if (abs(dfx) < 0.000000000000001) {
+                break; // 导数过小避免除零
+            }
+
+            var nextX = curX - fx / dfx;
+            if (abs(nextX - curX) < eps) {
+                return nextX;
+            }
+            curX = nextX;
+            iter = iter + 1;
+        }
+        return curX;
+    }
+
+    /**
+     * Brent-Dekker 布伦特法寻根 (结合二分法、割线法与逆二次插值，保证 100% 收敛且速度极快)
+     */
+    static fun brent(f, a, b, tol, maxIter) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var eps = 0.0000000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 100;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        var fa = f(aVal);
+        var fb = f(bVal);
+
+        if (fa * fb > 0.0) return null;
+        if (abs(fa) < eps) return aVal;
+        if (abs(fb) < eps) return bVal;
+
+        if (abs(fa) < abs(fb)) {
+            var tmp = aVal; aVal = bVal; bVal = tmp;
+            tmp = fa; fa = fb; fb = tmp;
+        }
+
+        var c = aVal;
+        var fc = fa;
+        var mflag = true;
+        var s = bVal;
+        var d = 0.0;
+
+        var iter = 0;
+        while (iter < limit) {
+            if (abs(fb) < eps) return bVal;
+            if (abs(bVal - aVal) < eps) return bVal;
+
+            if (abs(fa - fc) > 0.00000000000001 && abs(fb - fc) > 0.00000000000001) {
+                // 逆二次插值 (Inverse Quadratic Interpolation)
+                var termA = (aVal * fb * fc) / ((fa - fb) * (fa - fc));
+                var termB = (bVal * fa * fc) / ((fb - fa) * (fb - fc));
+                var termC = (c * fa * fb) / ((fc - fa) * (fc - fb));
+                s = termA + termB + termC;
+            } else {
+                // 割线法
+                s = bVal - fb * (bVal - aVal) / (fb - fa);
+            }
+
+            // 判断是否采用二分法备选
+            var cond1 = (s < (3.0 * aVal + bVal) / 4.0 && s < bVal) || (s > (3.0 * aVal + bVal) / 4.0 && s > bVal);
+            var cond2 = mflag && (abs(s - bVal) >= abs(bVal - c) / 2.0);
+            var cond3 = (!mflag) && (abs(s - bVal) >= abs(c - d) / 2.0);
+            var cond4 = mflag && (abs(bVal - c) < eps);
+            var cond5 = (!mflag) && (abs(c - d) < eps);
+
+            if (cond1 || cond2 || cond3 || cond4 || cond5) {
+                s = (aVal + bVal) / 2.0;
+                mflag = true;
+            } else {
+                mflag = false;
+            }
+
+            var fs = f(s);
+            d = c;
+            c = bVal;
+            fc = fb;
+
+            if (fa * fs < 0.0) {
+                bVal = s;
+                fb = fs;
+            } else {
+                aVal = s;
+                fa = fs;
+            }
+
+            if (abs(fa) < abs(fb)) {
+                var tmp = aVal; aVal = bVal; bVal = tmp;
+                tmp = fa; fa = fb; fb = tmp;
+            }
+
+            iter = iter + 1;
+        }
+        return bVal;
+    }
+
+    // =========================================================================
+    // 2. 单变量极小值优化 (1D Minimization)
+    // =========================================================================
+
+    /**
+     * 黄金分割法搜索单峰区间内的局部极小值点 x*
+     */
+    static fun goldenSection(f, a, b, tol, maxIter) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var eps = 0.00000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 100;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        var phi = (sqrt(5.0) - 1.0) / 2.0; // 0.6180339887...
+        var x1 = bVal - phi * (bVal - aVal);
+        var x2 = aVal + phi * (bVal - aVal);
+        var f1 = f(x1);
+        var f2 = f(x2);
+
+        var iter = 0;
+        while (iter < limit && (bVal - aVal) > eps) {
+            if (f1 < f2) {
+                bVal = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = bVal - phi * (bVal - aVal);
+                f1 = f(x1);
+            } else {
+                aVal = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = aVal + phi * (bVal - aVal);
+                f2 = f(x2);
+            }
+            iter = iter + 1;
+        }
+
+        var optX = (aVal + bVal) / 2.0;
+        return { "x": optX, "f": f(optX) };
+    }
+
+    // =========================================================================
+    // 3. 多变量无约束极小化 (Multivariate Optimization)
+    // =========================================================================
+
+    /**
+     * 带动量多维梯度下降法 (Gradient Descent with Momentum)
+     * @param f 多元标量目标函数 f(x_array)
+     * @param grad 梯度函数 (传 null 时自动用数值微商)
+     * @param x0 初始点向量
+     * @param lr 学习率 (默认 0.01)
+     * @param maxIter 迭代次数 (默认 500)
+     */
+    static fun gradientDescent(f, grad, x0, lr, maxIter, tol) {
+        var n = len(x0);
+        var rate = 0.01;
+        if (lr != null && valToDouble(lr) > 0.0) {
+            rate = valToDouble(lr);
+        }
+        var limit = 500;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+        var eps = 0.0000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+
+        var x = [ ];
+        var v = [ ];
+        var i = 0;
+        while (i < n) {
+            x = push(x, valToDouble(x0[i]));
+            v = push(v, 0.0);
+            i = i + 1;
+        }
+
+        var momentum = 0.9;
+        var iter = 0;
+        while (iter < limit) {
+            var g = null;
+            if (grad != null) {
+                g = grad(x);
+            } else {
+                g = Calculus.gradient(f, x, 0.00001);
+            }
+
+            var gNorm = 0.0;
+            i = 0;
+            while (i < n) {
+                gNorm = gNorm + g[i] * g[i];
+                i = i + 1;
+            }
+            if (sqrt(gNorm) < eps) {
+                break;
+            }
+
+            i = 0;
+            while (i < n) {
+                v[i] = momentum * v[i] + rate * g[i];
+                x[i] = x[i] - v[i];
+                i = i + 1;
+            }
+            iter = iter + 1;
+        }
+
+        return { "point": x, "value": f(x), "iterations": iter };
+    }
+
+    /**
+     * Nelder-Mead 单纯形法 (无导数多元极小化，通过反射、扩张、收缩探索非线性最优解)
+     * @param f 目标函数 f(point_array)
+     * @param x0 初始点向量
+     */
+    static fun nelderMead(f, x0, tol, maxIter) {
+        var n = len(x0);
+        var eps = 0.000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var limit = 500;
+        if (maxIter != null && maxIter > 0) {
+            limit = maxIter;
+        }
+
+        // 构建包含 n+1 个顶点的初始单纯形
+        var simplex = [ ];
+        var p0 = [ ];
+        var i = 0;
+        while (i < n) {
+            p0 = push(p0, valToDouble(x0[i]));
+            i = i + 1;
+        }
+        simplex = push(simplex, p0);
+
+        i = 0;
+        while (i < n) {
+            var pi = [ ];
+            var j = 0;
+            while (j < n) {
+                var val = p0[j];
+                if (j == i) {
+                    if (abs(val) > 0.0001) {
+                        val = val * 1.05;
+                    } else {
+                        val = val + 0.005;
+                    }
+                }
+                pi = push(pi, val);
+                j = j + 1;
+            }
+            simplex = push(simplex, pi);
+            i = i + 1;
+        }
+
+        var alpha = 1.0;  // 反射
+        var gamma = 2.0;  // 扩张
+        var rho = 0.5;    // 收缩
+        var sigma = 0.5;  // 压缩
+
+        var iter = 0;
+        while (iter < limit) {
+            // 对顶点按函数值排序
+            var numV = n + 1;
+            i = 0;
+            while (i < numV) {
+                var j = i + 1;
+                while (j < numV) {
+                    if (f(simplex[j]) < f(simplex[i])) {
+                        var tmp = simplex[i];
+                        simplex[i] = simplex[j];
+                        simplex[j] = tmp;
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+
+            var fBest = f(simplex[0]);
+            var fWorst = f(simplex[n]);
+            var fNextWorst = f(simplex[n - 1]);
+
+            if (abs(fWorst - fBest) < eps) {
+                break;
+            }
+
+            // 计算除最差顶点外的重心 (Centroid)
+            var centroid = [ ];
+            var d = 0;
+            while (d < n) {
+                var sumVal = 0.0;
+                i = 0;
+                while (i < n) {
+                    sumVal = sumVal + simplex[i][d];
+                    i = i + 1;
+                }
+                centroid = push(centroid, sumVal / n);
+                d = d + 1;
+            }
+
+            // 1. 反射 (Reflection)
+            var xr = [ ];
+            d = 0;
+            while (d < n) {
+                xr = push(xr, centroid[d] + alpha * (centroid[d] - simplex[n][d]));
+                d = d + 1;
+            }
+            var fr = f(xr);
+
+            if (fr >= fBest && fr < fNextWorst) {
+                simplex[n] = xr;
+            } else if (fr < fBest) {
+                // 2. 扩张 (Expansion)
+                var xe = [ ];
+                d = 0;
+                while (d < n) {
+                    xe = push(xe, centroid[d] + gamma * (xr[d] - centroid[d]));
+                    d = d + 1;
+                }
+                if (f(xe) < fr) {
+                    simplex[n] = xe;
+                } else {
+                    simplex[n] = xr;
+                }
+            } else {
+                // 3. 收缩 (Contraction)
+                var xc = [ ];
+                d = 0;
+                while (d < n) {
+                    xc = push(xc, centroid[d] + rho * (simplex[n][d] - centroid[d]));
+                    d = d + 1;
+                }
+                if (f(xc) < fWorst) {
+                    simplex[n] = xc;
+                } else {
+                    // 4. 压缩 (Shrink)
+                    i = 1;
+                    while (i <= n) {
+                        d = 0;
+                        while (d < n) {
+                            simplex[i][d] = simplex[0][d] + sigma * (simplex[i][d] - simplex[0][d]);
+                            d = d + 1;
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+            iter = iter + 1;
+        }
+
+        return { "point": simplex[0], "value": f(simplex[0]), "iterations": iter };
+    }
+}

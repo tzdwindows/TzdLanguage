@@ -1,4 +1,5 @@
 #include "TzdInterpreter.h"
+#include <mpfr.h>
 
 #include "TzdGC.h"
 #include "TzdTieringEngine.h"
@@ -30,7 +31,7 @@ TzdValue::TzdValue(const TzdValue &o)
     : annotations(o.annotations), type(o.type), name(o.name), declaredType(o.declaredType),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(o.sVal), bVal(o.bVal), arrVal(o.arrVal), mapVal(o.mapVal),
-      params(o.params), paramTypes(o.paramTypes), returnType(o.returnType), funcBody(o.funcBody),
+      params(o.params), paramTypes(o.paramTypes), returnType(o.returnType), isVararg(o.isVararg), funcBody(o.funcBody),
       nativeFunc(o.nativeFunc), closureScope(o.closureScope), classDefVal(o.classDefVal),
       instanceVal(o.instanceVal), sourceFile(o.sourceFile),
       line(o.line), column(o.column),
@@ -53,7 +54,7 @@ TzdValue::TzdValue(TzdValue &&o) noexcept
     : annotations(std::move(o.annotations)), type(o.type), name(std::move(o.name)), declaredType(std::move(o.declaredType)),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(std::move(o.sVal)), bVal(o.bVal), arrVal(std::move(o.arrVal)), mapVal(std::move(o.mapVal)),
-      params(std::move(o.params)), paramTypes(std::move(o.paramTypes)), returnType(std::move(o.returnType)), funcBody(o.funcBody),
+      params(std::move(o.params)), paramTypes(std::move(o.paramTypes)), returnType(std::move(o.returnType)), isVararg(o.isVararg), funcBody(o.funcBody),
       nativeFunc(std::move(o.nativeFunc)), closureScope(std::move(o.closureScope)), classDefVal(o.classDefVal),
       instanceVal(o.instanceVal), sourceFile(std::move(o.sourceFile)),
       line(o.line), column(o.column),
@@ -64,6 +65,7 @@ TzdValue::TzdValue(TzdValue &&o) noexcept
     o.ptrVal = nullptr;
     o.jittedPtr = nullptr;
     o.type = NONE;
+    o.isVararg = false;
     o.fastBuf = nullptr;
     o.fastLen = 0;
     syncFastBuf();
@@ -98,6 +100,7 @@ TzdValue &TzdValue::operator=(const TzdValue &o)
     params = o.params;
     paramTypes = o.paramTypes;
     returnType = o.returnType;
+    isVararg = o.isVararg;
     funcBody = o.funcBody;
     nativeFunc = o.nativeFunc;
     closureScope = o.closureScope;
@@ -153,6 +156,7 @@ TzdValue &TzdValue::operator=(TzdValue &&o) noexcept
     params = std::move(o.params);
     paramTypes = std::move(o.paramTypes);
     returnType = std::move(o.returnType);
+    isVararg = o.isVararg;
     funcBody = o.funcBody;
     nativeFunc = std::move(o.nativeFunc);
     closureScope = std::move(o.closureScope);
@@ -170,6 +174,7 @@ TzdValue &TzdValue::operator=(TzdValue &&o) noexcept
     o.ptrVal = nullptr;
     o.jittedPtr = nullptr;
     o.type = NONE;
+    o.isVararg = false;
     o.fastBuf = nullptr;
     o.fastLen = 0;
     syncFastBuf();
@@ -1911,6 +1916,58 @@ std::string bigint_powmod(const std::string &base, const std::string &exp, const
     return result;
 }
 
+// Miller-Rabin primality test for arbitrary precision integers
+bool bigint_is_probable_prime(const std::string &n_str, int rounds)
+{
+    std::string n = bigint_abs(n_str);
+    if (n == "0" || n == "1")
+        return false;
+    if (n == "2" || n == "3")
+        return true;
+    if ((n.back() - '0') % 2 == 0)
+        return false;
+
+    // n - 1 = d * 2^s
+    std::string n_minus_1 = bigint_sub(n, "1");
+    std::string d = n_minus_1;
+    int s = 0;
+    while (!d.empty() && (d.back() - '0') % 2 == 0)
+    {
+        d = bigint_divmod_abs(d, "2", false);
+        s++;
+    }
+
+    static const std::vector<std::string> bases = {
+        "2", "3", "5", "7", "11", "13", "17", "19", "23", "29", "31", "37"
+    };
+
+    int total_rounds = (rounds < (int)bases.size()) ? rounds : (int)bases.size();
+    for (int i = 0; i < total_rounds; i++)
+    {
+        const std::string &a = bases[i];
+        if (bigint_compare(a, n_minus_1) >= 0)
+            break;
+
+        std::string x = bigint_powmod(a, d, n);
+        if (x == "1" || x == n_minus_1)
+            continue;
+
+        bool composite = true;
+        for (int r = 1; r < s; r++)
+        {
+            x = bigint_powmod(x, "2", n);
+            if (x == n_minus_1)
+            {
+                composite = false;
+                break;
+            }
+        }
+        if (composite)
+            return false;
+    }
+    return true;
+}
+
 // --- BigInt Bitwise Operations (arbitrary-precision binary limbs) ---
 struct BigIntWords
 {
@@ -2181,6 +2238,18 @@ std::string to_bigint_str(const TzdValue &v)
 {
     if (v.type == TzdValue::BIGINT)
         return v.sVal;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal)
+    {
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type != TzdValue::NONE)
+                return to_bigint_str(f);
+        }
+        catch (...)
+        {
+        }
+    }
     if (v.type == TzdValue::STRING)
         return v.sVal;
     if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT)
@@ -2218,9 +2287,32 @@ bool is_bigint(const TzdValue &v)
     return v.type == TzdValue::BIGINT;
 }
 
+bool is_bigint_like(const TzdValue &v)
+{
+    if (v.type == TzdValue::BIGINT)
+        return true;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal && v.instanceVal->definition)
+    {
+        const std::string &name = v.instanceVal->definition->name;
+        const std::string &sname = v.instanceVal->definition->simpleName;
+        if (name == "BigInt" || name == "math.BigInt" || sname == "BigInt")
+            return true;
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type == TzdValue::BIGINT)
+                return true;
+        }
+        catch (...)
+        {
+        }
+    }
+    return false;
+}
+
 bool needs_bigint(const TzdValue &a, const TzdValue &b)
 {
-    return a.type == TzdValue::BIGINT || b.type == TzdValue::BIGINT;
+    return is_bigint_like(a) || is_bigint_like(b);
 }
 
 // ============================================================================
@@ -2386,6 +2478,18 @@ std::string to_rational_str(const TzdValue &v)
 {
     if (v.type == TzdValue::RATIONAL)
         return v.sVal;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal)
+    {
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type != TzdValue::NONE)
+                return to_rational_str(f);
+        }
+        catch (...)
+        {
+        }
+    }
     if (v.type == TzdValue::BIGINT)
         return v.sVal + "/1";
     if (v.type == TzdValue::STRING)
@@ -2423,9 +2527,567 @@ TzdValue make_rational(const std::string &num, const std::string &den)
     return v;
 }
 
+bool is_rational_like(const TzdValue &v)
+{
+    if (v.type == TzdValue::RATIONAL)
+        return true;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal && v.instanceVal->definition)
+    {
+        const std::string &name = v.instanceVal->definition->name;
+        const std::string &sname = v.instanceVal->definition->simpleName;
+        if (name == "Rational" || name == "math.Rational" || sname == "Rational")
+            return true;
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type == TzdValue::RATIONAL)
+                return true;
+        }
+        catch (...)
+        {
+        }
+    }
+    return false;
+}
+
 bool needs_rational(const TzdValue &a, const TzdValue &b)
 {
-    return a.type == TzdValue::RATIONAL || b.type == TzdValue::RATIONAL;
+    return is_rational_like(a) || is_rational_like(b);
+}
+
+// ============================================================================
+// BigFloat (arbitrary-precision floating-point) arithmetic using GNU MPFR
+// ============================================================================
+
+static thread_local size_t g_bigFloatPrecision = 256; // 256 bits default (~77 decimal digits)
+static size_t g_bigFloatMaxBits = 10000000; // 10 million bits default (~3 million decimal digits)
+
+size_t getBigFloatPrecision()
+{
+    return g_bigFloatPrecision;
+}
+
+void setBigFloatPrecision(size_t bits)
+{
+    if (bits < 2) bits = 2;
+    if (bits > g_bigFloatMaxBits) bits = g_bigFloatMaxBits;
+    g_bigFloatPrecision = bits;
+}
+
+size_t getBigFloatMaxPrecision()
+{
+    return g_bigFloatMaxBits;
+}
+
+void setBigFloatMaxPrecision(size_t maxBits)
+{
+    if (maxBits < 64) maxBits = 64;
+    if (maxBits > 100000000) maxBits = 100000000; // 100M bits ceiling (~30M decimal digits)
+    g_bigFloatMaxBits = maxBits;
+}
+
+static inline mpfr_prec_t effective_prec(size_t p)
+{
+    size_t req = p > 0 ? p : g_bigFloatPrecision;
+    if (req > g_bigFloatMaxBits)
+    {
+        throw std::runtime_error("BigFloat 精度超出限制: 请求精度 " + std::to_string(req) +
+            " 位超过当前最大限制 " + std::to_string(g_bigFloatMaxBits) +
+            " 位 (约 " + std::to_string((size_t)(g_bigFloatMaxBits * 0.30103)) +
+            " 位十进制)。防止内存耗尽与死锁。如需更高精度请调用 setBigFloatMaxPrecision(n)");
+    }
+    return (mpfr_prec_t)req;
+}
+
+struct ScopedMpfr
+{
+    mpfr_t val;
+    explicit ScopedMpfr(mpfr_prec_t prec)
+    {
+        mpfr_init2(val, prec);
+    }
+    ~ScopedMpfr()
+    {
+        mpfr_clear(val);
+    }
+    operator mpfr_ptr() { return val; }
+    operator mpfr_srcptr() const { return val; }
+};
+
+static bool parse_to_mpfr(mpfr_ptr dest, const std::string &s)
+{
+    if (s.empty())
+    {
+        mpfr_set_zero(dest, 1);
+        return true;
+    }
+    size_t slash = s.find('/');
+    if (slash != std::string::npos)
+    {
+        std::string num = s.substr(0, slash);
+        std::string den = s.substr(slash + 1);
+        ScopedMpfr nm(mpfr_get_prec(dest)), dm(mpfr_get_prec(dest));
+        if (mpfr_set_str(nm, num.c_str(), 10, MPFR_RNDN) != 0) return false;
+        if (mpfr_set_str(dm, den.c_str(), 10, MPFR_RNDN) != 0) return false;
+        mpfr_div(dest, nm, dm, MPFR_RNDN);
+        return true;
+    }
+    return (mpfr_set_str(dest, s.c_str(), 10, MPFR_RNDN) == 0);
+}
+
+static std::string format_mpfr(mpfr_srcptr x, mpfr_prec_t prec)
+{
+    if (mpfr_nan_p(x)) return "nan";
+    if (mpfr_inf_p(x)) return (mpfr_sgn(x) < 0) ? "-inf" : "inf";
+    if (mpfr_zero_p(x)) return (mpfr_signbit(x)) ? "-0.0" : "0.0";
+
+    size_t digits = (size_t)std::ceil((double)prec * 0.3010299956639812);
+    if (digits < 6) digits = 6;
+
+    std::string res;
+    // Fast path: use stack buffer for typical precisions (up to ~200 digits) without dynamic allocations
+    char stackBuf[256];
+    if (digits < 200)
+    {
+        int n = mpfr_snprintf(stackBuf, sizeof(stackBuf), "%.*Rg", (int)digits, x);
+        if (n > 0 && (size_t)n < sizeof(stackBuf))
+        {
+            res.assign(stackBuf, n);
+        }
+    }
+    if (res.empty())
+    {
+        char *buf = nullptr;
+        mpfr_asprintf(&buf, "%.*Rg", (int)digits, x);
+        if (buf)
+        {
+            res = buf;
+            mpfr_free_str(buf);
+        }
+        else
+        {
+            res = "0.0";
+        }
+    }
+    if (res.find('.') == std::string::npos && res.find('e') == std::string::npos && res.find('E') == std::string::npos)
+    {
+        res += ".0";
+    }
+    return res;
+}
+
+std::string bigfloat_add(const std::string& a, const std::string& b, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mb(p), mr(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    mpfr_add(mr, ma, mb, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_sub(const std::string& a, const std::string& b, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mb(p), mr(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    mpfr_sub(mr, ma, mb, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_mul(const std::string& a, const std::string& b, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mb(p), mr(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    mpfr_mul(mr, ma, mb, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_div(const std::string& a, const std::string& b, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mb(p), mr(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    mpfr_div(mr, ma, mb, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_pow(const std::string& base, const std::string& exp, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr mb(p), me(p), mr(p);
+    parse_to_mpfr(mb, base);
+    parse_to_mpfr(me, exp);
+    mpfr_pow(mr, mb, me, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_sqrt(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_sqrt(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_cbrt(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_cbrt(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_hypot(const std::string& a, const std::string& b, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mb(p), mr(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    mpfr_hypot(mr, ma, mb, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_exp(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_exp(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_log(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_log(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_log10(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_log10(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_log2(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_log2(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_sin(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_sin(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_cos(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_cos(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_tan(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_tan(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_asin(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_asin(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_acos(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_acos(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_atan(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_atan(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_atan2(const std::string& y, const std::string& x, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr my(p), mx(p), mr(p);
+    parse_to_mpfr(my, y);
+    parse_to_mpfr(mx, x);
+    mpfr_atan2(mr, my, mx, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_sinh(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_sinh(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_cosh(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_cosh(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_tanh(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_tanh(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_gamma(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_gamma(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_zeta(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_zeta(mr, ma, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_pi(size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr mr(p);
+    mpfr_const_pi(mr, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_e(size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr one(p), mr(p);
+    mpfr_set_ui(one, 1, MPFR_RNDN);
+    mpfr_exp(mr, one, MPFR_RNDN);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_floor(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_floor(mr, ma);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_ceil(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_ceil(mr, ma);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_round(const std::string& a, size_t prec)
+{
+    mpfr_prec_t p = effective_prec(prec);
+    ScopedMpfr ma(p), mr(p);
+    parse_to_mpfr(ma, a);
+    mpfr_round(mr, ma);
+    return format_mpfr(mr, p);
+}
+
+std::string bigfloat_abs(const std::string& a)
+{
+    if (a.empty()) return "0.0";
+    if (a[0] == '-') return a.substr(1);
+    return a;
+}
+
+int bigfloat_compare(const std::string& a, const std::string& b)
+{
+    mpfr_prec_t p = effective_prec(0);
+    ScopedMpfr ma(p), mb(p);
+    parse_to_mpfr(ma, a);
+    parse_to_mpfr(mb, b);
+    return mpfr_cmp(ma, mb);
+}
+
+std::string to_bigfloat_str(const TzdValue& v)
+{
+    if (v.type == TzdValue::BIGFLOAT)
+        return v.sVal;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal)
+    {
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type != TzdValue::NONE)
+                return to_bigfloat_str(f);
+        }
+        catch (...)
+        {
+        }
+    }
+    if (v.type == TzdValue::BIGINT)
+        return v.sVal + ".0";
+    if (v.type == TzdValue::RATIONAL)
+    {
+        std::string num, den;
+        rational_parse(v.sVal, num, den);
+        return bigfloat_div(num, den);
+    }
+    if (v.type == TzdValue::DOUBLE || v.type == TzdValue::FLOAT)
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.17g", v.dVal);
+        std::string s = buf;
+        if (s.find('.') == std::string::npos && s.find('e') == std::string::npos && s.find('E') == std::string::npos)
+            s += ".0";
+        return s;
+    }
+    if (v.type == TzdValue::ULONG)
+        return std::to_string(v.ulVal) + ".0";
+    if (v.type == TzdValue::STRING)
+        return v.sVal;
+    return std::to_string(v.lVal) + ".0";
+}
+
+TzdValue make_bigfloat(const std::string& s)
+{
+    TzdValue v;
+    v.type = TzdValue::BIGFLOAT;
+    v.sVal = s;
+    return v;
+}
+
+std::string bigfloat_pi_digits(size_t digits)
+{
+    size_t bits = (size_t)std::ceil((double)digits * 3.321928094887362) + 16;
+    return bigfloat_pi(bits);
+}
+
+bool is_bigfloat(const TzdValue& v)
+{
+    return v.type == TzdValue::BIGFLOAT;
+}
+
+bool is_bigfloat_like(const TzdValue& v)
+{
+    if (v.type == TzdValue::BIGFLOAT)
+        return true;
+    if (v.type == TzdValue::INSTANCE && v.instanceVal && v.instanceVal->definition)
+    {
+        const std::string &name = v.instanceVal->definition->name;
+        const std::string &sname = v.instanceVal->definition->simpleName;
+        if (name == "BigFloat" || name == "math.BigFloat" || sname == "BigFloat")
+            return true;
+        try
+        {
+            TzdValue f = v.instanceVal->getMember("val");
+            if (f.type == TzdValue::BIGFLOAT)
+                return true;
+        }
+        catch (...)
+        {
+        }
+    }
+    return false;
+}
+
+bool needs_bigfloat(const TzdValue& a, const TzdValue& b)
+{
+    return is_bigfloat_like(a) || is_bigfloat_like(b);
+}
+
+static TzdValue wrap_if_oop_instance(const TzdValue &left, const TzdValue &right, const TzdValue &result)
+{
+    TzdInstance *src = (left.type == TzdValue::INSTANCE && left.instanceVal) ? left.instanceVal :
+                       ((right.type == TzdValue::INSTANCE && right.instanceVal) ? right.instanceVal : nullptr);
+    if (src && src->definition)
+    {
+        const std::string &cls = src->definition->name;
+        const std::string &scls = src->definition->simpleName;
+        if (cls == "BigInt" || scls == "BigInt" ||
+            cls == "BigFloat" || scls == "BigFloat" ||
+            cls == "Rational" || scls == "Rational")
+        {
+            TzdInstance *outInst = TzdInstance::create(src->definition);
+            outInst->setMember("val", result);
+            TzdValue out;
+            out.type = TzdValue::INSTANCE;
+            out.setInstance(outInst);
+            return out;
+        }
+    }
+    return result;
+}
+
+static TzdValue wrap_if_oop_instance_single(const TzdValue &val, const TzdValue &result)
+{
+    if (val.type == TzdValue::INSTANCE && val.instanceVal && val.instanceVal->definition)
+    {
+        const std::string &cls = val.instanceVal->definition->name;
+        const std::string &scls = val.instanceVal->definition->simpleName;
+        if (cls == "BigInt" || scls == "BigInt" ||
+            cls == "BigFloat" || scls == "BigFloat" ||
+            cls == "Rational" || scls == "Rational")
+        {
+            TzdInstance *outInst = TzdInstance::create(val.instanceVal->definition);
+            outInst->setMember("val", result);
+            TzdValue out;
+            out.type = TzdValue::INSTANCE;
+            out.setInstance(outInst);
+            return out;
+        }
+    }
+    return result;
 }
 
 TzdInterpreter::TzdInterpreter()
@@ -2743,15 +3405,34 @@ static std::string getParamType(TzdLangParser::ParamContext *p)
 }
 
 static void parseParamList(TzdLangParser::ParamListContext *paramList,
-                           std::vector<std::string> &names, std::vector<std::string> &types)
+                           std::vector<std::string> &names, std::vector<std::string> &types,
+                           bool &isVararg)
 {
+    isVararg = false;
     if (!paramList)
         return;
-    for (auto p : paramList->param())
+    const auto &params = paramList->param();
+    for (size_t i = 0; i < params.size(); ++i)
     {
+        auto p = params[i];
         names.push_back(getParamName(p));
         types.push_back(getParamType(p));
+        if (p->ELLIPSIS())
+        {
+            if (i != params.size() - 1)
+            {
+                throw std::runtime_error("可变参数 '...' 必须是形参列表的最后一个参数");
+            }
+            isVararg = true;
+        }
     }
+}
+
+static void parseParamList(TzdLangParser::ParamListContext *paramList,
+                           std::vector<std::string> &names, std::vector<std::string> &types)
+{
+    bool dummy = false;
+    parseParamList(paramList, names, types, dummy);
 }
 // #endregion
 
@@ -3000,6 +3681,18 @@ double TzdInterpreter::getAsDoubleInternal(const TzdValue &v)
         }
     }
 
+    case TzdValue::BIGFLOAT:
+    {
+        try
+        {
+            return std::stod(v.sVal);
+        }
+        catch (...)
+        {
+            return 0.0;
+        }
+    }
+
     default:
         return 0.0;
     }
@@ -3055,6 +3748,7 @@ int64_t TzdInterpreter::getAsInt64Internal(const TzdValue &v)
         }
     }
     case TzdValue::BIGINT:
+    case TzdValue::BIGFLOAT:
     {
         try
         {
@@ -3097,6 +3791,8 @@ bool TzdInterpreter::isTruthy(const TzdValue &v)
         rational_parse(v.sVal, num, den);
         return num != "0" && num != "-0";
     }
+    case TzdValue::BIGFLOAT:
+        return v.sVal != "0" && v.sVal != "0.0" && v.sVal != "-0.0" && !v.sVal.empty();
     default:
         return getAsDoubleInternal(v) != 0.0;
     }
@@ -3113,7 +3809,17 @@ bool TzdInterpreter::valuesEqual(const TzdValue &l, const TzdValue &r)
         if (l.type == TzdValue::STRING)
             return l.sVal == r.sVal;
         if (l.type == TzdValue::INSTANCE)
-            return l.instanceVal == r.instanceVal;
+        {
+            if (l.instanceVal == r.instanceVal)
+                return true;
+            if (is_bigfloat_like(l) && is_bigfloat_like(r))
+                return bigfloat_compare(to_bigfloat_str(l), to_bigfloat_str(r)) == 0;
+            if (is_bigint_like(l) && is_bigint_like(r))
+                return bigint_compare(to_bigint_str(l), to_bigint_str(r)) == 0;
+            if (is_rational_like(l) && is_rational_like(r))
+                return rational_compare(to_rational_str(l), to_rational_str(r)) == 0;
+            return false;
+        }
         if (l.type == TzdValue::CLASS_DEF)
             return l.classDefVal == r.classDefVal;
         if (l.type == TzdValue::POINTER)
@@ -3122,6 +3828,8 @@ bool TzdInterpreter::valuesEqual(const TzdValue &l, const TzdValue &r)
             return bigint_compare(l.sVal, r.sVal) == 0;
         if (l.type == TzdValue::RATIONAL)
             return rational_compare(l.sVal, r.sVal) == 0;
+        if (l.type == TzdValue::BIGFLOAT)
+            return bigfloat_compare(l.sVal, r.sVal) == 0;
         if (l.type == TzdValue::FLOAT || l.type == TzdValue::DOUBLE)
             return l.dVal == r.dVal;
         if (l.type >= TzdValue::SBYTE && l.type <= TzdValue::ULONG)
@@ -3129,10 +3837,12 @@ bool TzdInterpreter::valuesEqual(const TzdValue &l, const TzdValue &r)
     }
     if (l.type == TzdValue::NONE || r.type == TzdValue::NONE)
         return false;
-    // Mixed BIGINT/RATIONAL with other numeric types
-    if (l.type == TzdValue::BIGINT || r.type == TzdValue::BIGINT)
+    // Mixed BIGFLOAT / BIGINT / RATIONAL with other numeric types
+    if (is_bigfloat_like(l) || is_bigfloat_like(r))
+        return bigfloat_compare(to_bigfloat_str(l), to_bigfloat_str(r)) == 0;
+    if (is_bigint_like(l) || is_bigint_like(r))
         return bigint_compare(to_bigint_str(l), to_bigint_str(r)) == 0;
-    if (l.type == TzdValue::RATIONAL || r.type == TzdValue::RATIONAL)
+    if (is_rational_like(l) || is_rational_like(r))
         return rational_compare(to_rational_str(l), to_rational_str(r)) == 0;
     bool lNum = (l.type >= TzdValue::SBYTE && l.type <= TzdValue::DOUBLE);
     bool rNum = (r.type >= TzdValue::SBYTE && r.type <= TzdValue::DOUBLE);
@@ -3208,10 +3918,12 @@ void TzdInterpreter::appendValueToString(std::string &out, const TzdValue &v)
     case TzdValue::STRING:
     case TzdValue::BIGINT:
     case TzdValue::RATIONAL:
+    case TzdValue::BIGFLOAT:
         out.append(v.sVal);
         return;
     case TzdValue::BOOL:
         out.append(v.bVal ? "true" : "false");
+        return;
         return;
     case TzdValue::ARRAY:
     {
@@ -3338,6 +4050,19 @@ void TzdInterpreter::appendValueToString(std::string &out, const TzdValue &v)
         {
             out.append("null instance");
             return;
+        }
+        if (v.instanceVal->definition)
+        {
+            const std::string &cls = v.instanceVal->definition->name;
+            const std::string &scls = v.instanceVal->definition->simpleName;
+            if (cls == "BigInt" || scls == "BigInt" ||
+                cls == "BigFloat" || scls == "BigFloat" ||
+                cls == "Rational" || scls == "Rational")
+            {
+                TzdValue f = v.instanceVal->getMember("val");
+                appendValueToString(out, f);
+                return;
+            }
         }
         out.append("Instance of ");
         out.append(v.instanceVal->definition ? v.instanceVal->definition->fullName : "Unknown");
@@ -3721,10 +4446,14 @@ void TzdInterpreter::setVariable(const std::string &name, TzdValue val)
         if (it->count("this"))
         {
             TzdValue thisVal = (*it)["this"];
-            if (thisVal.type == TzdValue::INSTANCE && thisVal.instanceVal)
+            if (thisVal.type == TzdValue::INSTANCE && thisVal.instanceVal && thisVal.instanceVal->definition)
             {
-                thisVal.instanceVal->setMember(name, val);
-                return;
+                if (thisVal.instanceVal->definition->findField(name) != nullptr ||
+                    thisVal.instanceVal->definition->findStaticValue(name) != nullptr)
+                {
+                    thisVal.instanceVal->setMember(name, val);
+                    return;
+                }
             }
         }
     }
@@ -4443,7 +5172,15 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     std::string stackFrame = func.name.empty() ? "<anonymous>" : func.name;
     if (func.instanceVal && func.instanceVal->definition)
     {
-        stackFrame = func.instanceVal->definition->fullName + "." + func.name;
+        const std::string& instClass = func.instanceVal->definition->fullName;
+        if (!func.declaringClass.empty() && func.declaringClass != instClass)
+        {
+            stackFrame = instClass + "(" + func.declaringClass + ")." + func.name;
+        }
+        else
+        {
+            stackFrame = instClass + "." + func.name;
+        }
     }
     stackFrame += " (" + fileLoc + ")";
     if (func.type == TzdValue::NATIVE_FUNCTION)
@@ -4459,23 +5196,59 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     // 分支之前执行，以保持与原有行为一致。
     if (func.type == TzdValue::FUNCTION)
     {
-        if (args.size() != func.params.size())
+        if (func.isVararg)
         {
-            if (!(func.jittedPtr && func.params.empty()))
+            size_t minArgs = func.params.empty() ? 0 : func.params.size() - 1;
+            if (args.size() < minArgs)
             {
-                throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
-                                         std::to_string(func.params.size()) + " 个，实际 " +
+                throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 至少期望 " +
+                                         std::to_string(minArgs) + " 个，实际 " +
                                          std::to_string(args.size()) + " 个");
             }
-        }
-        for (size_t i = 0; i < args.size(); ++i)
-        {
-            if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
-                !checkParamValueType(func.paramTypes[i], args[i]))
+            for (size_t i = 0; i < minArgs; ++i)
             {
-                throw std::runtime_error(
-                    "函数 '" + func.name + "' 第 " + std::to_string(i + 1) +
-                    " 个参数类型不匹配: 期望 " + func.paramTypes[i]);
+                if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
+                    !checkParamValueType(func.paramTypes[i], args[i]))
+                {
+                    throw std::runtime_error(
+                        "函数 '" + func.name + "' 第 " + std::to_string(i + 1) +
+                        " 个参数类型不匹配: 期望 " + func.paramTypes[i]);
+                }
+            }
+            if (!func.paramTypes.empty() && !func.paramTypes.back().empty())
+            {
+                const std::string &varType = func.paramTypes.back();
+                for (size_t i = minArgs; i < args.size(); ++i)
+                {
+                    if (!checkParamValueType(varType, args[i]))
+                    {
+                        throw std::runtime_error(
+                            "函数 '" + func.name + "' 可变参数类型不匹配: 期望 " + varType +
+                            "，实际为 " + getTzdValueTypeName(args[i]));
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (args.size() != func.params.size())
+            {
+                if (!(func.jittedPtr && func.params.empty()))
+                {
+                    throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
+                                             std::to_string(func.params.size()) + " 个，实际 " +
+                                             std::to_string(args.size()) + " 个");
+                }
+            }
+            for (size_t i = 0; i < args.size(); ++i)
+            {
+                if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
+                    !checkParamValueType(func.paramTypes[i], args[i]))
+                {
+                    throw std::runtime_error(
+                        "函数 '" + func.name + "' 第 " + std::to_string(i + 1) +
+                        " 个参数类型不匹配: 期望 " + func.paramTypes[i]);
+                }
             }
         }
     }
@@ -4530,7 +5303,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     {
         return callScriptFunction(func.name, func.params, func.paramTypes,
                                   func.funcBody, effJittedPtr, func.instanceVal, args,
-                                  func.sourceFile, func.line, func.closureScope);
+                                  func.sourceFile, func.line, func.closureScope, func.isVararg);
     }
 
     // --- 分支 D: 字节码 VM 快速路径 ---
@@ -4538,7 +5311,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     // method (instanceVal != nullptr) must never be routed to an unrelated
     // free function that happens to share its name — it falls through to the
     // script-function core which executes func.funcBody directly.
-    if (!TzdDebugger::g_DebugActive && m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr)
+    if (!TzdDebugger::g_DebugActive && m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr && !func.isVararg)
     {
         auto it = m_bytecodeModule->funcIndex.find(func.name);
         if (it != m_bytecodeModule->funcIndex.end())
@@ -4550,7 +5323,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     // --- 分支 E: 脚本函数 (解释执行)，走公共核心 ---
     return callScriptFunction(func.name, func.params, func.paramTypes,
                               func.funcBody, func.jittedPtr, func.instanceVal, args,
-                              func.sourceFile, func.line, func.closureScope);
+                              func.sourceFile, func.line, func.closureScope, func.isVararg);
 }
 
 TzdValue TzdInterpreter::callMethod(ClassMethod &method, TzdInstance *receiver,
@@ -4580,20 +5353,56 @@ TzdValue TzdInterpreter::callMethod(ClassMethod &method, TzdInstance *receiver,
     // 参数个数与类型校验 (脚本方法；原生方法跳过)。
     if (!method.isNative)
     {
-        if (args.size() != method.params.size())
+        if (method.isVararg)
         {
-            throw std::runtime_error("函数 '" + method.name + "' 参数不匹配: 期望 " +
-                                     std::to_string(method.params.size()) + " 个，实际 " +
-                                     std::to_string(args.size()) + " 个");
-        }
-        for (size_t i = 0; i < args.size(); ++i)
-        {
-            if (i < method.paramTypes.size() && !method.paramTypes[i].empty() &&
-                !checkParamValueType(method.paramTypes[i], args[i]))
+            size_t minArgs = method.params.empty() ? 0 : method.params.size() - 1;
+            if (args.size() < minArgs)
             {
-                throw std::runtime_error(
-                    "函数 '" + method.name + "' 第 " + std::to_string(i + 1) +
-                    " 个参数类型不匹配: 期望 " + method.paramTypes[i]);
+                throw std::runtime_error("方法 '" + method.name + "' 参数不匹配: 至少期望 " +
+                                         std::to_string(minArgs) + " 个，实际 " +
+                                         std::to_string(args.size()) + " 个");
+            }
+            for (size_t i = 0; i < minArgs; ++i)
+            {
+                if (i < method.paramTypes.size() && !method.paramTypes[i].empty() &&
+                    !checkParamValueType(method.paramTypes[i], args[i]))
+                {
+                    throw std::runtime_error(
+                        "方法 '" + method.name + "' 第 " + std::to_string(i + 1) +
+                        " 个参数类型不匹配: 期望 " + method.paramTypes[i]);
+                }
+            }
+            if (!method.paramTypes.empty() && !method.paramTypes.back().empty())
+            {
+                const std::string &varType = method.paramTypes.back();
+                for (size_t i = minArgs; i < args.size(); ++i)
+                {
+                    if (!checkParamValueType(varType, args[i]))
+                    {
+                        throw std::runtime_error(
+                            "方法 '" + method.name + "' 可变参数类型不匹配: 期望 " + varType +
+                            "，实际为 " + getTzdValueTypeName(args[i]));
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (args.size() != method.params.size())
+            {
+                throw std::runtime_error("函数 '" + method.name + "' 参数不匹配: 期望 " +
+                                         std::to_string(method.params.size()) + " 个，实际 " +
+                                         std::to_string(args.size()) + " 个");
+            }
+            for (size_t i = 0; i < args.size(); ++i)
+            {
+                if (i < method.paramTypes.size() && !method.paramTypes[i].empty() &&
+                    !checkParamValueType(method.paramTypes[i], args[i]))
+                {
+                    throw std::runtime_error(
+                        "函数 '" + method.name + "' 第 " + std::to_string(i + 1) +
+                        " 个参数类型不匹配: 期望 " + method.paramTypes[i]);
+                }
             }
         }
     }
@@ -4625,7 +5434,7 @@ TzdValue TzdInterpreter::callMethod(ClassMethod &method, TzdInstance *receiver,
 
     return callScriptFunction(method.name, method.params, method.paramTypes,
                               method.body, effMethodJittedPtr, receiver, args,
-                              method.sourceFile, method.line);
+                              method.sourceFile, method.line, nullptr, method.isVararg);
 }
 
 // Common script-function execution core shared by callFunction() and
@@ -4643,7 +5452,8 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string &name,
                                             const std::vector<TzdValue> &args,
                                             const std::string &sourceFile,
                                             int line,
-                                            std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope)
+                                            std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope,
+                                            bool isVararg)
 {
 
     // Arg/type checks are performed by the callers (callFunction / callMethod)
@@ -4796,12 +5606,43 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string &name,
     std::unordered_map<std::string, TzdValue> callScope;
     if (receiver != nullptr)
         callScope["this"] = TzdValue(receiver);
-    for (size_t i = 0; i < params.size(); ++i)
+
+    if (isVararg)
     {
-        callScope[params[i]] = args[i];
-        if (i < paramTypes.size() && !paramTypes[i].empty())
+        size_t fixedCount = params.empty() ? 0 : params.size() - 1;
+        for (size_t i = 0; i < fixedCount; ++i)
         {
-            callScope[params[i]].declaredType = paramTypes[i];
+            if (i < args.size())
+                callScope[params[i]] = args[i];
+            else
+                callScope[params[i]] = TzdValue();
+            if (i < paramTypes.size() && !paramTypes[i].empty())
+            {
+                callScope[params[i]].declaredType = paramTypes[i];
+            }
+        }
+        if (!params.empty())
+        {
+            const std::string &varargName = params.back();
+            std::vector<TzdValue> varargArr;
+            for (size_t j = fixedCount; j < args.size(); ++j)
+            {
+                varargArr.push_back(args[j]);
+            }
+            TzdValue varargVal(varargArr);
+            varargVal.type = TzdValue::ARRAY;
+            callScope[varargName] = varargVal;
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < params.size(); ++i)
+        {
+            callScope[params[i]] = args[i];
+            if (i < paramTypes.size() && !paramTypes[i].empty())
+            {
+                callScope[params[i]].declaredType = paramTypes[i];
+            }
         }
     }
 
@@ -4998,6 +5839,68 @@ std::any TzdInterpreter::visitTryCatchStmt(TzdLangParser::TryCatchStmtContext *c
         }
         scopes.pop_back();
     }
+    catch (const TzdRuntimeException &e)
+    {
+        std::unordered_map<std::string, TzdValue> catchScope;
+        catchScope[catchName] = TzdValue(std::string(e.what()));
+        scopes.push_back(catchScope);
+        try
+        {
+            visit(ctx->block(1));
+        }
+        catch (const TzdBreakException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdContinueException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdReturnException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdThrowException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        scopes.pop_back();
+    }
+    catch (const std::exception &e)
+    {
+        std::unordered_map<std::string, TzdValue> catchScope;
+        catchScope[catchName] = TzdValue(std::string(e.what()));
+        scopes.push_back(catchScope);
+        try
+        {
+            visit(ctx->block(1));
+        }
+        catch (const TzdBreakException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdContinueException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdReturnException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        catch (const TzdThrowException &)
+        {
+            scopes.pop_back();
+            throw;
+        }
+        scopes.pop_back();
+    }
     return TzdValue();
 }
 
@@ -5116,20 +6019,22 @@ std::any TzdInterpreter::visitIndexExpr(TzdLangParser::IndexExprContext *ctx)
         return it->second;
     }
 
-    throw TzdRuntimeException("类型错误: 该类型不支持下标访问", ctx->getStart());
+    throw TzdRuntimeException("类型错误: 该类型不支持下标访问 (实际类型: " + getTzdValueTypeName(container) + ")", ctx->getStart());
 }
 
 std::any TzdInterpreter::visitLambdaExpr(TzdLangParser::LambdaExprContext *ctx)
 {
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    parseParamList(ctx->paramList(), params, paramTypes);
+    bool isVararg = false;
+    parseParamList(ctx->paramList(), params, paramTypes, isVararg);
     std::string retType = ctx->typeType() ? ctx->typeType()->getText() : "";
     std::string lambdaInternalName = "lambda_v" + std::to_string(m_funcVersion++);
 
     TzdValue funcVal("", params, ctx->block(), retType);
     funcVal.paramTypes = paramTypes;
     funcVal.returnType = retType;
+    funcVal.isVararg = isVararg;
     funcVal.type = TzdValue::FUNCTION;
     funcVal.jitInternalName = lambdaInternalName;
     funcVal.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
@@ -5202,12 +6107,14 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    parseParamList(ctx->paramList(), params, paramTypes);
+    bool isVararg = false;
+    parseParamList(ctx->paramList(), params, paramTypes, isVararg);
     std::string retType = ctx->typeType() ? ctx->typeType()->getText() : "";
 
     TzdValue funcVal(funcName, params, ctx->block(), retType);
     funcVal.paramTypes = paramTypes;
     funcVal.returnType = retType;
+    funcVal.isVararg = isVararg;
     funcVal.type = TzdValue::FUNCTION;
     funcVal.jitInternalName = internalJitName;
 
@@ -5215,7 +6122,7 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
     funcVal.line = (int)ctx->getStart()->getLine();
     funcVal.column = (int)ctx->getStart()->getCharPositionInLine();
 
-    if (!m_noJit && m_jitEngine && m_compiler)
+    if (!m_noJit && m_jitEngine && m_compiler && !isVararg)
     {
         try
         {
@@ -5225,9 +6132,8 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
         }
         catch (const std::exception &e)
         {
-            // JIT compilation failed (e.g. BIGINT literal) — function will run via interpreter
-            std::cerr << "[JIT Warning] Failed to compile " << funcName << ": " << e.what() << std::endl;
-            agentLogCompile("D", "visitFunctionDeclaration", e.what());
+            // JIT compilation failed (e.g. for-each, BIGINT literal or unsupported AST) — reset compiler and run via interpreter
+            m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "new_main_module");
         }
     }
 
@@ -5666,40 +6572,53 @@ std::any TzdInterpreter::visitAssignmentExpr(TzdLangParser::AssignmentExprContex
     {
         if (!isCompound)
             return rightV;
+        if (needs_bigfloat(oldV, rightV))
+        {
+            std::string a = to_bigfloat_str(oldV);
+            std::string b = to_bigfloat_str(rightV);
+            if (ctx->PLUS_ASSIGN())
+                return wrap_if_oop_instance(oldV, rightV, make_bigfloat(bigfloat_add(a, b)));
+            if (ctx->MIN_ASSIGN())
+                return wrap_if_oop_instance(oldV, rightV, make_bigfloat(bigfloat_sub(a, b)));
+            if (ctx->MUL_ASSIGN())
+                return wrap_if_oop_instance(oldV, rightV, make_bigfloat(bigfloat_mul(a, b)));
+            if (ctx->DIV_ASSIGN())
+                return wrap_if_oop_instance(oldV, rightV, make_bigfloat(bigfloat_div(a, b)));
+        }
         if (needs_bigint(oldV, rightV))
         {
             std::string a = to_bigint_str(oldV);
             std::string b = to_bigint_str(rightV);
             if (ctx->PLUS_ASSIGN())
-                return make_bigint(bigint_add(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_add(a, b)));
             if (ctx->MIN_ASSIGN())
-                return make_bigint(bigint_sub(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_sub(a, b)));
             if (ctx->MUL_ASSIGN())
-                return make_bigint(bigint_mul(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_mul(a, b)));
             if (ctx->DIV_ASSIGN())
             {
-                if (b == "0")
+                if (b == "0" || b == "-0")
                     throw TzdRuntimeException("Division by zero", ctx->getStart());
-                return make_bigint(bigint_div(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_div(a, b)));
             }
             if (ctx->MOD_ASSIGN())
             {
-                if (b == "0")
+                if (b == "0" || b == "-0")
                     throw TzdRuntimeException("Division by zero in modulo", ctx->getStart());
-                return make_bigint(bigint_mod(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_mod(a, b)));
             }
             if (ctx->AND_ASSIGN())
-                return make_bigint(bigint_and(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_and(a, b)));
             if (ctx->OR_ASSIGN())
-                return make_bigint(bigint_or(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_or(a, b)));
             if (ctx->XOR_ASSIGN())
-                return make_bigint(bigint_xor(a, b));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_xor(a, b)));
             if (ctx->SHL_ASSIGN())
-                return make_bigint(bigint_shl(a, getAsInt64Internal(rightV)));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_shl(a, getAsInt64Internal(rightV))));
             if (ctx->SHR_ASSIGN())
-                return make_bigint(bigint_shr(a, getAsInt64Internal(rightV)));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_shr(a, getAsInt64Internal(rightV))));
             if (ctx->USHR_ASSIGN())
-                return make_bigint(bigint_ushr(a, getAsInt64Internal(rightV)));
+                return wrap_if_oop_instance(oldV, rightV, make_bigint(bigint_ushr(a, getAsInt64Internal(rightV))));
         }
         if (ctx->PLUS_ASSIGN())
         {
@@ -5781,6 +6700,7 @@ std::any TzdInterpreter::visitAssignmentExpr(TzdLangParser::AssignmentExprContex
             {
                 if (containerPtr->isNativeDoubleArr)
                 {
+                    containerPtr->arrVal.clear();
                     containerPtr->arrVal.reserve(containerPtr->nativeArr.size());
                     for (double d : containerPtr->nativeArr)
                         containerPtr->arrVal.push_back(TzdValue(d));
@@ -6044,6 +6964,12 @@ std::any TzdInterpreter::visitAdditiveExpr(TzdLangParser::AdditiveExprContext *c
             appendValueToString(result.sVal, right);
         }
     }
+    // --- BIGFLOAT arithmetic ---
+    else if (needs_bigfloat(left, right))
+    {
+        std::string a = to_bigfloat_str(left), b = to_bigfloat_str(right);
+        result = wrap_if_oop_instance(left, right, make_bigfloat(isPlus ? bigfloat_add(a, b) : bigfloat_sub(a, b)));
+    }
     // --- RATIONAL arithmetic (exact fractions) ---
     else if (needs_rational(left, right))
     {
@@ -6053,12 +6979,13 @@ std::any TzdInterpreter::visitAdditiveExpr(TzdLangParser::AdditiveExprContext *c
             return TzdValue(std::numeric_limits<double>::infinity());
         result.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
         result.sVal = r;
+        result = wrap_if_oop_instance(left, right, result);
     }
     // --- BIGINT arithmetic (arbitrary precision) ---
     else if (needs_bigint(left, right))
     {
         std::string a = to_bigint_str(left), b = to_bigint_str(right);
-        result = make_bigint(isPlus ? bigint_add(a, b) : bigint_sub(a, b));
+        result = wrap_if_oop_instance(left, right, make_bigint(isPlus ? bigint_add(a, b) : bigint_sub(a, b)));
     }
     else if (left.type == TzdValue::POINTER)
     {
@@ -6079,6 +7006,19 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
     TzdValue left = std::any_cast<TzdValue>(visit(ctx->expression(0)));
     TzdValue right = std::any_cast<TzdValue>(visit(ctx->expression(1)));
 
+    // --- BIGFLOAT arithmetic ---
+    if (needs_bigfloat(left, right))
+    {
+        std::string a = to_bigfloat_str(left), b = to_bigfloat_str(right);
+        if (ctx->MUL())
+            return wrap_if_oop_instance(left, right, make_bigfloat(bigfloat_mul(a, b)));
+        if (ctx->DIV())
+            return wrap_if_oop_instance(left, right, make_bigfloat(bigfloat_div(a, b)));
+        std::string q = bigfloat_floor(bigfloat_div(a, b));
+        std::string rem = bigfloat_sub(a, bigfloat_mul(q, b));
+        return wrap_if_oop_instance(left, right, make_bigfloat(rem));
+    }
+
     // --- RATIONAL arithmetic ---
     if (needs_rational(left, right))
     {
@@ -6091,7 +7031,7 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
             TzdValue v;
             v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
             v.sVal = r;
-            return v;
+            return wrap_if_oop_instance(left, right, v);
         }
         // DIV or MOD: (a/b) / (c/d) = ad/bc
         std::string bn, bd;
@@ -6104,7 +7044,7 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
         TzdValue v;
         v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
         v.sVal = r;
-        return v;
+        return wrap_if_oop_instance(left, right, v);
     }
 
     // --- BIGINT arithmetic ---
@@ -6118,13 +7058,13 @@ std::any TzdInterpreter::visitMultiplicativeExpr(TzdLangParser::MultiplicativeEx
             std::string r = bigint_mul(a, b);
             if (r == "inf")
                 return TzdValue(std::numeric_limits<double>::infinity());
-            return make_bigint(r);
+            return wrap_if_oop_instance(left, right, make_bigint(r));
         }
         if (b == "0" || b == "-0")
             return TzdValue(0LL);
         if (ctx->DIV())
-            return make_bigint(bigint_div(a, b));
-        return make_bigint(bigint_mod(a, b)); // MOD
+            return wrap_if_oop_instance(left, right, make_bigint(bigint_div(a, b)));
+        return wrap_if_oop_instance(left, right, make_bigint(bigint_mod(a, b))); // MOD
     }
 
     if (left.type == TzdValue::DOUBLE || right.type == TzdValue::DOUBLE || left.type == TzdValue::FLOAT || right.type == TzdValue::FLOAT)
@@ -6161,6 +7101,13 @@ std::any TzdInterpreter::visitPowerExpr(TzdLangParser::PowerExprContext *ctx)
     TzdValue left = std::any_cast<TzdValue>(visit(ctx->expression(0)));
     TzdValue right = std::any_cast<TzdValue>(visit(ctx->expression(1)));
 
+    // --- BIGFLOAT power ---
+    if (needs_bigfloat(left, right))
+    {
+        std::string base = to_bigfloat_str(left), exp = to_bigfloat_str(right);
+        return wrap_if_oop_instance(left, right, make_bigfloat(bigfloat_pow(base, exp)));
+    }
+
     // --- RATIONAL power (exact fraction exponentiation) ---
     if (needs_rational(left, right))
     {
@@ -6171,7 +7118,7 @@ std::any TzdInterpreter::visitPowerExpr(TzdLangParser::PowerExprContext *ctx)
         TzdValue v;
         v.type = (r.find('/') != std::string::npos) ? TzdValue::RATIONAL : TzdValue::BIGINT;
         v.sVal = r;
-        return v;
+        return wrap_if_oop_instance(left, right, v);
     }
 
     // --- BIGINT power (arbitrary precision) ---
@@ -6181,7 +7128,7 @@ std::any TzdInterpreter::visitPowerExpr(TzdLangParser::PowerExprContext *ctx)
         std::string r = bigint_pow(base, exp);
         if (r == "inf")
             return TzdValue(std::numeric_limits<double>::infinity());
-        return make_bigint(r);
+        return wrap_if_oop_instance(left, right, make_bigint(r));
     }
     // --- Integer power: use BIGINT for exact results (like Python) ---
     // When both operands are integers, std::pow loses precision or overflows to inf.
@@ -6225,17 +7172,17 @@ std::any TzdInterpreter::visitShiftExpr(TzdLangParser::ShiftExprContext *ctx)
     int64_t l = getAsInt64Internal(left);
     int64_t r = getAsInt64Internal(right);
 
-    if (left.type == TzdValue::BIGINT || right.type == TzdValue::BIGINT ||
+    if (needs_bigint(left, right) ||
         (ctx->SHL() && (r >= 64 || r < 0 || (r > 0 && l != 0 && (r >= 62 || (uint64_t)std::abs(l) > (0x7FFFFFFFFFFFFFFFULL >> r))))))
     {
         std::string a = to_bigint_str(left);
         int64_t shift = r;
         if (ctx->SHL())
-            return make_bigint(bigint_shl(a, shift));
+            return wrap_if_oop_instance(left, right, make_bigint(bigint_shl(a, shift)));
         else if (ctx->SHR())
-            return make_bigint(bigint_shr(a, shift));
+            return wrap_if_oop_instance(left, right, make_bigint(bigint_shr(a, shift)));
         else
-            return make_bigint(bigint_ushr(a, shift));
+            return wrap_if_oop_instance(left, right, make_bigint(bigint_ushr(a, shift)));
     }
 
     uint32_t shiftAmt = (uint32_t)(r & 63);
@@ -6262,9 +7209,9 @@ std::any TzdInterpreter::visitBitAndExpr(TzdLangParser::BitAndExprContext *ctx)
     TzdValue left = castAnyToTzdValue(visit(ctx->expression(0)), "visitBitAndExpr.L");
     TzdValue right = castAnyToTzdValue(visit(ctx->expression(1)), "visitBitAndExpr.R");
 
-    if (left.type == TzdValue::BIGINT || right.type == TzdValue::BIGINT)
+    if (needs_bigint(left, right))
     {
-        return make_bigint(bigint_and(to_bigint_str(left), to_bigint_str(right)));
+        return wrap_if_oop_instance(left, right, make_bigint(bigint_and(to_bigint_str(left), to_bigint_str(right))));
     }
 
     int64_t l = getAsInt64Internal(left);
@@ -6277,9 +7224,9 @@ std::any TzdInterpreter::visitBitXorExpr(TzdLangParser::BitXorExprContext *ctx)
     TzdValue left = castAnyToTzdValue(visit(ctx->expression(0)), "visitBitXorExpr.L");
     TzdValue right = castAnyToTzdValue(visit(ctx->expression(1)), "visitBitXorExpr.R");
 
-    if (left.type == TzdValue::BIGINT || right.type == TzdValue::BIGINT)
+    if (needs_bigint(left, right))
     {
-        return make_bigint(bigint_xor(to_bigint_str(left), to_bigint_str(right)));
+        return wrap_if_oop_instance(left, right, make_bigint(bigint_xor(to_bigint_str(left), to_bigint_str(right))));
     }
 
     int64_t l = getAsInt64Internal(left);
@@ -6292,9 +7239,9 @@ std::any TzdInterpreter::visitBitOrExpr(TzdLangParser::BitOrExprContext *ctx)
     TzdValue left = castAnyToTzdValue(visit(ctx->expression(0)), "visitBitOrExpr.L");
     TzdValue right = castAnyToTzdValue(visit(ctx->expression(1)), "visitBitOrExpr.R");
 
-    if (left.type == TzdValue::BIGINT || right.type == TzdValue::BIGINT)
+    if (needs_bigint(left, right))
     {
-        return make_bigint(bigint_or(to_bigint_str(left), to_bigint_str(right)));
+        return wrap_if_oop_instance(left, right, make_bigint(bigint_or(to_bigint_str(left), to_bigint_str(right))));
     }
 
     int64_t l = getAsInt64Internal(left);
@@ -6317,17 +7264,25 @@ std::any TzdInterpreter::visitUnaryExpr(TzdLangParser::UnaryExprContext *ctx)
     }
     if (ctx->MINUS())
     {
-        if (val.type == TzdValue::BIGINT)
-            return make_bigint(bigint_sub("0", val.sVal));
+        if (is_bigfloat_like(val))
+            return wrap_if_oop_instance_single(val, make_bigfloat(bigfloat_sub("0", to_bigfloat_str(val))));
+        if (is_rational_like(val))
+        {
+            std::string n, d;
+            rational_parse(to_rational_str(val), n, d);
+            return wrap_if_oop_instance_single(val, make_rational(bigint_sub("0", n), d));
+        }
+        if (is_bigint_like(val))
+            return wrap_if_oop_instance_single(val, make_bigint(bigint_sub("0", to_bigint_str(val))));
         if (val.type == TzdValue::LONG)
             return TzdValue(-val.lVal);
         return TzdValue(-val.dVal);
     }
     if (ctx->BIT_NOT())
     {
-        if (val.type == TzdValue::BIGINT)
+        if (is_bigint_like(val))
         {
-            return make_bigint(bigint_not(val.sVal));
+            return wrap_if_oop_instance_single(val, make_bigint(bigint_not(to_bigint_str(val))));
         }
         int64_t v = getAsInt64Internal(val);
         return TzdValue((long long)(~v));
@@ -6515,6 +7470,154 @@ std::any TzdInterpreter::visitForStmt(TzdLangParser::ForStmtContext *ctx)
     }
     scopes.pop_back();
     clearJitMemory();
+    return TzdValue();
+}
+
+std::any TzdInterpreter::visitForEachStmt(TzdLangParser::ForEachStmtContext *ctx)
+{
+    if (!ctx->forEachInit() || !ctx->expression() || !ctx->statement())
+        return TzdValue();
+
+    auto initCtx = ctx->forEachInit();
+    std::string varName = initCtx->IDENTIFIER() ? initCtx->IDENTIFIER()->getText() : "";
+    std::string expectedType = initCtx->typeType() ? initCtx->typeType()->getText() : "";
+
+    TzdValue iterable = std::any_cast<TzdValue>(visit(ctx->expression()));
+
+    // Collect elements from iterable
+    std::vector<TzdValue> items;
+    if (iterable.type == TzdValue::ARRAY)
+    {
+        if (iterable.isNativeDoubleArr)
+        {
+            items.reserve(iterable.nativeArr.size());
+            for (double d : iterable.nativeArr)
+            {
+                items.push_back(TzdValue(d));
+            }
+        }
+        else
+        {
+            items = iterable.arrVal;
+        }
+    }
+    else if (iterable.type == TzdValue::MAP)
+    {
+        items.reserve(iterable.mapVal.size());
+        for (const auto &[k, v] : iterable.mapVal)
+        {
+            items.push_back(TzdValue(k));
+        }
+    }
+    else if (iterable.type == TzdValue::STRING)
+    {
+        items.reserve(iterable.sVal.size());
+        for (char c : iterable.sVal)
+        {
+            items.push_back(TzdValue(std::string(1, c)));
+        }
+    }
+    else if (iterable.type == TzdValue::INSTANCE && iterable.instanceVal)
+    {
+        TzdValue member = iterable.instanceVal->getMember("data");
+        if (member.type == TzdValue::ARRAY)
+        {
+            if (member.isNativeDoubleArr)
+            {
+                items.reserve(member.nativeArr.size());
+                for (double d : member.nativeArr)
+                {
+                    items.push_back(TzdValue(d));
+                }
+            }
+            else
+            {
+                items = member.arrVal;
+            }
+        }
+        else
+        {
+            throw TzdRuntimeException("forEach 实例缺少可遍历的 'data' 数组字段", ctx->getStart());
+        }
+    }
+    else
+    {
+        throw TzdRuntimeException("forEach 目标必须是数组、Map、字符串或包含 data 数组的对象，实际为 " + getTzdValueTypeName(iterable), ctx->getStart());
+    }
+
+    bool isOuterVar = false;
+    if (!initCtx->typeType() && !initCtx->KW_VAR())
+    {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
+        {
+            if (it->count(varName))
+            {
+                isOuterVar = true;
+                break;
+            }
+        }
+    }
+
+    struct ForEachScopeGuard {
+        std::vector<std::unordered_map<std::string, TzdValue>>& s;
+        ForEachScopeGuard(std::vector<std::unordered_map<std::string, TzdValue>>& sc) : s(sc) {
+            s.push_back(std::unordered_map<std::string, TzdValue>());
+        }
+        ~ForEachScopeGuard() {
+            if (!s.empty()) s.pop_back();
+        }
+    } guard(scopes);
+
+    for (const auto &item : items)
+    {
+        TzdValue itemVal = item;
+        if (!expectedType.empty())
+        {
+            TzdValue converted;
+            if (!isTzdValueCompatibleWithType(expectedType, itemVal, &converted))
+            {
+                throw TzdRuntimeException("forEach 循环变量 '" + varName + "' 类型不匹配: 期望 " + expectedType + "，实际为 " + getTzdValueTypeName(itemVal), ctx->getStart());
+            }
+            itemVal = converted;
+            itemVal.declaredType = expectedType;
+        }
+
+        if (isOuterVar)
+        {
+            setVariable(varName, itemVal);
+        }
+        else
+        {
+            scopes.back()[varName] = itemVal;
+        }
+
+        bool breakLoop = false;
+        try
+        {
+            visit(ctx->statement());
+        }
+        catch (const TzdBreakException &)
+        {
+            breakLoop = true;
+        }
+        catch (const TzdContinueException &)
+        {
+            // 继续下一次迭代
+        }
+
+        if (breakLoop)
+            break;
+
+        if (m_jitGarbage.size() >= 16)
+            clearJitMemory();
+    }
+
+    clearJitMemory();
+    return TzdValue();
+}
+
+std::any TzdInterpreter::visitForEachInit(TzdLangParser::ForEachInitContext *ctx)
+{
     return TzdValue();
 }
 
@@ -6777,6 +7880,19 @@ std::any TzdInterpreter::visitRelationalExpr(TzdLangParser::RelationalExprContex
 {
     TzdValue left = castAnyToTzdValue(visit(ctx->expression(0)), "visitRelationalExpr.l");
     TzdValue right = castAnyToTzdValue(visit(ctx->expression(1)), "visitRelationalExpr.r");
+
+    // BIGFLOAT comparison
+    if (needs_bigfloat(left, right))
+    {
+        int c = bigfloat_compare(to_bigfloat_str(left), to_bigfloat_str(right));
+        if (ctx->GT())
+            return TzdValue(c > 0);
+        if (ctx->LT())
+            return TzdValue(c < 0);
+        if (ctx->GE())
+            return TzdValue(c >= 0);
+        return TzdValue(c <= 0);
+    }
 
     // RATIONAL comparison (cross-multiply for exact comparison)
     if (needs_rational(left, right))
@@ -7122,6 +8238,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.isStatic = (attrs["static"] == "true");
             m.returnType = retType;
             m.nativeWrapper = TzdFFIAdapter::buildWrapper(procAddr, realFun, attrs["type"], retType);
+            m.declaringClass = newClass->fullName;
             newClass->methods[funcName] = m;
             continue;
         }
@@ -7216,11 +8333,12 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.name = mName;
             m.returnType = methodCtx->typeType() ? methodCtx->typeType()->getText() : "";
             m.body = methodCtx->block();
-            parseParamList(methodCtx->paramList(), m.params, m.paramTypes);
+            parseParamList(methodCtx->paramList(), m.params, m.paramTypes, m.isVararg);
 
             m.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
             m.line = (int)methodCtx->getStart()->getLine();
             m.column = (int)methodCtx->getStart()->getCharPositionInLine();
+            m.declaringClass = newClass->fullName;
 
             newClass->methods[mName] = m;
         }
@@ -7234,10 +8352,11 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.isStatic = true;
             m.returnType = smCtx->typeType() ? smCtx->typeType()->getText() : "";
             m.body = smCtx->block();
-            parseParamList(smCtx->paramList(), m.params, m.paramTypes);
+            parseParamList(smCtx->paramList(), m.params, m.paramTypes, m.isVararg);
             m.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
             m.line = (int)smCtx->getStart()->getLine();
             m.column = (int)smCtx->getStart()->getCharPositionInLine();
+            m.declaringClass = newClass->fullName;
 
             newClass->methods[mName] = m;
         }
@@ -7254,7 +8373,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             ClassConstructor ctorInfo;
             ctorInfo.declCtx = ctorCtx;
             ctorInfo.body = ctorCtx->block();
-            parseParamList(ctorCtx->paramList(), ctorInfo.params, ctorInfo.paramTypes);
+            parseParamList(ctorCtx->paramList(), ctorInfo.params, ctorInfo.paramTypes, ctorInfo.isVararg);
             ctorInfo.paramCount = (int)ctorInfo.params.size();
             ctorInfo.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
             ctorInfo.line = (int)ctorCtx->getStart()->getLine();
@@ -7262,7 +8381,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
 
             for (const auto &existing : newClass->constructors)
             {
-                if (existing.paramCount == ctorInfo.paramCount)
+                if (existing.paramCount == ctorInfo.paramCount && existing.isVararg == ctorInfo.isVararg)
                 {
                     throw TzdRuntimeException(
                         "构造函数重载冲突: '" + fullName + "' 已有 " +
@@ -7278,9 +8397,12 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
             m.name = ctorName;
             m.body = ctorCtx->block();
             m.params = ctorInfo.params;
+            m.paramTypes = ctorInfo.paramTypes;
+            m.isVararg = ctorInfo.isVararg;
             m.sourceFile = ctorInfo.sourceFile;
             m.line = ctorInfo.line;
             m.column = ctorInfo.column;
+            m.declaringClass = newClass->fullName;
 
             newClass->methods[ctorName] = m;
             newClass->constructors.push_back(std::move(ctorInfo));
@@ -7315,44 +8437,55 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
     // --- 7. 第二阶段：JIT 编译类方法与构造函数 (类已完全注册，可互相引用) ---
     if (!m_noJit && m_jitEngine && m_compiler)
     {
-        try
+        for (auto member : ctx->classBody()->classMember())
         {
-            for (auto member : ctx->classBody()->classMember())
-            {
-                auto decl = member->memberDecl();
-                if (!decl)
-                    continue;
+            auto decl = member->memberDecl();
+            if (!decl)
+                continue;
 
+            try
+            {
                 if (auto methodCtx = dynamic_cast<TzdLangParser::MethodDeclContext *>(decl))
                 {
                     std::string mName = methodCtx->IDENTIFIER()->getText();
-                    std::string jitName = fullName + "_" + mName;
-                    m_compiler->compileClassMethod(ctx, methodCtx, jitName);
-                    m_pendingJitFunctions.insert(jitName);
+                    auto mIt = newClass->methods.find(mName);
+                    if (mIt != newClass->methods.end() && !mIt->second.isVararg)
+                    {
+                        std::string jitName = fullName + "_" + mName;
+                        m_compiler->compileClassMethod(ctx, methodCtx, jitName);
+                        m_pendingJitFunctions.insert(jitName);
+                    }
                 }
                 else if (auto smCtx = dynamic_cast<TzdLangParser::MethodStaticDeclContext *>(decl))
                 {
                     std::string mName = smCtx->IDENTIFIER()->getText();
-                    std::string jitName = fullName + "_" + mName;
-                    std::string retType = smCtx->typeType() ? smCtx->typeType()->getText() : "";
-                    m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName, retType);
-                    m_pendingJitFunctions.insert(jitName);
+                    auto mIt = newClass->methods.find(mName);
+                    if (mIt != newClass->methods.end() && !mIt->second.isVararg)
+                    {
+                        std::string jitName = fullName + "_" + mName;
+                        std::string retType = smCtx->typeType() ? smCtx->typeType()->getText() : "";
+                        m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName, retType);
+                        m_pendingJitFunctions.insert(jitName);
+                    }
                 }
                 else if (auto ctorCtx = dynamic_cast<TzdLangParser::ConstructorDeclContext *>(decl))
                 {
                     std::string ctorName = ctorCtx->IDENTIFIER()->getText();
                     int pCount = ctorCtx->paramList() ? (int)ctorCtx->paramList()->param().size() : 0;
-                    std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(pCount);
-                    m_compiler->compileConstructor(ctx, ctorCtx, jitName);
-                    m_pendingJitFunctions.insert(jitName);
+                    ClassConstructor *ctor = newClass->findConstructor(pCount);
+                    if (ctor && !ctor->isVararg)
+                    {
+                        std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(pCount);
+                        m_compiler->compileConstructor(ctx, ctorCtx, jitName);
+                        m_pendingJitFunctions.insert(jitName);
+                    }
                 }
             }
-        }
-        catch (const std::exception &e)
-        {
-            TzdOopManager::unregisterClass(fullName);
-            delete newClass;
-            throw;
+            catch (const std::exception &e)
+            {
+                // JIT compilation failed for this member - reset compiler and run via interpreter
+                m_compiler = std::make_unique<TzdCompiler>(*m_jitEngine, "class_retry_module");
+            }
         }
     }
 
@@ -7381,9 +8514,15 @@ bool TzdInterpreter::isTypeValid(const std::string &typeName)
     static const std::unordered_set<std::string> primitives = {
         "int", "float", "string", "bool", "long", "ptr", "void",
         "i32", "i64", "double", "byte", "u8", "ulong", "hwnd",
-        "function", "fn", "any", "object"};
+        "function", "fn", "any", "object", "map", "array", "var", "auto"};
     if (primitives.count(typeName))
         return true;
+
+    // 数组类型 (如 int[], string[], MyClass[])
+    if (typeName.size() >= 2 && typeName.substr(typeName.size() - 2) == "[]")
+    {
+        return isTypeValid(typeName.substr(0, typeName.size() - 2));
+    }
 
     // 2. 检查是否是已注册的类、枚举或注解
     if (TzdOopManager::getClass(typeName) != nullptr)
@@ -7394,36 +8533,13 @@ bool TzdInterpreter::isTypeValid(const std::string &typeName)
 
 bool TzdInterpreter::checkParamValueType(const std::string &typeName, const TzdValue &val)
 {
-    if (typeName.empty())
+    if (typeName.empty() || typeName == "any")
         return true;
-    if (typeName == "int" || typeName == "i32" || typeName == "long" || typeName == "i64" ||
-        typeName == "float" || typeName == "double" || typeName == "byte" || typeName == "u8")
-    {
-        return val.type == TzdValue::INT || val.type == TzdValue::LONG ||
-               val.type == TzdValue::FLOAT || val.type == TzdValue::DOUBLE ||
-               val.type == TzdValue::SHORT || val.type == TzdValue::BYTE;
-    }
-    if (typeName == "function" || typeName == "fn")
-    {
-        return val.type == TzdValue::FUNCTION || val.type == TzdValue::NATIVE_FUNCTION;
-    }
-    if (typeName == "string")
-        return val.type == TzdValue::STRING;
-    if (typeName == "bool")
-        return val.type == TzdValue::BOOL;
-    if (typeName == "ptr" || typeName == "void" || typeName == "hwnd")
-        return val.type == TzdValue::POINTER || val.type == TzdValue::NONE;
-    if (val.type == TzdValue::INSTANCE && val.instanceVal && val.instanceVal->definition)
-    {
-        return val.instanceVal->definition->fullName == typeName ||
-               val.instanceVal->definition->simpleName == typeName ||
-               val.instanceVal->definition->isSubclassOf(typeName);
-    }
     if (val.type == TzdValue::CLASS_DEF && val.classDefVal)
     {
         return val.classDefVal->fullName == typeName || val.classDefVal->simpleName == typeName;
     }
-    return false;
+    return isTzdValueCompatibleWithType(typeName, val);
 }
 
 // --- 实例化 (New) ---
@@ -7436,6 +8552,16 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext *ctx)
     TzdClassDef *cls = TzdOopManager::getClass(className);
     if (!cls)
         throw TzdRuntimeException("找不到类定义: " + className, ctx->getStart());
+
+    // 1. 求值构造函数实参（必须在创建新对象的 ctorScope 之前，在调用者当前作用域中求值）
+    std::vector<TzdValue> args;
+    if (ctx->exprList())
+    {
+        for (auto expr : ctx->exprList()->expression())
+        {
+            args.push_back(std::any_cast<TzdValue>(visit(expr)));
+        }
+    }
 
     TzdInstance *inst = new TzdInstance(cls);
     TzdValue instVal(inst);
@@ -7481,16 +8607,6 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext *ctx)
             }
         }
 
-        // --- 执行构造函数（按实参个数匹配重载） ---
-        std::vector<TzdValue> args;
-        if (ctx->exprList())
-        {
-            for (auto expr : ctx->exprList()->expression())
-            {
-                args.push_back(std::any_cast<TzdValue>(visit(expr)));
-            }
-        }
-
         ClassConstructor *ctor = cls->findConstructor(args.size());
         if (!ctor && args.empty() && !cls->constructors.empty())
         {
@@ -7506,6 +8622,8 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext *ctx)
         if (ctor)
         {
             TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
+            ctorFunc.paramTypes = ctor->paramTypes;
+            ctorFunc.isVararg = ctor->isVararg;
             ctorFunc.jittedPtr = ctor->jittedPtr;
             ctorFunc.setInstance(inst);
             ctorFunc.sourceFile = ctor->sourceFile;
@@ -7829,28 +8947,12 @@ std::any TzdInterpreter::visitSuperExpr(TzdLangParser::SuperExprContext *ctx)
     }
 
     TzdValue ctorFunc(parentClass->simpleName, parentCtor->params, parentCtor->body);
+    ctorFunc.paramTypes = parentCtor->paramTypes;
+    ctorFunc.isVararg = parentCtor->isVararg;
     ctorFunc.jittedPtr = parentCtor->jittedPtr;
     ctorFunc.setInstance(thisVal.instanceVal);
 
-    std::unordered_map<std::string, TzdValue> superScope;
-    superScope["this"] = thisVal;
-    for (size_t i = 0; i < args.size(); ++i)
-    {
-        superScope[parentCtor->params[i]] = args[i];
-    }
-
-    scopes.push_back(superScope);
-    try
-    {
-        callFunction(ctorFunc, args);
-    }
-    catch (...)
-    {
-        scopes.pop_back();
-        throw;
-    }
-    scopes.pop_back();
-
+    callFunction(ctorFunc, args);
     return TzdValue();
 }
 
@@ -8265,7 +9367,7 @@ std::any TzdInterpreter::visitNullExpr(TzdLangParser::NullExprContext *ctx)
 // adds the module to the JIT engine, and sets funcVal.jittedPtr.
 void TzdInterpreter::tryJitCompile(TzdValue &funcVal)
 {
-    if (!m_jitEngine || !funcVal.funcBody || funcVal.type != TzdValue::FUNCTION)
+    if (!m_jitEngine || !funcVal.funcBody || funcVal.type != TzdValue::FUNCTION || funcVal.isVararg)
         return;
     if (funcVal.jittedPtr)
         return; // Already compiled

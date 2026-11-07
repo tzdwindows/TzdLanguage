@@ -1,0 +1,2 @@
+int a = 415**441000;
+print("Length of a digits: " + len(str(a)));

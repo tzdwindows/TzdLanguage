@@ -1,0 +1,515 @@
+/**
+ * TzdLang 数学标准库 - Polynomial 多项式代数与根求解
+ * 支持多项式霍纳法则求值 (实数与复数)、加减乘除 (多项式长除法)、微分、积分 (不定/定积分)、
+ * Durand-Kerner 算法同时求解多项式全部复数根、多项式最小二乘拟合与根重构。
+ */
+
+import "math.Complex";
+import "math.Matrix";
+
+class Polynomial {
+    var any coeffs; // [c0, c1, c2, ..., cn] 对应 c0 + c1*x + c2*x^2 + ... + cn*x^n
+
+    /**
+     * 构造函数：传入系数数组 [c0, c1, ...] 或标量
+     */
+    Polynomial() {
+        this.coeffs = [0.0];
+    }
+
+    Polynomial(c) {
+        if (c != null && c.coeffs != null) {
+            this.coeffs = c.coeffs;
+        } else if (c != null) {
+            var arr = [ ];
+            var n = len(c);
+            if (n > 0) {
+                var i = 0;
+                while (i < n) {
+                    arr = push(arr, valToDouble(c[i]));
+                    i = i + 1;
+                }
+                this.coeffs = arr;
+            } else {
+                this.coeffs = [valToDouble(c)];
+            }
+        } else {
+            this.coeffs = [0.0];
+        }
+        this.trim();
+    }
+
+    /**
+     * 规范化：去除高阶的零系数
+     */
+    fun trim() {
+        var n = len(this.coeffs);
+        while (n > 1 && abs(this.coeffs[n - 1]) < 0.000000000001) {
+            var newArr = [ ];
+            var i = 0;
+            while (i < n - 1) {
+                newArr = push(newArr, this.coeffs[i]);
+                i = i + 1;
+            }
+            this.coeffs = newArr;
+            n = len(this.coeffs);
+        }
+        if (len(this.coeffs) == 0) {
+            this.coeffs = [0.0];
+        }
+    }
+
+    /**
+     * 多项式最高阶数
+     */
+    fun degree() {
+        return len(this.coeffs) - 1;
+    }
+
+    /**
+     * 获取指定次数的系数
+     */
+    fun get(i) {
+        if (i < 0 || i >= len(this.coeffs)) {
+            return 0.0;
+        }
+        return this.coeffs[i];
+    }
+
+    /**
+     * 霍纳法求值 (Horner's Method) - O(N)
+     * 支持实数输入或 Complex 复数输入
+     */
+    fun eval(x) {
+        var n = len(this.coeffs);
+        if (n == 0) return 0.0;
+        var i = n - 2;
+
+        // 如果是复数输入
+        if (x != null && x.real != null && x.imag != null) {
+            var cRes = new Complex(this.coeffs[n - 1], 0.0);
+            while (i >= 0) {
+                cRes = cRes.mul(x).add(this.coeffs[i]);
+                i = i - 1;
+            }
+            return cRes;
+        }
+
+        // 实数求值
+        var xVal = valToDouble(x);
+        var res = this.coeffs[n - 1];
+        while (i >= 0) {
+            res = res * xVal + this.coeffs[i];
+            i = i - 1;
+        }
+        return res;
+    }
+
+    /**
+     * 多项式加法 P(x) + Q(x)
+     */
+    fun add(other) {
+        var oPoly = other;
+        if (other == null || other.coeffs == null) {
+            oPoly = new Polynomial([other]);
+        }
+        var n1 = len(this.coeffs);
+        var n2 = len(oPoly.coeffs);
+        var maxN = n1;
+        if (n2 > n1) {
+            maxN = n2;
+        }
+
+        var res = [ ];
+        var i = 0;
+        while (i < maxN) {
+            var c1 = 0.0;
+            if (i < n1) c1 = this.coeffs[i];
+            var c2 = 0.0;
+            if (i < n2) c2 = oPoly.coeffs[i];
+            res = push(res, c1 + c2);
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 多项式减法 P(x) - Q(x)
+     */
+    fun sub(other) {
+        var oPoly = other;
+        if (other == null || other.coeffs == null) {
+            oPoly = new Polynomial([other]);
+        }
+        var n1 = len(this.coeffs);
+        var n2 = len(oPoly.coeffs);
+        var maxN = n1;
+        if (n2 > n1) {
+            maxN = n2;
+        }
+
+        var res = [ ];
+        var i = 0;
+        while (i < maxN) {
+            var c1 = 0.0;
+            if (i < n1) c1 = this.coeffs[i];
+            var c2 = 0.0;
+            if (i < n2) c2 = oPoly.coeffs[i];
+            res = push(res, c1 - c2);
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 标量乘法 c * P(x)
+     */
+    fun scale(factor) {
+        var s = valToDouble(factor);
+        var res = [ ];
+        var n = len(this.coeffs);
+        var i = 0;
+        while (i < n) {
+            res = push(res, this.coeffs[i] * s);
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 多项式乘法 P(x) * Q(x)
+     */
+    fun mul(other) {
+        if (other == null) return new Polynomial([0.0]);
+        if (other.coeffs == null) {
+            return this.scale(other);
+        }
+
+        var n1 = len(this.coeffs);
+        var n2 = len(other.coeffs);
+        var degRes = n1 + n2 - 1;
+
+        var res = [ ];
+        var k = 0;
+        while (k < degRes) {
+            res = push(res, 0.0);
+            k = k + 1;
+        }
+
+        var i = 0;
+        while (i < n1) {
+            var j = 0;
+            while (j < n2) {
+                res[i + j] = res[i + j] + this.coeffs[i] * other.coeffs[j];
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 多项式长除法：P(x) / D(x) -> [商多项式 Q, 余数多项式 R]
+     */
+    fun divmod(divisor) {
+        var dPoly = divisor;
+        if (divisor == null || divisor.coeffs == null) {
+            dPoly = new Polynomial([divisor]);
+        }
+        if (dPoly.degree() == 0 && abs(dPoly.coeffs[0]) < 0.000000000001) {
+            return [new Polynomial([0.0]), new Polynomial([0.0])];
+        }
+
+        var dDeg = dPoly.degree();
+        var dLead = dPoly.coeffs[dDeg];
+
+        var rCoeffs = [ ];
+        var i = 0;
+        while (i < len(this.coeffs)) {
+            rCoeffs = push(rCoeffs, this.coeffs[i]);
+            i = i + 1;
+        }
+
+        var qDeg = len(this.coeffs) - 1 - dDeg;
+        if (qDeg < 0) {
+            return [new Polynomial([0.0]), new Polynomial(rCoeffs)];
+        }
+
+        var qCoeffs = [ ];
+        i = 0;
+        while (i <= qDeg) {
+            qCoeffs = push(qCoeffs, 0.0);
+            i = i + 1;
+        }
+
+        var k = qDeg;
+        while (k >= 0) {
+            var curDeg = k + dDeg;
+            var coeff = rCoeffs[curDeg] / dLead;
+            qCoeffs[k] = coeff;
+
+            var j = 0;
+            while (j <= dDeg) {
+                rCoeffs[k + j] = rCoeffs[k + j] - coeff * dPoly.coeffs[j];
+                j = j + 1;
+            }
+            k = k - 1;
+        }
+
+        return [new Polynomial(qCoeffs), new Polynomial(rCoeffs)];
+    }
+
+    /**
+     * 求导多项式 P'(x)
+     */
+    fun derivative() {
+        var n = len(this.coeffs);
+        if (n <= 1) {
+            return new Polynomial([0.0]);
+        }
+
+        var res = [ ];
+        var i = 1;
+        while (i < n) {
+            res = push(res, this.coeffs[i] * i);
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 不定积分多项式 ∫ P(x) dx + C
+     */
+    fun integral(c) {
+        var constVal = 0.0;
+        if (c != null) {
+            constVal = valToDouble(c);
+        }
+        var res = [constVal];
+        var n = len(this.coeffs);
+        var i = 0;
+        while (i < n) {
+            res = push(res, this.coeffs[i] / (i + 1));
+            i = i + 1;
+        }
+        return new Polynomial(res);
+    }
+
+    /**
+     * 定积分 ∫_a^b P(x) dx
+     */
+    fun definiteIntegral(a, b) {
+        var F = this.integral(0.0);
+        return F.eval(b) - F.eval(a);
+    }
+
+    /**
+     * 求解多项式所有复数根 (Durand-Kerner 算法，Weierstrass 迭代)
+     * 返回 Array<Complex> 包含所有 deg 个复数根
+     */
+    fun roots() {
+        var deg = this.degree();
+        if (deg <= 0) return [ ];
+
+        if (deg == 1) {
+            // c0 + c1*x = 0 => x = -c0/c1
+            return [new Complex(-this.coeffs[0] / this.coeffs[1], 0.0)];
+        }
+
+        if (deg == 2) {
+            // 一元二次方程闭式解析解
+            var a = this.coeffs[2];
+            var b = this.coeffs[1];
+            var c = this.coeffs[0];
+            var delta = b * b - 4.0 * a * c;
+            var sqDelta = 0.0;
+            if (delta >= 0.0) {
+                sqDelta = sqrt(delta);
+                return [
+                    new Complex((-b + sqDelta) / (2.0 * a), 0.0),
+                    new Complex((-b - sqDelta) / (2.0 * a), 0.0)
+                ];
+            } else {
+                sqDelta = sqrt(-delta);
+                return [
+                    new Complex(-b / (2.0 * a), sqDelta / (2.0 * a)),
+                    new Complex(-b / (2.0 * a), -sqDelta / (2.0 * a))
+                ];
+            }
+        }
+
+        // 首项系数单项化 (Monic Polynomial)
+        var an = this.coeffs[deg];
+        var monic = [ ];
+        var i = 0;
+        while (i <= deg) {
+            monic = push(monic, this.coeffs[i] / an);
+            i = i + 1;
+        }
+        var mPoly = new Polynomial(monic);
+
+        // 初始化 Durand-Kerner 根初始猜测值: z_k = (0.4 + 0.9i)^k
+        var roots = [ ];
+        var p0 = new Complex(0.4, 0.9);
+        var cur = new Complex(1.0, 0.0);
+        i = 0;
+        while (i < deg) {
+            roots = push(roots, cur);
+            cur = cur.mul(p0);
+            i = i + 1;
+        }
+
+        // 迭代更新求解
+        var maxIter = 100;
+        var tol = 0.000000000001;
+        var iter = 0;
+        while (iter < maxIter) {
+            var maxChange = 0.0;
+            i = 0;
+            while (i < deg) {
+                var zi = roots[i];
+                var fz = mPoly.eval(zi);
+
+                // 计算分母 ∏_{j != i} (zi - zj)
+                var denom = new Complex(1.0, 0.0);
+                var j = 0;
+                while (j < deg) {
+                    if (j != i) {
+                        denom = denom.mul(zi.sub(roots[j]));
+                    }
+                    j = j + 1;
+                }
+
+                var step = fz.div(denom);
+                roots[i] = zi.sub(step);
+
+                var ch = step.magnitude();
+                if (ch > maxChange) {
+                    maxChange = ch;
+                }
+                i = i + 1;
+            }
+
+            if (maxChange < tol) {
+                break;
+            }
+            iter = iter + 1;
+        }
+
+        return roots;
+    }
+
+    /**
+     * 格式化字符串输出，形如 "3x^2 - 2x + 1"
+     */
+    fun toString() {
+        var deg = this.degree();
+        if (deg == 0) {
+            return str(this.coeffs[0]);
+        }
+
+        var s = "";
+        var k = deg;
+        var first = true;
+        while (k >= 0) {
+            var c = this.coeffs[k];
+            if (abs(c) > 0.000000000001 || (first && k == 0)) {
+                if (first) {
+                    if (c < 0.0) s = s + "-";
+                    first = false;
+                } else {
+                    if (c >= 0.0) s = s + " + ";
+                    else s = s + " - ";
+                }
+
+                var absC = abs(c);
+                if (k == 0) {
+                    s = s + str(absC);
+                } else if (k == 1) {
+                    if (abs(absC - 1.0) < 0.000000000001) s = s + "x";
+                    else s = s + str(absC) + "x";
+                } else {
+                    if (abs(absC - 1.0) < 0.000000000001) s = s + "x^" + str(k);
+                    else s = s + str(absC) + "x^" + str(k);
+                }
+            }
+            k = k - 1;
+        }
+        if (len(s) == 0) s = "0";
+        return s;
+    }
+
+    // --- 静态工具方法 ---
+
+    /**
+     * 由一组复数或实数根重构多项式 P(x) = (x - r0)(x - r1)...
+     */
+    static fun fromRoots(rootsArray) {
+        var n = len(rootsArray);
+        if (n == 0) return new Polynomial([1.0]);
+
+        var poly = new Polynomial([1.0]);
+        var i = 0;
+        while (i < n) {
+            var r = rootsArray[i];
+            var factor = null;
+            if (r != null && r.real != null && r.imag != null) {
+                // 如果虚部极小则作实数处理
+                factor = new Polynomial([-r.real, 1.0]);
+            } else {
+                factor = new Polynomial([-valToDouble(r), 1.0]);
+            }
+            poly = poly.mul(factor);
+            i = i + 1;
+        }
+        return poly;
+    }
+
+    /**
+     * 最小二乘法多项式曲线拟合 (Polynomial Regression Fit)
+     * 解正规方程 (V^T * V) * c = V^T * y
+     */
+    static fun fit(xPoints, yPoints, deg) {
+        var m = len(xPoints);
+        var n = deg + 1;
+        if (m < n) return null;
+
+        // 构建 Vandermonde 矩阵 V (m × n)
+        var V = new Matrix(m, n);
+        var i = 0;
+        while (i < m) {
+            var xi = valToDouble(xPoints[i]);
+            var curX = 1.0;
+            var j = 0;
+            while (j < n) {
+                V.set(i, j, curX);
+                curX = curX * xi;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+
+        var VT = V.transpose();
+        var VTV = VT.mul(V);
+
+        // V^T * y
+        var yMat = new Matrix(m, 1);
+        i = 0;
+        while (i < m) {
+            yMat.set(i, 0, valToDouble(yPoints[i]));
+            i = i + 1;
+        }
+        var VTy = VT.mul(yMat);
+
+        var cMat = Matrix.solve(VTV, VTy);
+        if (cMat == null) return null;
+
+        var coeffs = [ ];
+        i = 0;
+        while (i < n) {
+            coeffs = push(coeffs, cMat.get(i, 0));
+            i = i + 1;
+        }
+        return new Polynomial(coeffs);
+    }
+}

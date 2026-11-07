@@ -1,0 +1,287 @@
+/**
+ * TzdLang 数学标准库 - Vector 几何与多维向量
+ * 提供通用 N 维向量 Vector，以及二维 Vector2D、三维 Vector3D
+ * 支持点积、叉积、模长、单位化、欧氏距离、夹角计算与空间变换
+ */
+
+class Vector {
+    var any data;
+
+    Vector() {
+        this.data = [ ];
+    }
+
+    Vector(arr) {
+        if (arr in Vector) {
+            this.data = arr.data;
+        } else if (arr != null) {
+            this.data = arr;
+        } else {
+            this.data = [ ];
+        }
+    }
+
+    fun dim() {
+        return len(this.data);
+    }
+
+    fun get(i) {
+        return this.data[i];
+    }
+
+    fun set(i, val) {
+        this.data[i] = valToDouble(val);
+    }
+
+    fun add(other) {
+        var n = this.dim();
+        var res = [ ];
+        var i = 0;
+        while (i < n) {
+            var v2 = 0.0;
+            if (other in Vector) {
+                v2 = other.get(i);
+            } else {
+                v2 = other[i];
+            }
+            res = push(res, this.get(i) + v2);
+            i = i + 1;
+        }
+        return new Vector(res);
+    }
+
+    fun sub(other) {
+        var n = this.dim();
+        var res = [ ];
+        var i = 0;
+        while (i < n) {
+            var v2 = 0.0;
+            if (other in Vector) {
+                v2 = other.get(i);
+            } else {
+                v2 = other[i];
+            }
+            res = push(res, this.data[i] - v2);
+            i = i + 1;
+        }
+        return new Vector(res);
+    }
+
+    fun scale(s) {
+        var n = this.dim();
+        var res = [ ];
+        var sc = valToDouble(s);
+        var i = 0;
+        while (i < n) {
+            res = push(res, this.data[i] * sc);
+            i = i + 1;
+        }
+        return new Vector(res);
+    }
+
+    fun dot(other) {
+        var n = this.dim();
+        var sum = 0.0;
+        var i = 0;
+        while (i < n) {
+            var v2 = 0.0;
+            if (other in Vector) {
+                v2 = other.get(i);
+            } else {
+                v2 = other[i];
+            }
+            sum = sum + this.data[i] * v2;
+            i = i + 1;
+        }
+        return sum;
+    }
+
+    fun norm() {
+        return sqrt(this.dot(this));
+    }
+
+    fun length() {
+        return this.norm();
+    }
+
+    fun normalize() {
+        var l = this.norm();
+        if (l == 0.0) {
+            return new Vector(this.data);
+        }
+        return this.scale(1.0 / l);
+    }
+
+    fun distanceTo(other) {
+        return this.sub(other).norm();
+    }
+
+    fun angleTo(other) {
+        var d = this.dot(other);
+        var m = this.norm() * other.norm();
+        if (m == 0.0) {
+            return 0.0;
+        }
+        var cosTheta = clamp(d / m, -1.0, 1.0);
+        return acos(cosTheta);
+    }
+
+    fun toArray() {
+        return this.data;
+    }
+
+    fun toString() {
+        return str(this.data);
+    }
+
+    static fun zeros(n) {
+        var arr = [ ];
+        var i = 0;
+        while (i < n) {
+            arr = push(arr, 0.0);
+            i = i + 1;
+        }
+        return new Vector(arr);
+    }
+
+    static fun ones(n) {
+        var arr = [ ];
+        var i = 0;
+        while (i < n) {
+            arr = push(arr, 1.0);
+            i = i + 1;
+        }
+        return new Vector(arr);
+    }
+
+    static fun from(arr) {
+        return new Vector(arr);
+    }
+}
+
+class Vector2D {
+    var float x;
+    var float y;
+
+    Vector2D() {
+        this.x = 0.0;
+        this.y = 0.0;
+    }
+
+    Vector2D(x, y) {
+        this.x = valToDouble(x);
+        this.y = valToDouble(y);
+    }
+
+    fun add(other) {
+        return new Vector2D(this.x + other.x, this.y + other.y);
+    }
+
+    fun sub(other) {
+        return new Vector2D(this.x - other.x, this.y - other.y);
+    }
+
+    fun scale(s) {
+        var factor = valToDouble(s);
+        return new Vector2D(this.x * factor, this.y * factor);
+    }
+
+    fun dot(other) {
+        return this.x * other.x + this.y * other.y;
+    }
+
+    fun cross(other) {
+        return this.x * other.y - this.y * other.x;
+    }
+
+    fun norm() {
+        return hypot(this.x, this.y);
+    }
+
+    fun normalize() {
+        var l = this.norm();
+        if (l == 0.0) {
+            return new Vector2D(0.0, 0.0);
+        }
+        return new Vector2D(this.x / l, this.y / l);
+    }
+
+    fun rotate(rad) {
+        var c = cos(rad);
+        var s = sin(rad);
+        return new Vector2D(this.x * c - this.y * s, this.x * s + this.y * c);
+    }
+
+    fun distanceTo(other) {
+        return hypot(this.x - other.x, this.y - other.y);
+    }
+
+    fun toString() {
+        return "(" + str(this.x) + ", " + str(this.y) + ")";
+    }
+}
+
+class Vector3D {
+    var float x;
+    var float y;
+    var float z;
+
+    Vector3D() {
+        this.x = 0.0;
+        this.y = 0.0;
+        this.z = 0.0;
+    }
+
+    Vector3D(x, y, z) {
+        this.x = valToDouble(x);
+        this.y = valToDouble(y);
+        this.z = valToDouble(z);
+    }
+
+    fun add(other) {
+        return new Vector3D(this.x + other.x, this.y + other.y, this.z + other.z);
+    }
+
+    fun sub(other) {
+        return new Vector3D(this.x - other.x, this.y - other.y, this.z - other.z);
+    }
+
+    fun scale(s) {
+        var factor = valToDouble(s);
+        return new Vector3D(this.x * factor, this.y * factor, this.z * factor);
+    }
+
+    fun dot(other) {
+        return this.x * other.x + this.y * other.y + this.z * other.z;
+    }
+
+    fun cross(other) {
+        var cx = this.y * other.z - this.z * other.y;
+        var cy = this.z * other.x - this.x * other.z;
+        var cz = this.x * other.y - this.y * other.x;
+        return new Vector3D(cx, cy, cz);
+    }
+
+    fun norm() {
+        return sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+    }
+
+    fun normalize() {
+        var l = this.norm();
+        if (l == 0.0) {
+            return new Vector3D(0.0, 0.0, 0.0);
+        }
+        return new Vector3D(this.x / l, this.y / l, this.z / l);
+    }
+
+    fun distanceTo(other) {
+        var dx = this.x - other.x;
+        var dy = this.y - other.y;
+        var dz = this.z - other.z;
+        return sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    fun toString() {
+        return "(" + str(this.x) + ", " + str(this.y) + ", " + str(this.z) + ")";
+    }
+}

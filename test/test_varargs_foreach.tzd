@@ -1,0 +1,139 @@
+// test_varargs_foreach.tzd: 测试可变参数 (varargs) 及 Java 风格简化 for-each 循环
+
+fun println(... args) {
+    for (a : args) {
+        print(a);
+    }
+    print("\n");
+}
+
+fun sumInts(int... a) {
+    int total = 0;
+    for (int x : a) {
+        total = total + x;
+    }
+    return total;
+}
+
+fun printAll(... a) {
+    var res = [];
+    for (x : a) {
+        res = push(res, x);
+    }
+    return res;
+}
+
+fun testPrefix(string tag, int... a) {
+    int count = 0;
+    for (var x : a) {
+        count = count + x;
+    }
+    return tag + ": " + count;
+}
+
+// OOP 可变参数与构造函数测试
+class VarargBox {
+    var any items;
+
+    VarargBox(... a) {
+        this.items = [];
+        for (item : a) {
+            this.items = push(this.items, item);
+        }
+    }
+
+    fun addAll(int... nums) {
+        int sum = 0;
+        for (int n : nums) {
+            sum = sum + n;
+            this.items = push(this.items, n);
+        }
+        return sum;
+    }
+
+    fun size() {
+        return len(this.items);
+    }
+}
+
+fun main() {
+    println("=== 1. 测试 fun sumInts(int... a) ===");
+    int s1 = sumInts(1, 2, 3, 4, 5);
+    println("sumInts(1, 2, 3, 4, 5) = " + s1);
+    if (s1 != 15) throw "sumInts 失败";
+
+    int s0 = sumInts();
+    println("sumInts() = " + s0);
+    if (s0 != 0) throw "sumInts 0参数失败";
+
+    println("\n=== 2. 测试 fun printAll(... a) 任意类型 ===");
+    var all = printAll("hello", 123, true, 4.56);
+    println("printAll 结果长度: " + len(all));
+    if (len(all) != 4) throw "printAll 失败";
+    if (all[0] != "hello" || all[1] != 123 || all[2] != true) throw "printAll 内容不符";
+
+    println("\n=== 3. 测试固定参数 + 可变参数 ===");
+    string pref = testPrefix("总和", 10, 20, 30);
+    println("testPrefix: " + pref);
+    if (pref != "总和: 60") throw "testPrefix 失败";
+
+    println("\n=== 4. 测试 for (type x : arr) / for (var x : arr) / for (x : arr) ===");
+    var nums = [10, 20, 30, 40];
+    int sumEach = 0;
+    for (int n : nums) {
+        sumEach = sumEach + n;
+    }
+    println("for (int n : nums) 累加: " + sumEach);
+    if (sumEach != 100) throw "for-each int 失败";
+
+    var strList = ["A", "B", "C"];
+    string joined = "";
+    for (var s : strList) {
+        joined = joined + s;
+    }
+    println("for (var s : strList) 拼接: " + joined);
+    if (joined != "ABC") throw "for-each var 失败";
+
+    // 测试 break 和 continue
+    int breakSum = 0;
+    for (x : [1, 2, 3, 4, 5, 6, 7]) {
+        if (x == 3) continue;
+        if (x == 6) break;
+        breakSum = breakSum + x;
+    }
+    // 1 + 2 + 4 + 5 = 12
+    println("for (x : [1..7]) with break/continue: " + breakSum);
+    if (breakSum != 12) throw "for-each break/continue 失败";
+
+    println("\n=== 5. 测试字符串遍历 ===");
+    string chars = "";
+    for (c : "Tzd") {
+        chars = chars + c + "-";
+    }
+    println("遍历字符串: " + chars);
+    if (chars != "T-z-d-") throw "遍历字符串失败";
+
+    println("\n=== 6. 测试 OOP 可变参数构造函数与方法 ===");
+    var box = new VarargBox("apple", "banana", "cherry");
+    println("box.size() = " + box.size());
+    if (box.size() != 3) throw "VarargBox 构造函数失败";
+
+    int addedSum = box.addAll(100, 200);
+    println("box.addAll(100, 200) = " + addedSum + ", new size = " + box.size());
+    if (addedSum != 300 || box.size() != 5) throw "box.addAll 失败";
+
+    println("\n=== 7. 测试 int... 类型约束校验 ===");
+    bool caughtError = false;
+    try {
+        // 传入非 int 类型应该抛出类型不匹配异常
+        sumInts(1, 2, "not_an_int");
+    } catch (e) {
+        caughtError = true;
+        println("成功捕获类型不匹配错误: " + e);
+    }
+    if (!caughtError) throw "int... 类型约束未生效";
+
+    println("\n>>> 所有可变参数与 ForEach 简化语法测试全部通过！<<<");
+}
+
+main();

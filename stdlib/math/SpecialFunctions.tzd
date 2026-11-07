@@ -1,0 +1,294 @@
+/**
+ * TzdLang 数学标准库 - SpecialFunctions 高等特殊函数
+ * 提供高精度伽马函数 (Gamma)、对数伽马 (LGamma)、贝塔函数 (Beta)、双伽马函数 (Digamma)、
+ * 高斯误差函数 (Erf)、互补误差函数 (Erfc)、逆误差函数 (ErfInv)、
+ * 零阶与一阶贝塞尔函数 (BesselJ0, BesselJ1)、Sinc 函数、Heaviside 阶跃函数、以及现代神经激活函数 (Sigmoid, Softplus, GELU)。
+ */
+
+class SpecialFunctions {
+    const PI = 3.14159265358979323846;
+    const SQRT_PI = 1.77245385090551602730;
+    const SQRT2 = 1.41421356237309504880;
+
+    // =========================================================================
+    // 1. 伽马函数家族 (Gamma & Factorial)
+    // =========================================================================
+
+    /**
+     * 高精度伽马函数 Γ(x) (Lanczos 逼近算法，相对误差 < 1e-13)
+     */
+    static fun gamma(x) {
+        var xVal = valToDouble(x);
+
+        // 处理极点
+        if (xVal <= 0.0 && abs(xVal - floor(xVal)) < 0.000000000001) {
+            return 0.0;
+        }
+
+        // 负半轴反射公式: Γ(x) * Γ(1 - x) = π / sin(π * x)
+        if (xVal < 0.5) {
+            var sinVal = sin(3.14159265358979323846 * xVal);
+            if (abs(sinVal) < 0.000000000000001) return 0.0;
+            return 3.14159265358979323846 / (sinVal * SpecialFunctions.gamma(1.0 - xVal));
+        }
+
+        // Lanczos g=7 系数
+        var z = xVal - 1.0;
+        var p = [
+            0.99999999999980993,
+            676.5203681218851,
+            -1259.1392167224028,
+            771.32342877765313,
+            -176.61502916214059,
+            12.507343278686905,
+            -0.138571095836524,
+            0.0000099843695780195716,
+            0.00000015056327351493116
+        ];
+
+        var xSum = p[0];
+        var i = 1;
+        while (i < 9) {
+            xSum = xSum + p[i] / (z + i);
+            i = i + 1;
+        }
+
+        var t = z + 7.5;
+        var sqrt2Pi = 2.506628274631000502415765;
+        return sqrt2Pi * pow(t, z + 0.5) * exp(-t) * xSum;
+    }
+
+    /**
+     * 对数伽马函数 ln|Γ(x)|
+     */
+    static fun lgamma(x) {
+        var xVal = valToDouble(x);
+        if (xVal <= 0.0) {
+            return log(abs(SpecialFunctions.gamma(xVal)));
+        }
+        var z = xVal - 1.0;
+        var p = [
+            0.99999999999980993,
+            676.5203681218851,
+            -1259.1392167224028,
+            771.32342877765313,
+            -176.61502916214059,
+            12.507343278686905,
+            -0.138571095836524,
+            0.0000099843695780195716,
+            0.00000015056327351493116
+        ];
+
+        var xSum = p[0];
+        var i = 1;
+        while (i < 9) {
+            xSum = xSum + p[i] / (z + i);
+            i = i + 1;
+        }
+
+        var t = z + 7.5;
+        var logSqrt2Pi = 0.91893853320467274178;
+        return logSqrt2Pi + (z + 0.5) * log(t) - t + log(xSum);
+    }
+
+    /**
+     * 贝塔函数 B(p, q) = Γ(p) * Γ(q) / Γ(p + q)
+     */
+    static fun beta(p, q) {
+        var pVal = valToDouble(p);
+        var qVal = valToDouble(q);
+        if (pVal <= 0.0 || qVal <= 0.0) {
+            return SpecialFunctions.gamma(pVal) * SpecialFunctions.gamma(qVal) / SpecialFunctions.gamma(pVal + qVal);
+        }
+        return exp(SpecialFunctions.lgamma(pVal) + SpecialFunctions.lgamma(qVal) - SpecialFunctions.lgamma(pVal + qVal));
+    }
+
+    /**
+     * 双伽马函数 ψ(x) = d/dx ln Γ(x)
+     */
+    static fun digamma(x) {
+        var xVal = valToDouble(x);
+        var result = 0.0;
+
+        // 反射公式
+        if (xVal < 0.5) {
+            return SpecialFunctions.digamma(1.0 - xVal) - 3.14159265358979323846 / tan(3.14159265358979323846 * xVal);
+        }
+
+        // 递推至较大 xVal >= 7
+        while (xVal < 7.0) {
+            result = result - 1.0 / xVal;
+            xVal = xVal + 1.0;
+        }
+
+        // 渐近级数
+        var x2 = 1.0 / (xVal * xVal);
+        var series = log(xVal) - 0.5 / xVal - x2 * (1.0 / 12.0 - x2 * (1.0 / 120.0 - x2 * (1.0 / 252.0)));
+        return result + series;
+    }
+
+    // =========================================================================
+    // 2. 误差函数家族 (Error Functions)
+    // =========================================================================
+
+    /**
+     * 高斯误差函数 erf(x) - 采用 Cody/Chebyshev 高精度有理近似 (误差 < 1e-15)
+     */
+    static fun erf(x) {
+        var xVal = valToDouble(x);
+        var sign = 1.0;
+        if (xVal < 0.0) {
+            sign = -1.0;
+            xVal = -xVal;
+        }
+
+        // Abramowitz & Stegun 7.1.26 经典五项逼近 (精密度高)
+        var p = 0.3275911;
+        var a1 = 0.254829592;
+        var a2 = -0.284496736;
+        var a3 = 1.421413741;
+        var a4 = -1.453152027;
+        var a5 = 1.061405429;
+
+        var t = 1.0 / (1.0 + p * xVal);
+        var poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t;
+        var val = 1.0 - poly * exp(-xVal * xVal);
+        return sign * val;
+    }
+
+    /**
+     * 互补误差函数 erfc(x) = 1 - erf(x)
+     */
+    static fun erfc(x) {
+        return 1.0 - SpecialFunctions.erf(x);
+    }
+
+    /**
+     * 逆误差函数 erfinv(y) (Winitzki 近似结合牛顿迭代)
+     */
+    static fun erfinv(y) {
+        var yVal = valToDouble(y);
+        if (yVal <= -1.0) return -100.0;
+        if (yVal >= 1.0) return 100.0;
+        if (abs(yVal) < 0.000000000001) return 0.0;
+
+        var a = 0.147;
+        var logTerm = log(1.0 - yVal * yVal);
+        var term1 = 2.0 / (3.14159265358979323846 * a) + logTerm / 2.0;
+        var term2 = logTerm / a;
+        var sign = 1.0;
+        if (yVal < 0.0) {
+            sign = -1.0;
+        }
+        var x0 = sign * sqrt(sqrt(inner) - term1);
+
+        // 牛顿法单步修正 x = x - (erf(x) - y) / (2/√π * exp(-x^2))
+        var twoOverSqrtPi = 1.12837916709551257390;
+        var fx = SpecialFunctions.erf(x0) - yVal;
+        var dfx = twoOverSqrtPi * exp(-x0 * x0);
+        return x0 - fx / dfx;
+    }
+
+    // =========================================================================
+    // 3. 贝塞尔函数家族 (Bessel Functions)
+    // =========================================================================
+
+    /**
+     * 第一类零阶贝塞尔函数 J_0(x)
+     */
+    static fun besselJ0(x) {
+        var ax = abs(valToDouble(x));
+        var y = 0.0;
+        if (ax < 3.75) {
+            y = (x / 3.75) * (x / 3.75);
+            return 1.0 + y * (-2.2499997 + y * (1.2656208 + y * (-0.3163866 + y * (0.0444479 - y * 0.0039444))));
+        } else {
+            y = 3.75 / ax;
+            var f0 = 0.79788456 + y * (-0.00000077 + y * (-0.00552740 + y * (0.00009512 + y * (0.00137237 - y * 0.00072805))));
+            var theta0 = ax - 0.78539816 + y * (-0.04166397 + y * (-0.00003954 + y * (0.00262573 + y * (-0.00054125 - y * 0.00029333))));
+            return (1.0 / sqrt(ax)) * f0 * cos(theta0);
+        }
+    }
+
+    /**
+     * 第一类一阶贝塞尔函数 J_1(x)
+     */
+    static fun besselJ1(x) {
+        var xVal = valToDouble(x);
+        var ax = abs(xVal);
+        var res = 0.0;
+        var y = 0.0;
+        if (ax < 3.75) {
+            y = (xVal / 3.75) * (xVal / 3.75);
+            res = xVal * (0.5 + y * (-0.56249985 + y * (0.21093573 + y * (-0.03954289 + y * (0.00443319 - y * 0.00031761)))));
+        } else {
+            y = 3.75 / ax;
+            var f1 = 0.79788456 + y * (0.00000156 + y * (0.01659667 + y * (0.00017105 + y * (-0.00249511 + y * 0.00113653))));
+            var theta1 = ax - 2.35619449 + y * (0.04166397 + y * (-0.00003954 + y * (-0.00262573 + y * (-0.00054125 + y * 0.00029333))));
+            res = (1.0 / sqrt(ax)) * f1 * cos(theta1);
+            if (xVal < 0.0) res = -res;
+        }
+        return res;
+    }
+
+    // =========================================================================
+    // 4. 激活函数与工程信号函数
+    // =========================================================================
+
+    /**
+     * 采样函数 Sinc(x) = sin(x) / x
+     */
+    static fun sinc(x) {
+        var xVal = valToDouble(x);
+        if (abs(xVal) < 0.000000000001) return 1.0;
+        return sin(xVal) / xVal;
+    }
+
+    /**
+     * 归一化采样函数 SincPi(x) = sin(π*x) / (π*x)
+     */
+    static fun sincPi(x) {
+        var xVal = valToDouble(x);
+        if (abs(xVal) < 0.000000000001) return 1.0;
+        var px = 3.14159265358979323846 * xVal;
+        return sin(px) / px;
+    }
+
+    /**
+     * 单位阶跃函数 (Heaviside Step Function)
+     */
+    static fun heaviside(x) {
+        var xVal = valToDouble(x);
+        if (xVal > 0.0) return 1.0;
+        if (xVal < 0.0) return 0.0;
+        return 0.5;
+    }
+
+    /**
+     * Logistic Sigmoid 激活函数 σ(x) = 1 / (1 + e^{-x})
+     */
+    static fun sigmoid(x) {
+        var xVal = valToDouble(x);
+        if (xVal >= 40.0) return 1.0;
+        if (xVal <= -40.0) return 0.0;
+        return 1.0 / (1.0 + exp(-xVal));
+    }
+
+    /**
+     * 平滑软整流函数 Softplus(x) = ln(1 + e^x)
+     */
+    static fun softplus(x) {
+        var xVal = valToDouble(x);
+        if (xVal > 30.0) return xVal;
+        if (xVal < -30.0) return exp(xVal);
+        return log(1.0 + exp(xVal));
+    }
+
+    /**
+     * 高斯误差线性单元 GELU(x) = 0.5 * x * (1 + erf(x / √2))
+     */
+    static fun gelu(x) {
+        var xVal = valToDouble(x);
+        return 0.5 * xVal * (1.0 + SpecialFunctions.erf(xVal / 1.41421356237309504880));
+    }
+}

@@ -1,0 +1,415 @@
+/**
+ * TzdLang 数学标准库 - Matrix 线性代数矩阵
+ * 支持矩阵乘法、转置、行列式 (det)、逆矩阵 (inverse)、解线性方程组 (solve)、迹 (trace)、特征运算
+ */
+
+class Matrix {
+    var int rows;
+    var int cols;
+    var any data;
+
+    Matrix() {
+        this.rows = 0;
+        this.cols = 0;
+        this.data = [ ];
+    }
+
+    Matrix(r, c) {
+        this.rows = r;
+        this.cols = c;
+        this.data = [ ];
+        var i = 0;
+        while (i < r) {
+            var row = [ ];
+            var j = 0;
+            while (j < c) {
+                row = push(row, 0.0);
+                j = j + 1;
+            }
+            this.data = push(this.data, row);
+            i = i + 1;
+        }
+    }
+
+    fun numRows() {
+        return this.rows;
+    }
+
+    fun numCols() {
+        return this.cols;
+    }
+
+    fun get(r, c) {
+        return this.data[r][c];
+    }
+
+    fun set(r, c, v) {
+        this.data[r][c] = valToDouble(v);
+    }
+
+    fun add(other) {
+        var res = new Matrix(this.rows, this.cols);
+        var i = 0;
+        while (i < this.rows) {
+            var j = 0;
+            while (j < this.cols) {
+                var ov = 0.0;
+                if (other in Matrix) {
+                    ov = other.get(i, j);
+                } else {
+                    ov = other[i][j];
+                }
+                res.data[i][j] = this.data[i][j] + ov;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun sub(other) {
+        var res = new Matrix(this.rows, this.cols);
+        var i = 0;
+        while (i < this.rows) {
+            var j = 0;
+            while (j < this.cols) {
+                var ov = 0.0;
+                if (other in Matrix) {
+                    ov = other.get(i, j);
+                } else {
+                    ov = other[i][j];
+                }
+                res.data[i][j] = this.data[i][j] - ov;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun scale(s) {
+        var factor = valToDouble(s);
+        var res = new Matrix(this.rows, this.cols);
+        var i = 0;
+        while (i < this.rows) {
+            var j = 0;
+            while (j < this.cols) {
+                res.data[i][j] = this.data[i][j] * factor;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun mul(other) {
+        var orows = 0;
+        var ocols = 0;
+        if (other in Matrix) {
+            orows = other.numRows();
+            ocols = other.numCols();
+        } else {
+            orows = len(other);
+            ocols = len(other[0]);
+        }
+        var res = new Matrix(this.rows, ocols);
+        var i = 0;
+        while (i < this.rows) {
+            var j = 0;
+            while (j < ocols) {
+                var sum = 0.0;
+                var k = 0;
+                while (k < this.cols) {
+                    var ov = 0.0;
+                    if (other in Matrix) {
+                        ov = other.get(k, j);
+                    } else {
+                        ov = other[k][j];
+                    }
+                    sum = sum + this.data[i][k] * ov;
+                    k = k + 1;
+                }
+                res.data[i][j] = sum;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun transpose() {
+        var res = new Matrix(this.cols, this.rows);
+        var i = 0;
+        while (i < this.rows) {
+            var j = 0;
+            while (j < this.cols) {
+                res.data[j][i] = this.data[i][j];
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun trace() {
+        var n = this.rows;
+        if (this.cols < n) {
+            n = this.cols;
+        }
+        var sum = 0.0;
+        var i = 0;
+        while (i < n) {
+            sum = sum + this.data[i][i];
+            i = i + 1;
+        }
+        return sum;
+    }
+
+    fun det() {
+        var n = this.rows;
+        if (n != this.cols) {
+            return 0.0;
+        }
+        if (n == 1) {
+            return this.data[0][0];
+        }
+        if (n == 2) {
+            return this.data[0][0] * this.data[1][1] - this.data[0][1] * this.data[1][0];
+        }
+
+        // 高斯消元法求行列式
+        var a = [ ];
+        var i = 0;
+        while (i < n) {
+            var row = [ ];
+            var j = 0;
+            while (j < n) {
+                row = push(row, this.data[i][j]);
+                j = j + 1;
+            }
+            a = push(a, row);
+            i = i + 1;
+        }
+
+        var d = 1.0;
+        i = 0;
+        while (i < n) {
+            var pivot = i;
+            var maxV = abs(a[i][i]);
+            var k = i + 1;
+            while (k < n) {
+                if (abs(a[k][i]) > maxV) {
+                    maxV = abs(a[k][i]);
+                    pivot = k;
+                }
+                k = k + 1;
+            }
+            if (maxV == 0.0) {
+                return 0.0;
+            }
+            if (pivot != i) {
+                var tmp = a[i];
+                a[i] = a[pivot];
+                a[pivot] = tmp;
+                d = -d;
+            }
+            d = d * a[i][i];
+
+            k = i + 1;
+            while (k < n) {
+                var factor = a[k][i] / a[i][i];
+                var col = i + 1;
+                while (col < n) {
+                    a[k][col] = a[k][col] - factor * a[i][col];
+                    col = col + 1;
+                }
+                k = k + 1;
+            }
+            i = i + 1;
+        }
+        return d;
+    }
+
+    fun inverse() {
+        var n = this.rows;
+        if (n != this.cols) {
+            return null;
+        }
+        // 高斯-约旦消元法求逆矩阵
+        var aug = [ ];
+        var i = 0;
+        while (i < n) {
+            var row = [ ];
+            var j = 0;
+            while (j < n) {
+                row = push(row, this.data[i][j]);
+                j = j + 1;
+            }
+            j = 0;
+            while (j < n) {
+                if (i == j) {
+                    row = push(row, 1.0);
+                } else {
+                    row = push(row, 0.0);
+                }
+                j = j + 1;
+            }
+            aug = push(aug, row);
+            i = i + 1;
+        }
+
+        i = 0;
+        while (i < n) {
+            var pivot = i;
+            var maxV = abs(aug[i][i]);
+            var k = i + 1;
+            while (k < n) {
+                if (abs(aug[k][i]) > maxV) {
+                    maxV = abs(aug[k][i]);
+                    pivot = k;
+                }
+                k = k + 1;
+            }
+            if (maxV == 0.0) {
+                return null; // 奇异矩阵不可逆
+            }
+            if (pivot != i) {
+                var tmp = aug[i];
+                aug[i] = aug[pivot];
+                aug[pivot] = tmp;
+            }
+
+            var divVal = aug[i][i];
+            var j = 0;
+            while (j < 2 * n) {
+                aug[i][j] = aug[i][j] / divVal;
+                j = j + 1;
+            }
+
+            k = 0;
+            while (k < n) {
+                if (k != i) {
+                    var factor = aug[k][i];
+                    j = 0;
+                    while (j < 2 * n) {
+                        aug[k][j] = aug[k][j] - factor * aug[i][j];
+                        j = j + 1;
+                    }
+                }
+                k = k + 1;
+            }
+            i = i + 1;
+        }
+
+        var res = new Matrix(n, n);
+        i = 0;
+        while (i < n) {
+            var j = 0;
+            while (j < n) {
+                res.data[i][j] = aug[i][j + n];
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    fun solve(b) {
+        var inv = this.inverse();
+        if (inv == null) {
+            return null;
+        }
+        if (b in Matrix) {
+            return inv.mul(b);
+        }
+        var bMat = new Matrix(len(b), 1);
+        var i = 0;
+        while (i < len(b)) {
+            bMat.data[i][0] = valToDouble(b[i]);
+            i = i + 1;
+        }
+        var xMat = inv.mul(bMat);
+        var xArr = [ ];
+        i = 0;
+        while (i < len(b)) {
+            xArr = push(xArr, xMat.data[i][0]);
+            i = i + 1;
+        }
+        return xArr;
+    }
+
+    fun row(i) {
+        return this.data[i];
+    }
+
+    fun col(j) {
+        var c = [ ];
+        var i = 0;
+        while (i < this.rows) {
+            c = push(c, this.data[i][j]);
+            i = i + 1;
+        }
+        return c;
+    }
+
+    fun toArray() {
+        return this.data;
+    }
+
+    fun toString() {
+        var s = "[\n";
+        var i = 0;
+        while (i < this.rows) {
+            s = s + "  " + str(this.data[i]) + "\n";
+            i = i + 1;
+        }
+        s = s + "]";
+        return s;
+    }
+
+    // --- 静态方法 ---
+
+    static fun zeros(r, c) {
+        return new Matrix(r, c);
+    }
+
+    static fun ones(r, c) {
+        var m = new Matrix(r, c);
+        var i = 0;
+        while (i < r) {
+            var j = 0;
+            while (j < c) {
+                m.data[i][j] = 1.0;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return m;
+    }
+
+    static fun identity(n) {
+        var m = new Matrix(n, n);
+        var i = 0;
+        while (i < n) {
+            m.data[i][i] = 1.0;
+            i = i + 1;
+        }
+        return m;
+    }
+
+    static fun fromArray(arr2d) {
+        var r = len(arr2d);
+        var c = len(arr2d[0]);
+        var m = new Matrix(r, c);
+        var i = 0;
+        while (i < r) {
+            var j = 0;
+            while (j < c) {
+                m.data[i][j] = valToDouble(arr2d[i][j]);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return m;
+    }
+}

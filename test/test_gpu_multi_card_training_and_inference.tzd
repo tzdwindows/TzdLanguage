@@ -190,12 +190,13 @@ print("[Phase 4/5] 集合通信梯度 AllReduce 与分布式多卡训练自检..
 
     // 运行分布式数据并行 DDP 模型训练迭代
     var ddpNet = new GPUNetwork();
+    ddpNet.to(devTarget);
     var ddp = new DistributedDataParallel(ddpNet, pg);
     var ddpOptim = torch_optimizer_create("adam", ddpNet.parameters(), 0.03);
     var ddpLossFn = new MSELoss();
 
-    var ddpInput = torch_randn(16, 4);
-    var ddpTarget = torch_sum(ddpInput, 1, true);
+    var ddpInput = torch_to_device(torch_randn(16, 4), devTarget);
+    var ddpTarget = torch_to_device(torch_sum(ddpInput, 1, true), devTarget);
 
     var ddpInitLoss = 0.0;
     var ddpFinalLoss = 0.0;

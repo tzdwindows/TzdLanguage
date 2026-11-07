@@ -1,0 +1,664 @@
+/**
+ * TzdLang 数学标准库 - FFT 快速傅里叶变换与频域分析
+ * 提供 Cooley-Tukey Radix-2 快速傅里叶变换 (FFT/IFFT)、任意长度离散傅里叶变换 (DFT/IDFT)、
+ * 实数谱 (RFFT/IRFFT)、二维傅里叶变换 (FFT2/IFFT2)、快速卷积与互相关、
+ * 频谱平移、振幅/功率/相位谱计算以及常用窗函数 (Hanning, Hamming, Blackman, Bartlett)。
+ */
+
+import "math.Complex";
+
+class FFT {
+    const PI = 3.14159265358979323846;
+    const TWO_PI = 6.28318530717958647692;
+
+    /**
+     * 判断整数是否为 2 的整数次幂
+     */
+    static fun isPowerOfTwo(n) {
+        return n > 0 && (n & (n - 1)) == 0;
+    }
+
+    /**
+     * 计算大于等于给定尺寸的最小 2 的幂次
+     */
+    static fun nextPowerOf2(n) {
+        if (n <= 1) return 1;
+        var p = 1;
+        while (p < n) {
+            p = p << 1;
+        }
+        return p;
+    }
+
+    /**
+     * 将输入转换为 Complex 对象数组
+     */
+    static fun toComplexArray(input) {
+        var res = [ ];
+        var n = len(input);
+        var i = 0;
+        while (i < n) {
+            var item = input[i];
+            if (item != null && item.real != null && item.imag != null) {
+                res = push(res, new Complex(item.real, item.imag));
+            } else {
+                res = push(res, new Complex(valToDouble(item), 0.0));
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 任意长度精确离散傅里叶变换 DFT - O(N^2)
+     */
+    static fun dft(input) {
+        var cInput = FFT.toComplexArray(input);
+        var n = len(cInput);
+        if (n == 0) return [ ];
+
+        var result = [ ];
+        var k = 0;
+        while (k < n) {
+            var sumReal = 0.0;
+            var sumImag = 0.0;
+            var t = 0;
+            while (t < n) {
+                var angle = -2.0 * 3.14159265358979323846 * k * t / n;
+                var cosA = cos(angle);
+                var sinA = sin(angle);
+                var item = cInput[t];
+                var re = item.real;
+                var im = item.imag;
+                // (re + i*im) * (cosA + i*sinA)
+                sumReal = sumReal + (re * cosA - im * sinA);
+                sumImag = sumImag + (re * sinA + im * cosA);
+                t = t + 1;
+            }
+            result = push(result, new Complex(sumReal, sumImag));
+            k = k + 1;
+        }
+        return result;
+    }
+
+    /**
+     * 任意长度精确逆离散傅里叶变换 IDFT - O(N^2)
+     */
+    static fun idft(input) {
+        var cInput = FFT.toComplexArray(input);
+        var n = len(cInput);
+        if (n == 0) return [ ];
+
+        var result = [ ];
+        var k = 0;
+        while (k < n) {
+            var sumReal = 0.0;
+            var sumImag = 0.0;
+            var t = 0;
+            while (t < n) {
+                var angle = 2.0 * 3.14159265358979323846 * k * t / n;
+                var cosA = cos(angle);
+                var sinA = sin(angle);
+                var item = cInput[t];
+                var re = item.real;
+                var im = item.imag;
+                sumReal = sumReal + (re * cosA - im * sinA);
+                sumImag = sumImag + (re * sinA + im * cosA);
+                t = t + 1;
+            }
+            result = push(result, new Complex(sumReal / n, sumImag / n));
+            k = k + 1;
+        }
+        return result;
+    }
+
+    /**
+     * 快速傅里叶变换 (Cooley-Tukey Radix-2 迭代式蝶形算法) - O(N log N)
+     * 若长度是 2 的次幂，执行 O(N log N) 快速蝶形变换；否则若小于 512 则自动采用精确 DFT。
+     */
+    static fun fft(input) {
+        var n = len(input);
+        if (n == 0) return [ ];
+
+        if (!FFT.isPowerOfTwo(n)) {
+            return FFT.dft(input);
+        }
+
+        var a = FFT.toComplexArray(input);
+
+        // 1. 位反转重排 (Bit-reversal permutation)
+        var j = 0;
+        var i = 1;
+        while (i < n) {
+            var bit = n >> 1;
+            while ((j & bit) != 0) {
+                j = j ^ bit;
+                bit = bit >> 1;
+            }
+            j = j ^ bit;
+
+            if (i < j) {
+                var tmp = a[i];
+                a[i] = a[j];
+                a[j] = tmp;
+            }
+            i = i + 1;
+        }
+
+        // 2. 迭代蝶形运算 (Cooley-Tukey Iterative Butterflies)
+        var lenStep = 2;
+        while (lenStep <= n) {
+            var half = lenStep >> 1;
+            var angle = -2.0 * 3.14159265358979323846 / lenStep;
+            var wStep = new Complex(cos(angle), sin(angle));
+            i = 0;
+            while (i < n) {
+                var w = new Complex(1.0, 0.0);
+                j = 0;
+                while (j < half) {
+                    var u = a[i + j];
+                    var elem = a[i + j + half];
+                    var v = elem.mul(w);
+                    a[i + j] = u.add(v);
+                    a[i + j + half] = u.sub(v);
+                    w = w.mul(wStep);
+                    j = j + 1;
+                }
+                i = i + lenStep;
+            }
+            lenStep = lenStep << 1;
+        }
+
+        return a;
+    }
+
+    /**
+     * 快速傅里叶逆变换 (IFFT) - O(N log N)
+     * 基于共轭恒等式 IFFT(X) = (1/N) * conj(FFT(conj(X)))
+     */
+    static fun ifft(input) {
+        var n = len(input);
+        if (n == 0) return [ ];
+
+        if (!FFT.isPowerOfTwo(n)) {
+            return FFT.idft(input);
+        }
+
+        var cInput = FFT.toComplexArray(input);
+        var conjInput = [ ];
+        var i = 0;
+        while (i < n) {
+            var ci = cInput[i];
+            conjInput = push(conjInput, ci.conjugate());
+            i = i + 1;
+        }
+
+        var fftOut = FFT.fft(conjInput);
+        var result = [ ];
+        i = 0;
+        while (i < n) {
+            var fo = fftOut[i];
+            var c = fo.conjugate();
+            result = push(result, new Complex(c.real / n, c.imag / n));
+            i = i + 1;
+        }
+        return result;
+    }
+
+    /**
+     * 实数快速傅里叶变换 (RFFT)
+     * 返回 [0, N/2] 共 N/2 + 1 个对称频点分量
+     */
+    static fun rfft(input) {
+        var full = FFT.fft(input);
+        var n = len(full);
+        if (n == 0) return [ ];
+        var halfN = (n >> 1) + 1;
+        var res = [ ];
+        var i = 0;
+        while (i < halfN) {
+            res = push(res, full[i]);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 实数快速傅里叶逆变换 (IRFFT)
+     * 利用共轭对称性重建完整实数信号数组 (返回浮点数数组)
+     */
+    static fun irfft(input, n) {
+        var m = len(input);
+        if (m == 0) return [ ];
+        var totalN = n;
+        if (totalN == null || totalN <= 0) {
+            totalN = (m - 1) * 2;
+        }
+
+        var full = [ ];
+        var i = 0;
+        while (i < totalN) {
+            full = push(full, new Complex(0.0, 0.0));
+            i = i + 1;
+        }
+
+        i = 0;
+        while (i < m && i < totalN) {
+            full[i] = input[i];
+            i = i + 1;
+        }
+
+        // 填充共轭对称部分
+        i = m;
+        while (i < totalN) {
+            var symIdx = totalN - i;
+            if (symIdx < m) {
+                var symElem = input[symIdx];
+                full[i] = symElem.conjugate();
+            }
+            i = i + 1;
+        }
+
+        var ifftOut = FFT.ifft(full);
+        var realOut = [ ];
+        i = 0;
+        while (i < totalN) {
+            var ifElem = ifftOut[i];
+            realOut = push(realOut, ifElem.real);
+            i = i + 1;
+        }
+        return realOut;
+    }
+
+    /**
+     * 二维傅里叶变换 (FFT2)
+     * 对矩阵按行先做 FFT，再按列做 FFT
+     */
+    static fun fft2(matrix2d) {
+        var rows = len(matrix2d);
+        if (rows == 0) return [ ];
+        var cols = len(matrix2d[0]);
+        if (cols == 0) return [ ];
+
+        // 1. 每行进行 FFT
+        var rowTrans = [ ];
+        var r = 0;
+        while (r < rows) {
+            rowTrans = push(rowTrans, FFT.fft(matrix2d[r]));
+            r = r + 1;
+        }
+
+        // 2. 转置后每行做 FFT，再转置回来
+        var colTrans = [ ];
+        var c = 0;
+        while (c < cols) {
+            var colVec = [ ];
+            r = 0;
+            while (r < rows) {
+                colVec = push(colVec, rowTrans[r][c]);
+                r = r + 1;
+            }
+            colTrans = push(colTrans, FFT.fft(colVec));
+            c = c + 1;
+        }
+
+        // 组合最终二维数组
+        var res = [ ];
+        r = 0;
+        while (r < rows) {
+            var rowRes = [ ];
+            c = 0;
+            while (c < cols) {
+                rowRes = push(rowRes, colTrans[c][r]);
+                c = c + 1;
+            }
+            res = push(res, rowRes);
+            r = r + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 二维傅里叶逆变换 (IFFT2)
+     */
+    static fun ifft2(matrix2d) {
+        var rows = len(matrix2d);
+        if (rows == 0) return [ ];
+        var cols = len(matrix2d[0]);
+        if (cols == 0) return [ ];
+
+        // 1. 每行进行 IFFT
+        var rowTrans = [ ];
+        var r = 0;
+        while (r < rows) {
+            rowTrans = push(rowTrans, FFT.ifft(matrix2d[r]));
+            r = r + 1;
+        }
+
+        // 2. 每列进行 IFFT
+        var colTrans = [ ];
+        var c = 0;
+        while (c < cols) {
+            var colVec = [ ];
+            r = 0;
+            while (r < rows) {
+                colVec = push(colVec, rowTrans[r][c]);
+                r = r + 1;
+            }
+            colTrans = push(colTrans, FFT.ifft(colVec));
+            c = c + 1;
+        }
+
+        var res = [ ];
+        r = 0;
+        while (r < rows) {
+            var rowRes = [ ];
+            c = 0;
+            while (c < cols) {
+                rowRes = push(rowRes, colTrans[c][r]);
+                c = c + 1;
+            }
+            res = push(res, rowRes);
+            r = r + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 计算频率采样轴刻度 (类似 numpy.fft.fftfreq)
+     */
+    static fun fftFreq(n, sampleSpacing) {
+        var d = 1.0;
+        if (sampleSpacing != null && valToDouble(sampleSpacing) > 0.0) {
+            d = valToDouble(sampleSpacing);
+        }
+        var val = 1.0 / (n * d);
+        var res = [ ];
+        var N_half = (n - 1) / 2;
+        var i = 0;
+        while (i <= N_half) {
+            res = push(res, i * val);
+            i = i + 1;
+        }
+        i = -(n / 2);
+        while (i < 0) {
+            res = push(res, i * val);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 计算单边实数傅里叶变换频率采样轴刻度 (类似 numpy.fft.rfftfreq)
+     */
+    static fun rfftFreq(n, sampleSpacing) {
+        var d = 1.0;
+        if (sampleSpacing != null && valToDouble(sampleSpacing) > 0.0) {
+            d = valToDouble(sampleSpacing);
+        }
+        var val = 1.0 / (n * d);
+        var halfN = (n >> 1) + 1;
+        var res = [ ];
+        var i = 0;
+        while (i < halfN) {
+            res = push(res, i * val);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 将零频分量平移至频谱中心 (类似 numpy.fft.fftshift)
+     */
+    static fun fftShift(arr) {
+        var n = len(arr);
+        if (n <= 1) return arr;
+        var mid = (n + 1) >> 1;
+        var res = [ ];
+        var i = mid;
+        while (i < n) {
+            res = push(res, arr[i]);
+            i = i + 1;
+        }
+        i = 0;
+        while (i < mid) {
+            res = push(res, arr[i]);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 逆频谱平移 (类似 numpy.fft.ifftshift)
+     */
+    static fun ifftShift(arr) {
+        var n = len(arr);
+        if (n <= 1) return arr;
+        var mid = n >> 1;
+        var res = [ ];
+        var i = mid;
+        while (i < n) {
+            res = push(res, arr[i]);
+            i = i + 1;
+        }
+        i = 0;
+        while (i < mid) {
+            res = push(res, arr[i]);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 计算振幅谱 (Magnitude Spectrum)
+     */
+    static fun magnitudeSpectrum(fftResult) {
+        var res = [ ];
+        var n = len(fftResult);
+        var i = 0;
+        while (i < n) {
+            var item = fftResult[i];
+            if (item != null && item.magnitude != null) {
+                res = push(res, item.magnitude());
+            } else {
+                res = push(res, abs(valToDouble(item)));
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 计算功率谱 (Power Spectrum P[k] = |X[k]|^2 / N)
+     */
+    static fun powerSpectrum(fftResult) {
+        var res = [ ];
+        var n = len(fftResult);
+        if (n == 0) return [ ];
+        var i = 0;
+        while (i < n) {
+            var mag = 0.0;
+            var item = fftResult[i];
+            if (item != null && item.magnitude != null) {
+                mag = item.magnitude();
+            } else {
+                mag = abs(valToDouble(item));
+            }
+            res = push(res, (mag * mag) / n);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 计算相位谱 (Phase Spectrum in Radians)
+     */
+    static fun phaseSpectrum(fftResult) {
+        var res = [ ];
+        var n = len(fftResult);
+        var i = 0;
+        while (i < n) {
+            var item = fftResult[i];
+            if (item != null && item.phase != null) {
+                res = push(res, item.phase());
+            } else {
+                res = push(res, 0.0);
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 基于 FFT 卷积定理的高速一维线性卷积 (Convolution) - O(N log N)
+     */
+    static fun convolve(x, y) {
+        var nx = len(x);
+        var ny = len(y);
+        if (nx == 0 || ny == 0) return [ ];
+
+        var totalLen = nx + ny - 1;
+        var fftSize = FFT.nextPowerOf2(totalLen);
+
+        var padX = [ ];
+        var i = 0;
+        while (i < fftSize) {
+            if (i < nx) padX = push(padX, valToDouble(x[i]));
+            else padX = push(padX, 0.0);
+            i = i + 1;
+        }
+
+        var padY = [ ];
+        i = 0;
+        while (i < fftSize) {
+            if (i < ny) padY = push(padY, valToDouble(y[i]));
+            else padY = push(padY, 0.0);
+            i = i + 1;
+        }
+
+        var fx = FFT.fft(padX);
+        var fy = FFT.fft(padY);
+
+        var fProd = [ ];
+        i = 0;
+        while (i < fftSize) {
+            var fxi = fx[i];
+            var fyi = fy[i];
+            fProd = push(fProd, fxi.mul(fyi));
+            i = i + 1;
+        }
+
+        var ifx = FFT.ifft(fProd);
+        var res = [ ];
+        i = 0;
+        while (i < totalLen) {
+            var ifxi = ifx[i];
+            res = push(res, ifxi.real);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 信号互相关分析 (Correlation)
+     */
+    static fun correlate(x, y) {
+        var ny = len(y);
+        var yRev = [ ];
+        var i = ny - 1;
+        while (i >= 0) {
+            yRev = push(yRev, y[i]);
+            i = i - 1;
+        }
+        return FFT.convolve(x, yRev);
+    }
+
+    // --- 常用窗函数 (Window Functions) ---
+
+    /**
+     * 汉宁窗 (Hanning Window)
+     */
+    static fun hanning(n) {
+        var res = [ ];
+        if (n <= 0) return res;
+        if (n == 1) return [1.0];
+        var i = 0;
+        while (i < n) {
+            var w = 0.5 * (1.0 - cos(2.0 * 3.14159265358979323846 * i / (n - 1)));
+            res = push(res, w);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 汉明窗 (Hamming Window)
+     */
+    static fun hamming(n) {
+        var res = [ ];
+        if (n <= 0) return res;
+        if (n == 1) return [1.0];
+        var i = 0;
+        while (i < n) {
+            var w = 0.54 - 0.46 * cos(2.0 * 3.14159265358979323846 * i / (n - 1));
+            res = push(res, w);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 布莱克曼窗 (Blackman Window)
+     */
+    static fun blackman(n) {
+        var res = [ ];
+        if (n <= 0) return res;
+        if (n == 1) return [1.0];
+        var i = 0;
+        while (i < n) {
+            var a0 = 0.42;
+            var a1 = 0.5;
+            var a2 = 0.08;
+            var theta = 2.0 * 3.14159265358979323846 * i / (n - 1);
+            var w = a0 - a1 * cos(theta) + a2 * cos(2.0 * theta);
+            res = push(res, w);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 巴特利特三角窗 (Bartlett Window)
+     */
+    static fun bartlett(n) {
+        var res = [ ];
+        if (n <= 0) return res;
+        if (n == 1) return [1.0];
+        var i = 0;
+        while (i < n) {
+            var w = 1.0 - abs(2.0 * i / (n - 1) - 1.0);
+            res = push(res, w);
+            i = i + 1;
+        }
+        return res;
+    }
+
+    /**
+     * 将窗函数加权应用到信号
+     */
+    static fun applyWindow(signal, window) {
+        var n = len(signal);
+        var wn = len(window);
+        var m = n;
+        if (wn < n) {
+            m = wn;
+        }
+        var res = [ ];
+        var i = 0;
+        while (i < m) {
+            res = push(res, valToDouble(signal[i]) * valToDouble(window[i]));
+            i = i + 1;
+        }
+        return res;
+    }
+}

@@ -1,0 +1,98 @@
+/**
+ * TzdLang 数学标准库 - Rational 精确有理数 (分数)
+ * 基于任意精度大整数分子分母化简，支持无限精度四则运算、倒数、小数转换
+ */
+
+class Rational {
+    var Rational val;
+
+    Rational() {
+        this.val = rational(0, 1);
+    }
+
+    Rational(n) {
+        this.val = rational(n);
+    }
+
+    Rational(num, den) {
+        this.val = rational(num, den);
+    }
+
+    fun get() {
+        return this.val;
+    }
+
+    fun set(v) {
+        this.val = rational(v);
+    }
+
+    fun num() {
+        return rationalNum(this.val);
+    }
+
+    fun den() {
+        return rationalDen(this.val);
+    }
+
+    fun add(other) {
+        return new Rational(rationalAdd(this.val, other));
+    }
+
+    fun sub(other) {
+        return new Rational(rationalSub(this.val, other));
+    }
+
+    fun mul(other) {
+        return new Rational(rationalMul(this.val, other));
+    }
+
+    fun div(other) {
+        return new Rational(rationalDiv(this.val, other));
+    }
+
+    fun negate() {
+        return new Rational(rationalSub(0, this.val));
+    }
+
+    fun reciprocal() {
+        return new Rational(rationalDiv(1, this.val));
+    }
+
+    fun toDouble() {
+        return valToDouble(this.val);
+    }
+
+    fun toString() {
+        return str(this.val);
+    }
+
+    fun compareTo(other) {
+        return rationalCompare(this.val, other);
+    }
+
+    fun equals(other) {
+        return rationalCompare(this.val, other) == 0;
+    }
+
+    // --- 静态方法 ---
+
+    static fun from(v) {
+        return new Rational(v);
+    }
+
+    static fun fromDouble(d) {
+        return new Rational(toFraction(d));
+    }
+
+    static fun fromDoubleWithTolerance(d, tol) {
+        return new Rational(toFraction(d, tol));
+    }
+
+    static fun zero() {
+        return new Rational(0, 1);
+    }
+
+    static fun one() {
+        return new Rational(1, 1);
+    }
+}

@@ -21,6 +21,7 @@ extern "C" __declspec(dllimport) int __stdcall SetConsoleCP(unsigned int);
 #include <MinHook.h>
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
+#include <colunwind/colunwind.h>
 
 #if defined(_MSC_VER)
 #include <cstdlib>
@@ -211,14 +212,34 @@ int main(int argc, char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
+    // Initialize colunwind crash handler
+    colunwind_config_t col_cfg;
+    if (colunwind_config_init(&col_cfg) == COLUNWIND_SUCCESS) {
+        col_cfg.enable_auto_dump = true;
+        col_cfg.dump_directory = ".";
+        if (colunwind_init(&col_cfg) == COLUNWIND_SUCCESS) {
+            colunwind_install_crash_handler();
+        }
+    }
+
     // Check if running as a standalone compiled executable
     int embeddedExitCode = 0;
     if (tzd::TzdExeCompiler::tryRunEmbeddedExecutable(argc, argv, &embeddedExitCode)) {
+        colunwind_uninstall_crash_handler();
+        colunwind_shutdown();
         return embeddedExitCode;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--test-crash") == 0) {
+        volatile int* null_ptr = nullptr;
+        *null_ptr = 42;
     }
 
     // InitHook();  // Temporarily disabled for testing
     TzdCommandSystem system;
     system.start(argc, argv);
+
+    colunwind_uninstall_crash_handler();
+    colunwind_shutdown();
     return 0;
 }

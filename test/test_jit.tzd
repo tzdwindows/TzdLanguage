@@ -1,0 +1,5 @@
+fun aa(){
+    int x = 1;
+    x = "abc";
+};
+aa();

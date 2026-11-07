@@ -177,6 +177,7 @@ public:
 
     virtual std::any visitPostfixExpr(TzdLangParser::PostfixExprContext* ctx) override;
     virtual std::any visitForStmt(TzdLangParser::ForStmtContext* ctx) override;
+    virtual std::any visitForEachStmt(TzdLangParser::ForEachStmtContext* ctx) override;
     virtual std::any visitPrefixExpr(TzdLangParser::PrefixExprContext* ctx) override;
     virtual std::any visitWhileStmt(TzdLangParser::WhileStmtContext* ctx) override;
     bool tryEmitCanonicalSumReduction(TzdLangParser::WhileStmtContext* ctx);

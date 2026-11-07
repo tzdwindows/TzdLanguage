@@ -14,23 +14,22 @@ public:
   enum {
     T__0 = 1, T__1 = 2, T__2 = 3, T__3 = 4, T__4 = 5, T__5 = 6, T__6 = 7, 
     T__7 = 8, T__8 = 9, T__9 = 10, T__10 = 11, T__11 = 12, T__12 = 13, T__13 = 14, 
-    T__14 = 15, KW_VAR = 16, KW_CONST = 17, KW_LET = 18, KW_STATIC = 19, 
-    KW_ABSTRACT = 20, KW_ENUM = 21, KW_IN = 22, KW_SUPER = 23, KW_NATIVE = 24, 
-    KW_IMPORT = 25, KW_PRINT = 26, KW_CLASS = 27, KW_EXTENDS = 28, KW_PUBLIC = 29, 
-    KW_PRIVATE = 30, KW_PROTECTED = 31, KW_FUN = 32, KW_RET = 33, KW_IF = 34, 
-    KW_ELSE = 35, KW_WHILE = 36, KW_FOR = 37, KW_BREAK = 38, KW_CONTINUE = 39, 
-    KW_SWITCH = 40, KW_CASE = 41, KW_DEFAULT = 42, KW_NEW = 43, KW_TRUE = 44, 
-    KW_FALSE = 45, KW_NULL = 46, KW_THROW = 47, KW_TRY = 48, KW_CATCH = 49, 
-    T_INT = 50, T_FLOAT = 51, T_STRING = 52, T_BOOL = 53, T_VOID = 54, T_PTR = 55, 
-    T_FUNCTION = 56, INC = 57, DEC = 58, GXXX = 59, USHR_ASSIGN = 60, SHR_ASSIGN = 61, 
-    SHL_ASSIGN = 62, USHR = 63, SHR = 64, SHL = 65, AND_ASSIGN = 66, OR_ASSIGN = 67, 
-    XOR_ASSIGN = 68, MOD_ASSIGN = 69, PLUS_ASSIGN = 70, MIN_ASSIGN = 71, 
-    MUL_ASSIGN = 72, DIV_ASSIGN = 73, EEQ = 74, NEQ = 75, GE = 76, LE = 77, 
-    AND = 78, OR = 79, POW = 80, BIT_NOT = 81, BIT_AND = 82, BIT_OR = 83, 
-    BIT_XOR = 84, ARROW = 85, PLUS = 86, MINUS = 87, MUL = 88, DIV = 89, 
-    MOD = 90, NOT = 91, GT = 92, LT = 93, ASSIGN = 94, IDENTIFIER = 95, 
-    INTEGER = 96, FLOAT = 97, STRING = 98, LINE_COMMENT = 99, BLOCK_COMMENT = 100, 
-    WS = 101
+    KW_VAR = 15, KW_CONST = 16, KW_LET = 17, KW_STATIC = 18, KW_ABSTRACT = 19, 
+    KW_ENUM = 20, KW_IN = 21, KW_SUPER = 22, KW_NATIVE = 23, KW_IMPORT = 24, 
+    KW_PRINT = 25, KW_CLASS = 26, KW_EXTENDS = 27, KW_PUBLIC = 28, KW_PRIVATE = 29, 
+    KW_PROTECTED = 30, KW_FUN = 31, KW_RET = 32, KW_IF = 33, KW_ELSE = 34, 
+    KW_WHILE = 35, KW_FOR = 36, KW_BREAK = 37, KW_CONTINUE = 38, KW_SWITCH = 39, 
+    KW_CASE = 40, KW_DEFAULT = 41, KW_NEW = 42, KW_TRUE = 43, KW_FALSE = 44, 
+    KW_NULL = 45, KW_THROW = 46, KW_TRY = 47, KW_CATCH = 48, T_INT = 49, 
+    T_FLOAT = 50, T_STRING = 51, T_BOOL = 52, T_VOID = 53, T_PTR = 54, T_FUNCTION = 55, 
+    INC = 56, DEC = 57, GXXX = 58, USHR_ASSIGN = 59, SHR_ASSIGN = 60, SHL_ASSIGN = 61, 
+    USHR = 62, SHR = 63, SHL = 64, AND_ASSIGN = 65, OR_ASSIGN = 66, XOR_ASSIGN = 67, 
+    MOD_ASSIGN = 68, PLUS_ASSIGN = 69, MIN_ASSIGN = 70, MUL_ASSIGN = 71, 
+    DIV_ASSIGN = 72, EEQ = 73, NEQ = 74, GE = 75, LE = 76, AND = 77, OR = 78, 
+    POW = 79, BIT_NOT = 80, BIT_AND = 81, BIT_OR = 82, BIT_XOR = 83, ARROW = 84, 
+    PLUS = 85, MINUS = 86, MUL = 87, DIV = 88, MOD = 89, NOT = 90, GT = 91, 
+    LT = 92, ASSIGN = 93, ELLIPSIS = 94, IDENTIFIER = 95, INTEGER = 96, 
+    FLOAT = 97, STRING = 98, LINE_COMMENT = 99, BLOCK_COMMENT = 100, WS = 101
   };
 
   enum {
@@ -40,10 +39,10 @@ public:
     RuleMemberDecl = 11, RuleAnnotationUsage = 12, RuleAccessModifier = 13, 
     RuleFunctionDeclaration = 14, RuleNativeFunctionDeclaration = 15, RuleNativeAttrList = 16, 
     RuleNativeAttr = 17, RuleNativePropKey = 18, RuleVariableDeclaration = 19, 
-    RuleForInit = 20, RuleImportStatement = 21, RuleParamList = 22, RuleParam = 23, 
-    RuleBlock = 24, RuleExpression = 25, RuleAtom = 26, RuleClassOverrideBlock = 27, 
-    RulePrintFunction = 28, RuleExprList = 29, RuleMapEntryList = 30, RuleMapEntry = 31, 
-    RuleMapKey = 32, RuleTypeType = 33
+    RuleForInit = 20, RuleForEachInit = 21, RuleImportStatement = 22, RuleParamList = 23, 
+    RuleParam = 24, RuleBlock = 25, RuleExpression = 26, RuleAtom = 27, 
+    RuleClassOverrideBlock = 28, RulePrintFunction = 29, RuleExprList = 30, 
+    RuleMapEntryList = 31, RuleMapEntry = 32, RuleMapKey = 33, RuleTypeType = 34
   };
 
   explicit TzdLangParser(antlr4::TokenStream *input);
@@ -84,6 +83,7 @@ public:
   class NativePropKeyContext;
   class VariableDeclarationContext;
   class ForInitContext;
+  class ForEachInitContext;
   class ImportStatementContext;
   class ParamListContext;
   class ParamContext;
@@ -167,6 +167,18 @@ public:
     BlockStmtContext(StatementContext *ctx);
 
     BlockContext *block();
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+  };
+
+  class  ForEachStmtContext : public StatementContext {
+  public:
+    ForEachStmtContext(StatementContext *ctx);
+
+    antlr4::tree::TerminalNode *KW_FOR();
+    ForEachInitContext *forEachInit();
+    ExpressionContext *expression();
+    StatementContext *statement();
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
   };
@@ -716,6 +728,21 @@ public:
 
   ForInitContext* forInit();
 
+  class  ForEachInitContext : public antlr4::ParserRuleContext {
+  public:
+    ForEachInitContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *IDENTIFIER();
+    TypeTypeContext *typeType();
+    antlr4::tree::TerminalNode *KW_VAR();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ForEachInitContext* forEachInit();
+
   class  ImportStatementContext : public antlr4::ParserRuleContext {
   public:
     ImportStatementContext(antlr4::ParserRuleContext *parent, size_t invokingState);
@@ -749,6 +776,7 @@ public:
     ParamContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     TypeTypeContext *typeType();
+    antlr4::tree::TerminalNode *ELLIPSIS();
     antlr4::tree::TerminalNode *IDENTIFIER();
     antlr4::tree::TerminalNode *T_INT();
     antlr4::tree::TerminalNode *T_STRING();

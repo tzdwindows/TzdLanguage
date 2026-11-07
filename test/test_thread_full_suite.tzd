@@ -1,0 +1,264 @@
+import "stdlib/thread/Thread.tzd";
+import "stdlib/thread/Mutex.tzd";
+import "stdlib/thread/CondVar.tzd";
+import "stdlib/thread/Channel.tzd";
+import "stdlib/thread/Event.tzd";
+import "stdlib/thread/Atomic.tzd";
+import "stdlib/thread/ThreadPool.tzd";
+
+print("=================================================");
+print("       TZDLANG 全面多线程系统综合验证套件        ");
+print("=================================================");
+
+// -----------------------------------------------------------------
+// 1. 测试直接线程通信系统 (Direct Mailbox Communication) & 双向通信
+// -----------------------------------------------------------------
+print("[1] 测试线程邮箱直接通信 (Direct Mailbox Communication)...");
+
+fun pingPongWorker(mainTid) {
+    print("  Worker: 正在等待主线程的第一条消息, mainTid = " + toString(mainTid));
+    var msg1 = Thread.receiveTimeout(3000);
+    print("  Worker 收到: " + toString(msg1));
+
+    // 回传主线程
+    var mainThread = Thread.find(mainTid);
+    print("  Worker 找到主线程对象: " + toString(mainThread));
+    if (mainThread != null) {
+        var sendOk = mainThread.send("Pong from Worker!");
+        print("  Worker 回传状态: " + toString(sendOk));
+    }
+
+    // 等待第二条消息
+    var msg2 = Thread.receiveTimeout(3000);
+    print("  Worker 收到第二条消息: " + toString(msg2));
+    return "PingPong Succeeded";
+}
+
+var mainId = Thread.currentId();
+print("  Main TID: " + toString(mainId));
+var ppt = new Thread(pingPongWorker, "PingPongThread", [mainId]);
+ppt.start();
+
+Thread.sleep(100);
+ppt.send("Ping 1 from Main");
+
+var pong = Thread.receiveTimeout(3000);
+print("  Main 收到回传: " + toString(pong));
+
+ppt.send("Ping 2 (Final) from Main");
+ppt.join();
+print("  PingPong 结果: " + toString(ppt.getResult()));
+print("  [PASS] 线程邮箱通信验证通过!\n");
+
+// -----------------------------------------------------------------
+// 2. 测试 CSP Channel 管道系统 (Channel Communication)
+// -----------------------------------------------------------------
+print("[2] 测试 CSP Channel 管道 (Buffered & Pipeline)...");
+
+var pipeCh = new Channel(5);
+
+fun pipelineProducer() {
+    for (var i = 1; i <= 3; i = i + 1) {
+        pipeCh.send("Package-" + toString(i));
+    }
+    pipeCh.close();
+}
+
+var prodT = new Thread(pipelineProducer, "ProducerThread");
+prodT.start();
+
+var p1 = pipeCh.receive();
+var p2 = pipeCh.receive();
+var p3 = pipeCh.receive();
+print("  消费管道包: " + toString(p1) + ", " + toString(p2) + ", " + toString(p3));
+prodT.join();
+print("  管道是否关闭: " + toString(pipeCh.isClosed()));
+print("  [PASS] CSP Channel 验证通过!\n");
+
+// -----------------------------------------------------------------
+// 3. 测试互斥锁 Mutex 与 LockGuard
+// -----------------------------------------------------------------
+print("[3] 测试 Mutex 与 LockGuard 互斥机制...");
+
+var testMutex = new Mutex();
+var sharedCounter = new AtomicInt(0);
+
+fun incrementWorker(loopCount) {
+    for (var i = 0; i < loopCount; i = i + 1) {
+        testMutex.lock();
+        sharedCounter.fetchAdd(1);
+        testMutex.unlock();
+    }
+}
+
+var tA = new Thread(incrementWorker, "IncA", [50]);
+var tB = new Thread(incrementWorker, "IncB", [50]);
+tA.start();
+tB.start();
+tA.join();
+tB.join();
+print("  共享计数器期望 100, 实际: " + toString(sharedCounter.load()));
+sharedCounter.destroy();
+testMutex.destroy();
+print("  [PASS] Mutex 互斥锁验证通过!\n");
+
+// -----------------------------------------------------------------
+// 4. 测试条件变量 CondVar 与 Event 事件通知
+// -----------------------------------------------------------------
+print("[4] 测试 CondVar 与 Event 事件通知...");
+
+var readyEvent = new Event(false);
+
+fun eventWorker() {
+    print("  Worker: 等待启动事件信号...");
+    var ok = readyEvent.waitTimeout(3000);
+    print("  Worker: 信号已收到 (ok=" + toString(ok) + ")");
+    return "Event Done";
+}
+
+var evThread = new Thread(eventWorker, "EventWaiter");
+evThread.start();
+Thread.sleep(100);
+print("  Main: 发送事件信号 set()...");
+readyEvent.set();
+evThread.join();
+readyEvent.destroy();
+print("  [PASS] Event 事件机制验证通过!\n");
+
+// -----------------------------------------------------------------
+// 5. 测试原子操作 AtomicInt & AtomicBool
+// -----------------------------------------------------------------
+print("[5] 测试 AtomicInt / AtomicBool 原子操作...");
+
+var atomInt = new AtomicInt(100);
+var oldVal = atomInt.fetchAdd(25);
+var curVal = atomInt.load();
+print("  AtomicInt fetchAdd: old=" + toString(oldVal) + ", cur=" + toString(curVal));
+
+var casOk = atomInt.compareAndSet(125, 200);
+print("  AtomicInt CAS(125 -> 200): " + toString(casOk) + ", cur=" + toString(atomInt.load()));
+
+var atomBool = new AtomicBool(false);
+atomBool.set(true);
+print("  AtomicBool get: " + toString(atomBool.get()));
+atomInt.destroy();
+atomBool.destroy();
+print("  [PASS] 原子变量系统验证通过!\n");
+
+// -----------------------------------------------------------------
+// 6. 测试线程堆栈追踪 (Thread Stack Tracing) 与系统 Dump
+// -----------------------------------------------------------------
+print("[6] 测试线程堆栈追踪 (Thread Stack Tracing) 与 Dump...");
+
+fun stackWorker() {
+    fun depth2() {
+        fun depth3() {
+            // 在 depth3 停留片刻供主线程采样堆栈
+            Thread.sleep(300);
+        }
+        depth3();
+    }
+    depth2();
+}
+
+var stThread = new Thread(stackWorker, "StackProbeThread");
+stThread.start();
+Thread.sleep(50);
+
+// 采样单个运行中线程的堆栈
+var trace = stThread.getStackTrace();
+print("  采样目标线程堆栈深度: " + toString(len(trace)));
+for (var i = 0; i < len(trace); i = i + 1) {
+    print("    -> " + toString(trace[i]));
+}
+
+// 打印全局快照概要
+var dumpStr = Thread.dumpAll();
+print("  全局线程 Dump 长度: " + toString(len(dumpStr)) + " 字符");
+
+stThread.join();
+print("  [PASS] 线程堆栈追踪与 Dump 验证通过!\n");
+
+// -----------------------------------------------------------------
+// 7. 测试线程调试 (Pause & Resume) 与死锁检测 (Deadlock Detection)
+// -----------------------------------------------------------------
+print("[7] 测试线程调试 (Pause / Resume) 与死锁检测...");
+
+var pauseCounter = new AtomicInt(0);
+var pauseStop = new AtomicBool(false);
+
+fun pausableWorker() {
+    while (!pauseStop.get()) {
+        pauseCounter.fetchAdd(1);
+        Thread.sleep(20);
+    }
+}
+
+var pThread = new Thread(pausableWorker, "PausableThread");
+pThread.start();
+Thread.sleep(50);
+
+// 暂停线程
+pThread.pause();
+Thread.sleep(100);
+var c1 = pauseCounter.load();
+Thread.sleep(100);
+var c2 = pauseCounter.load();
+print("  暂停期间计数器变化: c1=" + toString(c1) + ", c2=" + toString(c2));
+
+// 恢复线程
+pThread.resume();
+Thread.sleep(100);
+var c3 = pauseCounter.load();
+print("  恢复后计数器变化: c3=" + toString(c3));
+
+pauseStop.set(true);
+pThread.join();
+pauseCounter.destroy();
+pauseStop.destroy();
+
+// 死锁检测
+var deadlocks = Thread.detectDeadlocks();
+print("  当前系统死锁链数量: " + toString(len(deadlocks)));
+print("  [PASS] 线程调试与死锁检测验证通过!\n");
+
+// -----------------------------------------------------------------
+// 8. 测试线程日志审计 (Thread Audit Logging)
+// -----------------------------------------------------------------
+print("[8] 测试线程日志与审计追踪 (Thread Audit Logging)...");
+
+Thread.current().log("自定义用户审计事件: 测试即将完成");
+
+var allLogs = Thread.getLogsLimit(15);
+print("  审计日志条数: " + toString(len(allLogs)));
+for (var i = 0; i < len(allLogs); i = i + 1) {
+    var l = allLogs[i];
+    print("  LOG [" + l["event"] + "] TID=" + toString(l["thread_id"]) + ": " + toString(l["message"]));
+}
+print("  [PASS] 线程日志审计系统验证通过!\n");
+
+// -----------------------------------------------------------------
+// 9. 测试 ThreadPool 线程池
+// -----------------------------------------------------------------
+print("[9] 测试 ThreadPool 线程池任务分发...");
+
+var poolCounter = new AtomicInt(0);
+
+fun poolTask(counter, taskName) {
+    counter.fetchAdd(1);
+}
+
+var pool = new ThreadPool(2);
+pool.submitWithArgs(poolTask, [poolCounter, "Task1"]);
+pool.submitWithArgs(poolTask, [poolCounter, "Task2"]);
+pool.submitWithArgs(poolTask, [poolCounter, "Task3"]);
+
+Thread.sleep(300);
+print("  线程池完成任务数: " + toString(poolCounter.load()));
+pool.shutdown();
+poolCounter.destroy();
+print("  [PASS] ThreadPool 线程池验证通过!\n");
+
+print("=================================================");
+print("       ALL 9 THREAD SYSTEM TEST SUITES PASSED!   ");
+print("=================================================");

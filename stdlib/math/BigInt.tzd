@@ -1,0 +1,170 @@
+/**
+ * TzdLang 数学标准库 - BigInt 任意精度大整数
+ * 支持面向对象大数运算、高精度模幂、数论算法、二进制位运算与操作符重载互通
+ */
+
+class BigInt {
+    var BigInt val;
+
+    BigInt() {
+        this.val = bigint(0);
+    }
+
+    BigInt(raw) {
+        this.val = bigint(raw);
+    }
+
+    fun get() {
+        return this.val;
+    }
+
+    fun set(v) {
+        this.val = bigint(v);
+    }
+
+    fun toString() {
+        return biToString(this.val);
+    }
+
+    fun toDouble() {
+        return valToDouble(this.val);
+    }
+
+    fun toInt() {
+        return valToInt(this.val);
+    }
+
+    fun add(other) {
+        return new BigInt(biAdd(this.val, other));
+    }
+
+    fun sub(other) {
+        return new BigInt(biSub(this.val, other));
+    }
+
+    fun mul(other) {
+        return new BigInt(biMul(this.val, other));
+    }
+
+    fun div(other) {
+        return new BigInt(biDiv(this.val, other));
+    }
+
+    fun mod(other) {
+        return new BigInt(biMod(this.val, other));
+    }
+
+    fun pow(other) {
+        return new BigInt(biPow(this.val, other));
+    }
+
+    fun powMod(exp, m) {
+        return new BigInt(biPowMod(this.val, exp, m));
+    }
+
+    fun abs() {
+        return new BigInt(biAbs(this.val));
+    }
+
+    fun negate() {
+        return new BigInt(biSub(0, this.val));
+    }
+
+    fun bitAnd(other) {
+        return new BigInt(biAnd(this.val, other));
+    }
+
+    fun bitOr(other) {
+        return new BigInt(biOr(this.val, other));
+    }
+
+    fun bitXor(other) {
+        return new BigInt(biXor(this.val, other));
+    }
+
+    fun bitNot() {
+        return new BigInt(biNot(this.val));
+    }
+
+    fun shiftLeft(n) {
+        return new BigInt(biShl(this.val, n));
+    }
+
+    fun shiftRight(n) {
+        return new BigInt(biShr(this.val, n));
+    }
+
+    fun compareTo(other) {
+        return biCompare(this.val, other);
+    }
+
+    fun equals(other) {
+        return biCompare(this.val, other) == 0;
+    }
+
+    fun isEven() {
+        return biMod(this.val, 2) == 0;
+    }
+
+    fun isOdd() {
+        return biMod(this.val, 2) != 0;
+    }
+
+    fun isPositive() {
+        return biCompare(this.val, 0) > 0;
+    }
+
+    fun isNegative() {
+        return biCompare(this.val, 0) < 0;
+    }
+
+    fun isZero() {
+        return biCompare(this.val, 0) == 0;
+    }
+
+    fun digits() {
+        return len(biToString(this.val));
+    }
+
+    // --- 静态数论与工厂方法 ---
+
+    static fun from(v) {
+        return new BigInt(v);
+    }
+
+    static fun zero() {
+        return new BigInt(0);
+    }
+
+    static fun one() {
+        return new BigInt(1);
+    }
+
+    static fun gcd(a, b) {
+        return new BigInt(biGcd(a, b));
+    }
+
+    static fun lcm(a, b) {
+        return new BigInt(biLcm(a, b));
+    }
+
+    static fun factorial(n) {
+        return new BigInt(factorial(n));
+    }
+
+    static fun isProbablePrime(n) {
+        return biIsProbablePrime(n);
+    }
+
+    static fun isProbablePrimeWithRounds(n, rounds) {
+        return biIsProbablePrime(n, rounds);
+    }
+
+    static fun setMaxDigits(n) {
+        return setBigIntMaxDigits(n);
+    }
+
+    static fun getMaxDigits() {
+        return getBigIntMaxDigits();
+    }
+}

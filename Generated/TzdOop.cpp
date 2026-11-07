@@ -67,7 +67,14 @@ TzdValue* TzdClassDef::findStaticValue(const std::string& fieldName) {
 ClassConstructor* TzdClassDef::findConstructor(size_t argCount) {
     ClassConstructor* found = nullptr;
     for (auto& c : constructors) {
-        if ((size_t)c.paramCount == argCount) {
+        if (!c.isVararg && (size_t)c.paramCount == argCount) {
+            if (found) return nullptr;
+            found = &c;
+        }
+    }
+    if (found) return found;
+    for (auto& c : constructors) {
+        if (c.isVararg && argCount >= (size_t)(c.paramCount > 0 ? c.paramCount - 1 : 0)) {
             if (found) return nullptr;
             found = &c;
         }
@@ -78,7 +85,14 @@ ClassConstructor* TzdClassDef::findConstructor(size_t argCount) {
 const ClassConstructor* TzdClassDef::findConstructor(size_t argCount) const {
     const ClassConstructor* found = nullptr;
     for (const auto& c : constructors) {
-        if ((size_t)c.paramCount == argCount) {
+        if (!c.isVararg && (size_t)c.paramCount == argCount) {
+            if (found) return nullptr;
+            found = &c;
+        }
+    }
+    if (found) return found;
+    for (const auto& c : constructors) {
+        if (c.isVararg && argCount >= (size_t)(c.paramCount > 0 ? c.paramCount - 1 : 0)) {
             if (found) return nullptr;
             found = &c;
         }
@@ -109,11 +123,7 @@ struct TzdInstancePool {
             inst->definition = def;
             inst->refCount.store(0, std::memory_order_relaxed);
             if (def) {
-                const auto& dFields = def->defaultFieldValues;
-                size_t n = dFields.size();
-                if (inst->fieldValues.size() != n) {
-                    inst->fieldValues = dFields;
-                }
+                inst->fieldValues = def->defaultFieldValues;
             } else {
                 inst->fieldValues.clear();
             }
@@ -124,6 +134,8 @@ struct TzdInstancePool {
 
     inline void put(TzdInstance* inst) {
         if (!inst) return;
+        inst->fieldValues.clear();
+        inst->definition = nullptr;
         if (count < POOL_CAP) {
             slots[count++] = inst;
         } else {
@@ -212,6 +224,7 @@ struct TzdValue TzdInstance::getMember(TzdSelector selector, const std::string& 
                     funcVal.paramTypes = slot->method->paramTypes;
                 }
                 funcVal.name = slot->method->name;
+                funcVal.isVararg = slot->method->isVararg;
                 funcVal.jittedPtr = slot->method->jittedPtr;
                 funcVal.setInstance(this);
                 return funcVal;
@@ -297,6 +310,14 @@ std::string getTzdValueTypeName(const TzdValue& val) {
         return (val.instanceVal && val.instanceVal->definition) ? val.instanceVal->definition->fullName : "object";
     case TzdValue::CLASS_DEF:
         return val.classDefVal ? val.classDefVal->fullName : "class";
+    case TzdValue::BIGINT: return "BigInt";
+    case TzdValue::RATIONAL: return "Rational";
+    case TzdValue::BIGFLOAT: return "BigFloat";
+    case TzdValue::TENSOR: return "Tensor";
+    case TzdValue::FUTURE: return "future";
+    case TzdValue::ANY_REF: return "any";
+    case TzdValue::ERROR_VAL: return "error";
+    case TzdValue::ENUM_VAL: return "enum";
     default: return "unknown";
     }
 }
@@ -327,6 +348,29 @@ bool isTzdValueCompatibleWithType(const std::string& expectedType, const TzdValu
             }
             return true;
         }
+        if (val.type == TzdValue::BIGINT) {
+            if (outConverted) {
+                try {
+                    long long parsed = std::stoll(val.sVal);
+                    if (expectedType == "int" || expectedType == "i32") {
+                        if (parsed >= INT32_MIN && parsed <= INT32_MAX) {
+                            outConverted->type = TzdValue::INT;
+                            outConverted->lVal = parsed;
+                            outConverted->dVal = (double)parsed;
+                        } else {
+                            *outConverted = val;
+                        }
+                    } else {
+                        outConverted->type = TzdValue::LONG;
+                        outConverted->lVal = parsed;
+                        outConverted->dVal = (double)parsed;
+                    }
+                } catch (...) {
+                    *outConverted = val;
+                }
+            }
+            return true;
+        }
         return false;
     }
 
@@ -346,12 +390,131 @@ bool isTzdValueCompatibleWithType(const std::string& expectedType, const TzdValu
             }
             return true;
         }
+        if (val.type == TzdValue::BIGINT || val.type == TzdValue::BIGFLOAT) {
+            if (outConverted) {
+                try {
+                    outConverted->dVal = std::stod(val.sVal);
+                    outConverted->lVal = (long long)outConverted->dVal;
+                } catch (...) {
+                    outConverted->dVal = std::numeric_limits<double>::infinity();
+                }
+                outConverted->type = (expectedType == "float") ? TzdValue::FLOAT : TzdValue::DOUBLE;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // 2.1 BigInt
+    if (expectedType == "BigInt" || expectedType == "bigint") {
+        if (val.type == TzdValue::INSTANCE && val.instanceVal && val.instanceVal->definition &&
+            (val.instanceVal->definition->fullName == "BigInt" || val.instanceVal->definition->simpleName == "BigInt" ||
+             val.instanceVal->definition->fullName == "math.BigInt")) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type == TzdValue::BIGINT) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type >= TzdValue::SBYTE && val.type <= TzdValue::ULONG) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGINT;
+                outConverted->sVal = std::to_string(val.lVal);
+            }
+            return true;
+        }
+        if (val.type == TzdValue::STRING) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGINT;
+            }
+            return true;
+        }
+        if (val.type == TzdValue::DOUBLE || val.type == TzdValue::FLOAT) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGINT;
+                outConverted->sVal = std::to_string((long long)val.dVal);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // 2.2 Rational
+    if (expectedType == "Rational" || expectedType == "rational") {
+        if (val.type == TzdValue::INSTANCE && val.instanceVal && val.instanceVal->definition &&
+            (val.instanceVal->definition->fullName == "Rational" || val.instanceVal->definition->simpleName == "Rational" ||
+             val.instanceVal->definition->fullName == "math.Rational")) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type == TzdValue::RATIONAL) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type == TzdValue::BIGINT) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::RATIONAL;
+                outConverted->sVal = val.sVal + "/1";
+            }
+            return true;
+        }
+        if (val.type >= TzdValue::SBYTE && val.type <= TzdValue::ULONG) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::RATIONAL;
+                outConverted->sVal = std::to_string(val.lVal) + "/1";
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // 2.3 BigFloat
+    if (expectedType == "BigFloat" || expectedType == "bigfloat") {
+        if (val.type == TzdValue::INSTANCE && val.instanceVal && val.instanceVal->definition &&
+            (val.instanceVal->definition->fullName == "BigFloat" || val.instanceVal->definition->simpleName == "BigFloat" ||
+             val.instanceVal->definition->fullName == "math.BigFloat")) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type == TzdValue::BIGFLOAT) {
+            if (outConverted) *outConverted = val;
+            return true;
+        }
+        if (val.type == TzdValue::BIGINT || val.type == TzdValue::STRING) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGFLOAT;
+            }
+            return true;
+        }
+        if (val.type == TzdValue::DOUBLE || val.type == TzdValue::FLOAT) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGFLOAT;
+                outConverted->sVal = std::to_string(val.dVal);
+            }
+            return true;
+        }
+        if (val.type >= TzdValue::SBYTE && val.type <= TzdValue::ULONG) {
+            if (outConverted) {
+                *outConverted = val;
+                outConverted->type = TzdValue::BIGFLOAT;
+                outConverted->sVal = std::to_string(val.lVal);
+            }
+            return true;
+        }
         return false;
     }
 
     // 3. String
     if (expectedType == "string") {
-        return val.type == TzdValue::STRING;
+        return val.type == TzdValue::STRING || val.type == TzdValue::NONE;
     }
 
     // 4. Bool
@@ -359,24 +522,37 @@ bool isTzdValueCompatibleWithType(const std::string& expectedType, const TzdValu
         return val.type == TzdValue::BOOL;
     }
 
-    // 5. Pointer
+    // 5. Pointer / Reference
     if (expectedType == "ptr" || expectedType == "pointer" || expectedType == "hwnd" || expectedType == "void") {
-        return val.type == TzdValue::POINTER || val.type == TzdValue::NONE;
+        if (val.type == TzdValue::POINTER || val.type == TzdValue::NONE ||
+            val.type == TzdValue::INSTANCE || val.type == TzdValue::MAP ||
+            val.type == TzdValue::ARRAY || val.type == TzdValue::TENSOR ||
+            val.type == TzdValue::FUNCTION || val.type == TzdValue::NATIVE_FUNCTION) {
+            return true;
+        }
+        if (val.type >= TzdValue::SBYTE && val.type <= TzdValue::ULONG) {
+            if (outConverted) {
+                outConverted->type = TzdValue::POINTER;
+                outConverted->ptrVal = (void*)(uintptr_t)val.ulVal;
+            }
+            return true;
+        }
+        return false;
     }
 
     // 6. Function
     if (expectedType == "function" || expectedType == "fn") {
-        return val.type == TzdValue::FUNCTION || val.type == TzdValue::NATIVE_FUNCTION;
+        return val.type == TzdValue::FUNCTION || val.type == TzdValue::NATIVE_FUNCTION || val.type == TzdValue::NONE;
     }
 
     // 7. Array
     if (expectedType == "array" || expectedType.find("[]") != std::string::npos) {
-        return val.type == TzdValue::ARRAY;
+        return val.type == TzdValue::ARRAY || val.type == TzdValue::NONE;
     }
 
     // 8. Map
     if (expectedType == "map") {
-        return val.type == TzdValue::MAP;
+        return val.type == TzdValue::MAP || val.type == TzdValue::NONE;
     }
 
     // 9. Class / OOP instance
@@ -522,6 +698,7 @@ void TzdOopManager::registerClass(TzdClassDef* cls) {
     // 【核心性能优化步骤 2】将 Method 初始化为 Template 以避免运行期拷贝 Vector
     // =========================================================================
     for (auto& [mName, m] : cls->methods) {
+        if (m.declaringClass.empty()) m.declaringClass = cls->fullName;
         m.templateVal = new TzdValue(); // 动态分配指针，避开头文件限制
 
         if (m.isNative) {
@@ -532,6 +709,8 @@ void TzdOopManager::registerClass(TzdClassDef* cls) {
             m.templateVal->type = TzdValue::FUNCTION;
             m.templateVal->funcBody = m.body;
             m.templateVal->params = m.params; // 这里仅发生一次 Vector 拷贝
+            m.templateVal->paramTypes = m.paramTypes;
+            m.templateVal->isVararg = m.isVararg;
         }
         m.templateVal->name = m.name;
     }

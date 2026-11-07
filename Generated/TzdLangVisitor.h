@@ -47,6 +47,8 @@ public:
 
     virtual std::any visitForStmt(TzdLangParser::ForStmtContext *context) = 0;
 
+    virtual std::any visitForEachStmt(TzdLangParser::ForEachStmtContext *context) = 0;
+
     virtual std::any visitBreakStmt(TzdLangParser::BreakStmtContext *context) = 0;
 
     virtual std::any visitContinueStmt(TzdLangParser::ContinueStmtContext *context) = 0;
@@ -108,6 +110,8 @@ public:
     virtual std::any visitVariableDeclaration(TzdLangParser::VariableDeclarationContext *context) = 0;
 
     virtual std::any visitForInit(TzdLangParser::ForInitContext *context) = 0;
+
+    virtual std::any visitForEachInit(TzdLangParser::ForEachInitContext *context) = 0;
 
     virtual std::any visitImportStatement(TzdLangParser::ImportStatementContext *context) = 0;
 

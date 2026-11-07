@@ -1,0 +1,61 @@
+import "math.BigFloat";
+
+print("=== 1. 测试类型系统与 typeName() / len() ===");
+int bigIntVal = 10**50;
+print("bigIntVal type: " + typeName(bigIntVal));
+print("bigIntVal digits len: " + len(bigIntVal));
+
+var bf1 = bigfloat("3.1415926535897932384626433832795028841971693993751");
+print("bf1 type: " + typeName(bf1));
+print("bf1 value: " + bf1);
+
+print("\n=== 2. 测试大数浮点算术运算符 (+, -, *, /, **) ===");
+var bf2 = bigfloat("2.7182818284590452353602874713526624977572470936999");
+var sum = bf1 + bf2;
+var diff = bf1 - bf2;
+var prod = bf1 * bf2;
+var quot = bf1 / bf2;
+var powVal = bf1 ** 2;
+
+print("bf1 + bf2 = " + sum);
+print("bf1 - bf2 = " + diff);
+print("bf1 * bf2 = " + prod);
+print("bf1 / bf2 = " + quot);
+print("bf1 ** 2 = " + powVal);
+
+print("\n=== 3. 测试高精度 MPFR 原生数学算法函数 ===");
+print("高精度 Pi (256 bits): " + bfPi(256));
+print("高精度 Pi (512 bits): " + bfPi(512));
+print("高精度 E (256 bits): " + bfE(256));
+
+var two = bigfloat("2.0");
+print("sqrt(2) = " + bfSqrt(two));
+print("cbrt(2) = " + bfCbrt(two));
+print("exp(1) = " + bfExp(bigfloat("1.0")));
+print("ln(2) = " + bfLog(two));
+print("log10(1000) = " + bfLog10(bigfloat("1000")));
+print("sin(pi/2) = " + bfSin(bfPi() / 2));
+print("cos(pi) = " + bfCos(bfPi()));
+print("atan(1) * 4 = " + (bfAtan(bigfloat("1.0")) * 4));
+print("gamma(5) = " + bfGamma(bigfloat("5.0")));
+print("zeta(2) (应等于 pi^2/6) = " + bfZeta(two));
+
+print("\n=== 4. 测试比较操作符 (>, <, ==, !=) ===");
+print("bf1 > bf2: " + (bf1 > bf2));
+print("bf1 < bf2: " + (bf1 < bf2));
+print("bf1 == bf1: " + (bf1 == bf1));
+
+print("\n=== 5. 测试标准库 BigFloat 类封装 ===");
+var bfa = new BigFloat("123456789.987654321");
+var bfb = new BigFloat("987654321.123456789");
+var bfc = bfa.mul(bfb);
+print("BigFloat 类 mul 结果: " + bfc.toString());
+print("BigFloat 类 sqrt 结果: " + bfa.sqrt().toString());
+
+var bfPiObj = BigFloat.pi(256);
+print("BigFloat.pi(256) = " + bfPiObj.toString());
+
+var bfPi100 = BigFloat.piDigits(100);
+print("BigFloat.piDigits(100) = " + bfPi100.toString());
+
+print("\n全部测试通过！");

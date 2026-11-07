@@ -1,0 +1,422 @@
+/**
+ * TzdLang 数学标准库 - Calculus 数值微积分与常微分方程数值解
+ * 提供高阶数值微分 (一阶导数、二阶导数、偏导数、梯度向量、Hessian 矩阵)、
+ * 数值求积 (梯形法、辛普森 1/3 法、辛普森 3/8 法、自适应辛普森积分、二重积分、蒙特卡洛求积)、
+ * 以及常微分方程初值问题高精度求解器 (显式欧拉法、经典四阶龙格-库塔法 RK4)。
+ */
+
+import "math.Matrix";
+
+class Calculus {
+
+    // =========================================================================
+    // 1. 数值微分 (Numerical Differentiation)
+    // =========================================================================
+
+    /**
+     * 高精度一阶导数 f'(x) - 五点中心差分公式 (截断误差 O(h^4))
+     */
+    static fun derivative(f, x, h) {
+        var xVal = valToDouble(x);
+        var step = 0.00001;
+        if (h != null && valToDouble(h) > 0.0) {
+            step = valToDouble(h);
+        }
+        var f_p2 = f(xVal + 2.0 * step);
+        var f_p1 = f(xVal + step);
+        var f_m1 = f(xVal - step);
+        var f_m2 = f(xVal - 2.0 * step);
+        return (-f_p2 + 8.0 * f_p1 - 8.0 * f_m1 + f_m2) / (12.0 * step);
+    }
+
+    /**
+     * 高精度二阶导数 f''(x) - 五点中心差分公式 (截断误差 O(h^4))
+     */
+    static fun secondDerivative(f, x, h) {
+        var xVal = valToDouble(x);
+        var step = 0.0001;
+        if (h != null && valToDouble(h) > 0.0) {
+            step = valToDouble(h);
+        }
+        var f_p2 = f(xVal + 2.0 * step);
+        var f_p1 = f(xVal + step);
+        var f_0  = f(xVal);
+        var f_m1 = f(xVal - step);
+        var f_m2 = f(xVal - 2.0 * step);
+        return (-f_p2 + 16.0 * f_p1 - 30.0 * f_0 + 16.0 * f_m1 - f_m2) / (12.0 * step * step);
+    }
+
+    /**
+     * 多元函数偏导数 ∂f / ∂x_i
+     */
+    static fun partialDerivative(f, point, varIdx, h) {
+        var step = 0.00001;
+        if (h != null && valToDouble(h) > 0.0) {
+            step = valToDouble(h);
+        }
+        var n = len(point);
+
+        var p_p2 = [ ]; var p_p1 = [ ]; var p_m1 = [ ]; var p_m2 = [ ];
+        var i = 0;
+        while (i < n) {
+            p_p2 = push(p_p2, point[i]);
+            p_p1 = push(p_p1, point[i]);
+            p_m1 = push(p_m1, point[i]);
+            p_m2 = push(p_m2, point[i]);
+            i = i + 1;
+        }
+
+        p_p2[varIdx] = point[varIdx] + 2.0 * step;
+        p_p1[varIdx] = point[varIdx] + step;
+        p_m1[varIdx] = point[varIdx] - step;
+        p_m2[varIdx] = point[varIdx] - 2.0 * step;
+
+        var f_p2 = f(p_p2);
+        var f_p1 = f(p_p1);
+        var f_m1 = f(p_m1);
+        var f_m2 = f(p_m2);
+        return (-f_p2 + 8.0 * f_p1 - 8.0 * f_m1 + f_m2) / (12.0 * step);
+    }
+
+    /**
+     * 多元函数梯度向量 ∇f(x)
+     */
+    static fun gradient(f, point, h) {
+        var n = len(point);
+        var grad = [ ];
+        var i = 0;
+        while (i < n) {
+            grad = push(grad, Calculus.partialDerivative(f, point, i, h));
+            i = i + 1;
+        }
+        return grad;
+    }
+
+    /**
+     * 多元函数二阶 Hessian 黑塞矩阵 H_{ij} = ∂^2 f / (∂x_i ∂x_j)
+     */
+    static fun hessian(f, point, h) {
+        var n = len(point);
+        var step = 0.0001;
+        if (h != null && valToDouble(h) > 0.0) {
+            step = valToDouble(h);
+        }
+        var mat = new Matrix(n, n);
+
+        var i = 0;
+        while (i < n) {
+            var j = i;
+            while (j < n) {
+                var hij = 0.0;
+                if (i == j) {
+                    // 对角线偏导
+                    var p_p1 = [ ]; var p_m1 = [ ]; var k = 0;
+                    while (k < n) {
+                        p_p1 = push(p_p1, point[k]);
+                        p_m1 = push(p_m1, point[k]);
+                        k = k + 1;
+                    }
+                    p_p1[i] = point[i] + step;
+                    p_m1[i] = point[i] - step;
+                    hij = (f(p_p1) - 2.0 * f(point) + f(p_m1)) / (step * step);
+                } else {
+                    // 交叉二阶偏导
+                    var p_pp = [ ]; var p_pm = [ ]; var p_mp = [ ]; var p_mm = [ ];
+                    var k = 0;
+                    while (k < n) {
+                        p_pp = push(p_pp, point[k]);
+                        p_pm = push(p_pm, point[k]);
+                        p_mp = push(p_mp, point[k]);
+                        p_mm = push(p_mm, point[k]);
+                        k = k + 1;
+                    }
+                    p_pp[i] = point[i] + step; p_pp[j] = point[j] + step;
+                    p_pm[i] = point[i] + step; p_pm[j] = point[j] - step;
+                    p_mp[i] = point[i] - step; p_mp[j] = point[j] + step;
+                    p_mm[i] = point[i] - step; p_mm[j] = point[j] - step;
+                    hij = (f(p_pp) - f(p_pm) - f(p_mp) + f(p_mm)) / (4.0 * step * step);
+                }
+                mat.set(i, j, hij);
+                mat.set(j, i, hij);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return mat;
+    }
+
+    // =========================================================================
+    // 2. 数值积分 (Numerical Integration)
+    // =========================================================================
+
+    /**
+     * 复合梯形法则求积
+     */
+    static fun trapezoidal(f, a, b, n) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var steps = 1000;
+        if (n != null && n > 0) {
+            steps = n;
+        }
+        var h = (bVal - aVal) / steps;
+
+        var sumVal = 0.5 * (f(aVal) + f(bVal));
+        var i = 1;
+        while (i < steps) {
+            sumVal = sumVal + f(aVal + i * h);
+            i = i + 1;
+        }
+        return sumVal * h;
+    }
+
+    /**
+     * 复合辛普森 1/3 求积法则 (截断误差 O(h^4))
+     */
+    static fun simpson(f, a, b, n) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var steps = 1000;
+        if (n != null && n > 0) {
+            steps = n;
+        }
+        if ((steps & 1) != 0) {
+            steps = steps + 1; // 必须为偶数步数
+        }
+        var h = (bVal - aVal) / steps;
+
+        var sumVal = f(aVal) + f(bVal);
+        var i = 1;
+        while (i < steps) {
+            var x = aVal + i * h;
+            if ((i & 1) != 0) {
+                sumVal = sumVal + 4.0 * f(x);
+            } else {
+                sumVal = sumVal + 2.0 * f(x);
+            }
+            i = i + 1;
+        }
+        return sumVal * (h / 3.0);
+    }
+
+    /**
+     * 复合辛普森 3/8 求积法则
+     */
+    static fun simpson38(f, a, b, n) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var steps = 999;
+        if (n != null && n > 0) {
+            steps = n;
+        }
+        while (steps % 3 != 0) {
+            steps = steps + 1;
+        }
+        var h = (bVal - aVal) / steps;
+
+        var sumVal = f(aVal) + f(bVal);
+        var i = 1;
+        while (i < steps) {
+            var x = aVal + i * h;
+            if (i % 3 == 0) {
+                sumVal = sumVal + 2.0 * f(x);
+            } else {
+                sumVal = sumVal + 3.0 * f(x);
+            }
+            i = i + 1;
+        }
+        return sumVal * (3.0 * h / 8.0);
+    }
+
+    /**
+     * 自适应辛普森积分递归核心
+     */
+    static fun _adaptiveRecur(f, a, b, eps, s, fa, fb, fc, depth) {
+        var c = (a + b) / 2.0;
+        var d = (a + c) / 2.0;
+        var e = (c + b) / 2.0;
+        var fd = f(d);
+        var fe = f(e);
+
+        var h = b - a;
+        var sl = (h / 12.0) * (fa + 4.0 * fd + fc);
+        var sr = (h / 12.0) * (fc + 4.0 * fe + fb);
+        var s2 = sl + sr;
+
+        if (depth <= 0 || abs(s2 - s) <= 15.0 * eps) {
+            return s2 + (s2 - s) / 15.0;
+        }
+
+        var left = Calculus._adaptiveRecur(f, a, c, eps / 2.0, sl, fa, fc, fd, depth - 1);
+        var right = Calculus._adaptiveRecur(f, c, b, eps / 2.0, sr, fc, fb, fe, depth - 1);
+        return left + right;
+    }
+
+    /**
+     * 自适应辛普森求积 (根据局部曲率自适应加细网格，保证达到目标误差)
+     */
+    static fun adaptiveSimpson(f, a, b, tol) {
+        var aVal = valToDouble(a);
+        var bVal = valToDouble(b);
+        var eps = 0.000000001;
+        if (tol != null && valToDouble(tol) > 0.0) {
+            eps = valToDouble(tol);
+        }
+        var c = (aVal + bVal) / 2.0;
+        var fa = f(aVal);
+        var fb = f(bVal);
+        var fc = f(c);
+        var s = (bVal - aVal) / 6.0 * (fa + 4.0 * fc + fb);
+        return Calculus._adaptiveRecur(f, aVal, bVal, eps, s, fa, fb, fc, 25);
+    }
+
+    /**
+     * 二重数值积分 ∫_{x1}^{x2} ∫_{y1}^{y2} f(x, y) dy dx
+     */
+    static fun doubleIntegral(f, x1, x2, y1, y2, nx, ny) {
+        var stepsX = 100;
+        if (nx != null && nx > 0) {
+            stepsX = nx;
+        }
+        var stepsY = 100;
+        if (ny != null && ny > 0) {
+            stepsY = ny;
+        }
+
+        var outerFunc = fun(x) {
+            var innerFunc = fun(y) {
+                return f(x, y);
+            };
+            return Calculus.simpson(innerFunc, y1, y2, stepsY);
+        };
+        return Calculus.simpson(outerFunc, x1, x2, stepsX);
+    }
+
+    // =========================================================================
+    // 3. 常微分方程数值解 (ODE Solvers - Initial Value Problems)
+    // =========================================================================
+
+    /**
+     * 显式欧拉法求解常微分方程 y' = f(t, y), y(t0) = y0
+     * 返回 Map {"t": [...], "y": [...]}
+     */
+    static fun euler(dydt, y0, t0, t1, steps) {
+        var n = 100;
+        if (steps != null && steps > 0) {
+            n = steps;
+        }
+        var tStart = valToDouble(t0);
+        var tEnd = valToDouble(t1);
+        var h = (tEnd - tStart) / n;
+
+        var tArr = [tStart];
+        var yArr = [y0];
+
+        var curT = tStart;
+        var curY = y0;
+
+        var i = 0;
+        while (i < n) {
+            var slope = dydt(curT, curY);
+            if (curY in Array) {
+                // 向量系统
+                var nextY = [ ];
+                var d = 0;
+                while (d < len(curY)) {
+                    nextY = push(nextY, curY[d] + h * slope[d]);
+                    d = d + 1;
+                }
+                curY = nextY;
+            } else {
+                curY = curY + h * slope;
+            }
+            curT = curT + h;
+            tArr = push(tArr, curT);
+            yArr = push(yArr, curY);
+            i = i + 1;
+        }
+
+        return { "t": tArr, "y": yArr };
+    }
+
+    /**
+     * 经典四阶龙格-库塔法 RK4 求解微分方程 (截断误差 O(h^4))
+     * 返回 Map {"t": [...], "y": [...]}
+     */
+    static fun rk4(dydt, y0, t0, t1, steps) {
+        var n = 100;
+        if (steps != null && steps > 0) {
+            n = steps;
+        }
+        var tStart = valToDouble(t0);
+        var tEnd = valToDouble(t1);
+        var h = (tEnd - tStart) / n;
+
+        var tArr = [tStart];
+        var yArr = [y0];
+
+        var curT = tStart;
+        var curY = y0;
+
+        var i = 0;
+        while (i < n) {
+            var k1 = dydt(curT, curY);
+            var halfH = h / 2.0;
+
+            var yMid1 = null;
+            var yMid2 = null;
+            var yEnd = null;
+            var k2 = null;
+            var k3 = null;
+            var k4 = null;
+
+            if (curY in Array) {
+                // 向量组形式 ODE
+                yMid1 = [ ];
+                var d = 0;
+                while (d < len(curY)) {
+                    yMid1 = push(yMid1, curY[d] + halfH * k1[d]);
+                    d = d + 1;
+                }
+                k2 = dydt(curT + halfH, yMid1);
+
+                yMid2 = [ ];
+                d = 0;
+                while (d < len(curY)) {
+                    yMid2 = push(yMid2, curY[d] + halfH * k2[d]);
+                    d = d + 1;
+                }
+                k3 = dydt(curT + halfH, yMid2);
+
+                yEnd = [ ];
+                d = 0;
+                while (d < len(curY)) {
+                    yEnd = push(yEnd, curY[d] + h * k3[d]);
+                    d = d + 1;
+                }
+                k4 = dydt(curT + h, yEnd);
+
+                var nextY = [ ];
+                d = 0;
+                while (d < len(curY)) {
+                    nextY = push(nextY, curY[d] + (h / 6.0) * (k1[d] + 2.0 * k2[d] + 2.0 * k3[d] + k4[d]));
+                    d = d + 1;
+                }
+                curY = nextY;
+            } else {
+                // 标量形式 ODE
+                k2 = dydt(curT + halfH, curY + halfH * k1);
+                k3 = dydt(curT + halfH, curY + halfH * k2);
+                k4 = dydt(curT + h, curY + h * k3);
+                curY = curY + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+            }
+
+            curT = curT + h;
+            tArr = push(tArr, curT);
+            yArr = push(yArr, curY);
+            i = i + 1;
+        }
+
+        return { "t": tArr, "y": yArr };
+    }
+}
