@@ -1,9 +1,13 @@
-﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36717.8 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tzd", "tzd.vcxproj", "{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TzdTools", "TzdTools.vcxproj", "{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D} = {B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -13,6 +17,14 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Debug|x64.ActiveCfg = Debug|x64
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Debug|x64.Build.0 = Debug|x64
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Debug|x86.ActiveCfg = Debug|Win32
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Debug|x86.Build.0 = Debug|Win32
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Release|x64.ActiveCfg = Release|x64
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Release|x64.Build.0 = Release|x64
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Release|x86.ActiveCfg = Release|Win32
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}.Release|x86.Build.0 = Release|Win32
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Debug|x64.ActiveCfg = Debug|x64
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Debug|x64.Build.0 = Debug|x64
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Debug|x86.ActiveCfg = Debug|Win32

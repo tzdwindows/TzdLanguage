@@ -1,0 +1,133 @@
+#ifndef TZD_C_API_H
+#define TZD_C_API_H
+
+#include "tzd_export.h"
+#include "tzd_ti.h"
+#include "tzd_tni.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------------- */
+/* Error Codes & Status Codes                                                */
+/* ------------------------------------------------------------------------- */
+typedef enum tzd_status_e {
+    TZD_OK                  =  0,
+    TZD_ERR_GENERIC         = -1,
+    TZD_ERR_SYNTAX          = -2,
+    TZD_ERR_RUNTIME         = -3,
+    TZD_ERR_FILE_NOT_FOUND  = -4,
+    TZD_ERR_INVALID_ARG     = -5,
+    TZD_ERR_BUFFER_OVERFLOW = -6,
+    TZD_ERR_NOT_FOUND       = -7,
+    TZD_ERR_TYPE_MISMATCH   = -8
+} tzd_status_t;
+
+/* Opaque Context Handle for isolated scripting environments */
+typedef struct tzd_context tzd_context_t;
+
+/* ------------------------------------------------------------------------- */
+/* 1. Version & Metadata                                                     */
+/* ------------------------------------------------------------------------- */
+TZD_API const char* tzd_get_version_string(void);
+TZD_API int         tzd_get_version_major(void);
+TZD_API int         tzd_get_version_minor(void);
+TZD_API int         tzd_get_version_patch(void);
+TZD_API const char* tzd_get_build_info(void);
+
+/* ------------------------------------------------------------------------- */
+/* 2. Global Engine Lifecycle                                                */
+/* ------------------------------------------------------------------------- */
+TZD_API int  tzd_init(void);
+TZD_API void tzd_shutdown(void);
+
+/* ------------------------------------------------------------------------- */
+/* 3. Global Engine Configuration                                            */
+/* ------------------------------------------------------------------------- */
+TZD_API void tzd_set_jit_enabled(int enabled);
+TZD_API int  tzd_is_jit_enabled(void);
+TZD_API void tzd_set_opt_level(int level);
+TZD_API int  tzd_get_opt_level(void);
+TZD_API void tzd_set_silent_mode(int silent);
+TZD_API int  tzd_is_silent_mode(void);
+TZD_API void tzd_add_global_include_path(const char* path);
+TZD_API void tzd_set_project_directory(const char* path);
+
+/* ------------------------------------------------------------------------- */
+/* 4. One-Shot Script & Main CLI Execution                                   */
+/* ------------------------------------------------------------------------- */
+/* Execute a .tzd script file directly. Returns 0 (TZD_OK) on success. */
+TZD_API int tzd_run_file(const char* filepath);
+
+/* Execute script source code string directly. Returns 0 (TZD_OK) on success. */
+TZD_API int tzd_run_string(const char* code);
+
+/* Run full CLI/Interactive REPL with standard argc/argv arguments. Returns exit code. */
+TZD_API int tzd_run_main(int argc, char** argv);
+
+/* Check and run embedded executable if compiled with AOT stub */
+TZD_API int tzd_try_run_embedded(int argc, char** argv, int* out_exit_code);
+
+/* Compile script to bytecode file (.tzdc) */
+TZD_API int tzd_compile_bytecode_file(const char* src_path, const char* out_bc_path);
+
+/* Execute precompiled bytecode file (.tzdc) */
+TZD_API int tzd_execute_bytecode_file(const char* bc_path);
+
+/* ------------------------------------------------------------------------- */
+/* 5. Stateful Execution Context                                             */
+/* ------------------------------------------------------------------------- */
+/* Create a new isolated script context / interpreter instance */
+TZD_API tzd_context_t* tzd_create_context(void);
+
+/* Destroy and free a script context */
+TZD_API void           tzd_destroy_context(tzd_context_t* ctx);
+
+/* Reset context state (clears variables and resets scopes) */
+TZD_API void           tzd_context_reset(tzd_context_t* ctx);
+
+/* Add include/search path for imports in this specific context */
+TZD_API void           tzd_context_add_include_path(tzd_context_t* ctx, const char* path);
+
+/* Evaluate a code string in context, writing result to out_buf (can be NULL if not needed) */
+TZD_API int            tzd_eval_string(tzd_context_t* ctx, const char* code,
+                                       char* out_buf, size_t out_buf_size);
+
+/* Load and execute a script file in context */
+TZD_API int            tzd_eval_file(tzd_context_t* ctx, const char* filepath);
+
+/* Call a global function by name with string arguments */
+TZD_API int            tzd_call_function(tzd_context_t* ctx, const char* func_name,
+                                         int argc, const char** argv,
+                                         char* out_buf, size_t out_buf_size);
+
+/* Global variable access in context */
+TZD_API int            tzd_set_global_double(tzd_context_t* ctx, const char* name, double val);
+TZD_API int            tzd_get_global_double(tzd_context_t* ctx, const char* name, double* out_val);
+TZD_API int            tzd_set_global_int(tzd_context_t* ctx, const char* name, int64_t val);
+TZD_API int            tzd_get_global_int(tzd_context_t* ctx, const char* name, int64_t* out_val);
+TZD_API int            tzd_set_global_string(tzd_context_t* ctx, const char* name, const char* val);
+TZD_API int            tzd_get_global_string(tzd_context_t* ctx, const char* name,
+                                             char* out_buf, size_t out_buf_size);
+TZD_API int            tzd_has_global(tzd_context_t* ctx, const char* name);
+
+/* ------------------------------------------------------------------------- */
+/* 6. Error Handling                                                         */
+/* ------------------------------------------------------------------------- */
+/* Returns thread-local last error message */
+TZD_API const char* tzd_get_last_error(void);
+
+/* Returns context-specific last error message */
+TZD_API const char* tzd_context_get_last_error(tzd_context_t* ctx);
+
+/* Clears thread-local and context error messages */
+TZD_API void        tzd_clear_last_error(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* TZD_C_API_H */

@@ -2,7 +2,7 @@
 import "torch/Module.tzd";
 
 class Sequential extends Module {
-    var int _layers;
+    var ptr _layers;
 
     Sequential() {
         super("Sequential");

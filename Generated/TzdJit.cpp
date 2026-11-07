@@ -9480,10 +9480,14 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         else
         {
             container = std::any_cast<Value *>(visit(indexCtx->expression(0)));
-            if (container->getType()->isDoubleTy())
+            if (!container->getType()->isPointerTy())
             {
                 container = boxToTzdValue(container);
             }
+        }
+        if (!container->getType()->isPointerTy())
+        {
+            container = boxToTzdValue(container);
         }
         Value *index_raw = std::any_cast<Value *>(visit(indexCtx->expression(1)));
 
@@ -10801,10 +10805,14 @@ std::any TzdCompiler::visitIndexExpr(TzdLangParser::IndexExprContext *ctx)
     else
     {
         container = std::any_cast<Value *>(visit(ctx->expression(0)));
-        if (container->getType()->isDoubleTy())
+        if (!container->getType()->isPointerTy())
         {
             container = boxToTzdValue(container);
         }
+    }
+    if (!container->getType()->isPointerTy())
+    {
+        container = boxToTzdValue(container);
     }
     Value *index_raw = std::any_cast<Value *>(visit(ctx->expression(1)));
     if (index_raw->getType()->isDoubleTy())
