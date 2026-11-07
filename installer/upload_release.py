@@ -16,24 +16,30 @@ TAG = "v0.2.13"
 RELEASE_NAME = "TzdTools v0.2.13 - 核心动态库解耦 (tzd.dll)、C/C++ 原生 SDK、JVMTI 调试接口、TNI/Java 绑定与线程管理"
 REPO_OWNER = "tzdwindows"
 REPO_NAME = "TzdLanguage"
-PROXY = "http://127.0.0.1:7897"
+PROXY_CANDIDATES = [
+    "http://127.0.0.1:10808",
+    "http://127.0.0.1:7897",
+    "http://127.0.0.1:7890",
+]
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Check proxy availability
-def is_proxy_available(proxy_url):
-    try:
-        import socket
-        parsed = urllib.parse.urlparse(proxy_url)
-        with socket.create_connection((parsed.hostname, parsed.port), timeout=1.0):
-            return True
-    except Exception:
-        return False
+def find_available_proxy():
+    import socket
+    for p in PROXY_CANDIDATES:
+        try:
+            parsed = urllib.parse.urlparse(p)
+            with socket.create_connection((parsed.hostname, parsed.port), timeout=1.0):
+                return p
+        except Exception:
+            continue
+    return None
 
-use_proxy = is_proxy_available(PROXY)
-if use_proxy:
-    print(f"  -> Using proxy {PROXY}")
-    proxy_handler = urllib.request.ProxyHandler({'http': PROXY, 'https': PROXY})
+detected_proxy = find_available_proxy()
+if detected_proxy:
+    print(f"  -> Using proxy {detected_proxy}")
+    proxy_handler = urllib.request.ProxyHandler({'http': detected_proxy, 'https': detected_proxy})
     opener = urllib.request.build_opener(proxy_handler)
     urllib.request.install_opener(opener)
 else:
@@ -143,7 +149,7 @@ except urllib.error.HTTPError as e:
 # 3. Upload Assets
 release_id = release["id"]
 upload_base_url = f"https://uploads.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/assets"
-existing_assets = {a["name"]: a["id"] for a in release.get("assets", [])}
+existing_assets = {a["name"]: a for a in release.get("assets", [])}
 
 assets = [
     {
@@ -173,13 +179,17 @@ for item in assets:
         print(f"  Warning: {path} not found, skipping.")
         continue
 
-    size_mb = os.path.getsize(path) / (1024 * 1024)
-    print(f"  Uploading {name} ({size_mb:.2f} MB)...")
+    file_size = os.path.getsize(path)
+    size_mb = file_size / (1024 * 1024)
 
-    # If already exists, delete first
+    # If already exists and complete, skip
     if name in existing_assets:
-        asset_id = existing_assets[name]
-        print(f"    Deleting previous asset ID {asset_id}...")
+        ea = existing_assets[name]
+        if ea.get("size") == file_size and ea.get("state") == "uploaded":
+            print(f"  Asset {name} already uploaded ({size_mb:.2f} MB), skipping.")
+            continue
+        asset_id = ea["id"]
+        print(f"  Deleting incomplete/previous asset ID {asset_id} for {name}...")
         del_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{asset_id}"
         del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
         try:
@@ -187,6 +197,8 @@ for item in assets:
                 pass
         except Exception as e:
             print(f"    Delete error (ignored): {e}")
+
+    print(f"  Uploading {name} ({size_mb:.2f} MB)...")
 
     # Use curl.exe for reliable streaming upload of large binaries
     upload_url = f"{upload_base_url}?name={urllib.parse.quote(name)}"
@@ -198,9 +210,9 @@ for item in assets:
         "-H", "Accept: application/vnd.github+json",
         "--data-binary", f"@{path}"
     ]
-    if use_proxy:
-        curl_cmd.extend(["-x", PROXY])
-    curl_cmd.extend(["--silent", "--show-error", upload_url])
+    if detected_proxy:
+        curl_cmd.extend(["-x", detected_proxy])
+    curl_cmd.extend(["--retry", "3", "--retry-delay", "5", "--progress-bar", upload_url])
     subprocess.run(curl_cmd, check=True)
     print(f"    -> Successfully uploaded {name}")
 
