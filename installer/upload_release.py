@@ -12,8 +12,8 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-TAG = "v0.2.12"
-RELEASE_NAME = "TzdTools v0.2.12 - 完整多线程系统、JIT 调用栈完整性修复与 LLVM IR 支配关系修复"
+TAG = "v0.2.13"
+RELEASE_NAME = "TzdTools v0.2.13 - 核心动态库解耦 (tzd.dll)、C/C++ 原生 SDK、JVMTI 调试接口、TNI/Java 绑定与线程管理"
 REPO_OWNER = "tzdwindows"
 REPO_NAME = "TzdLanguage"
 PROXY = "http://127.0.0.1:7897"
@@ -79,38 +79,50 @@ except urllib.error.HTTPError as e:
     if e.code == 404:
         print(f"  -> Release {TAG} does not exist yet. Creating...")
         create_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
-        body_text = """## 🚀 TzdTools v0.2.12 发布说明
+        body_text = """## 🚀 TzdTools v0.2.13 发布说明
 
 ### 💎 核心亮点
 
-1. **完整多线程系统新增入 stdlib**：
-   - 线程邮箱直接通信（`Thread.send` / `Thread.recv`）
-   - CSP Channel 管道（`Channel.send` / `Channel.recv` / `Channel.close`）
-   - `Mutex` / `LockGuard` 互斥锁
-   - `CondVar` / `Event` 条件变量与事件通知
-   - `AtomicInt` / `AtomicBool` 无锁原子变量
-   - 线程堆栈追踪（`Thread.getStackTrace` / `Thread.dumpAll`）
-   - 线程调试（`Thread.pause` / `Thread.resume`）与死锁检测
-   - 线程审计日志系统（CREATE / START / FINISH / PAUSE / RESUME / USER 事件）
-   - `ThreadPool` 线程池任务分发
+1. **核心运行时动态库解耦 (`tzd.dll` + `tzd.lib`)**：
+   - 将 TzdLanguage 解释器、LLVM JIT 编译器、GC 垃圾回收器、NTT 大数运算引擎与 LibTorch/CUDA 深度学习运行时彻底解耦封装为独立的动态链接库 `tzd.dll` 与导入库 `tzd.lib`
+   - CLI 宿主 `TzdTools.exe` 重构为轻量级加载器，仅依赖 `tzd.dll`
+   - 提供工业级 C/C++ 头文件：`include/tzd/tzd.h` (纯 C API), `include/tzd/tzd.hpp` (现代 RAII C++ API), `include/tzd/tzd_export.h`
 
-2. **JIT 调用栈完整性修复**：
-   - 彻底移除 `jitTrackFrames()` 调试门阀，所有 JIT 函数（顶层调用、跨函数调用、类方法、递归）均无条件压栈
-   - 修复 `rt_tzd_call_method` 与 `rt_call_sub_fast` 缺少 `pushCallStack` / `popCallStack` 的问题
-   - 新增 `rt_get_call_stack_depth` / `rt_restore_call_stack_depth` 实现 try-catch 栈平衡
+2. **JVMTI 风格高性能调试与观测接口 (`tzd_ti.h`)**：
+   - 零性能损耗探针机制（未注册回调时分支开销为 0）
+   - 支持方法进入/退出事件钩子（Method Entry / Exit Callbacks）
+   - 支持线程生命周期事件通知（Thread Start / Thread End）
+   - 新增类对象反射与全堆枚举：`tzd_ti_get_objects_by_class(const char* class_name)`，快速排查内存占用与活跃实例
+   - 支持异常捕获与抛出事件监听（Exception Throw / Catch）
 
-3. **LLVM IR 支配关系修复（`Instruction does not dominate all uses`）**：
-   - 修复 try-catch 生成代码中 `stackDepth` 的读取指令未能支配 `catchBB` 导致的 LLVM 模块校验失败
-   - 将 `rt_get_call_stack_depth()` 调用提前至 `setjmp` 之后的公共前驱块，使其严格支配 `try` 与 `catch` 两条路径
+3. **类 JNI 原生接口 TNI 与官方 Java 绑定 (`tzd_tni.h` & `com.tzd.*`)**：
+   - 提供完整的 TNI (Tzd Native Interface) 机制，支持原生 C/C++ 与宿主双向互调
+   - 官方 Java 语言绑定 `tzd-java-sdk.jar` (`com.tzd.TzdVM`, `com.tzd.TzdInterpreter`, `com.tzd.TzdValue`)，Java 应用可无缝嵌入 TzdLanguage 执行复杂脚本与 AI 计算
 
-4. **AST 内联边界修复**：
-   - 恢复 `tryInlineFunction` 对返回类型的严格守卫，禁止非纯数值函数被意外内联展开
+4. **高级线程管理系统 API (`tzd_thread_*` & `tzd::ThreadManager`)**：
+   - 线程全量堆栈快照追踪与转储（`tzd_thread_dump_all` / `dumpAllStackTraces`）
+   - 自动化死锁检测算法（`tzd_thread_detect_deadlocks` / `detectDeadlocks`）
+   - 线程审计日志管理与安全挂起/恢复控制（`tzd_thread_pause` / `tzd_thread_resume`）
+   - 修复解释器销毁时的线程注册悬空指针异常，确保线程生命周期安全
+
+5. **JIT 编译与神经网络模块参数绑定修复**：
+   - 修复 PyTorch `Sequential` 模块 `registerModule` 在 JIT 编译时由于 Map 类型到指针类型转换导致的 Module verification failed 异常
+   - 全面验证多卡与单卡 GPU 神经网络端到端训练与推理（`test_gpu_multi_card_training_and_inference.tzd`）
+
+6. **标准化 SDK 分发构建流水线**：
+   - 自动化打包流水线 `scripts/package_dist.bat`，包含标准清晰的工程分发目录：
+     - `bin/`：包含可执行文件 `TzdTools.exe`、核心动态库 `tzd.dll`、运行依赖与标准库 `stdlib/`
+     - `include/`：完整 C/C++ 对外头文件（`tzd.h`, `tzd.hpp`, `tzd_ti.h`, `tzd_tni.h`, `tzd_export.h`）
+     - `lib/`：编译导入库 `tzd.lib`
+     - `libs/`：外部依赖二进制包
+     - `licenses/`：第三方开源软件授权许可文件
+   - 支持一键打包 Windows 安装程序 `TzdTools_Setup_v0.2.13.exe` 与极简便携 SDK `TzdSDK-v0.2.13-windows-x64.zip`
 
 ---
 
 ### 📦 资产列表 (Release Assets)
-- **TzdTools_Setup_v0.2.12.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 完整安装包
-- **TzdTools_Setup_v0.2.12_CPU.exe**：轻量级 CPU 原生运行时安装包
+- **TzdTools_Setup_v0.2.13.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 完整安装包 (1.4 GB)
+- **TzdSDK-v0.2.13-windows-x64.zip**：面向 C/C++ 及 Java 开发者的高性能轻量 SDK（包含头文件、`tzd.lib`、`tzd.dll`、`tzd-java-sdk.jar` 及许可证）(16 MB)
 - **tzdlang-0.2.21.vsix**：VS Code 官方语言扩展（语法高亮、LSP 智能感知、DAP 调试器）
 """
         payload = json.dumps({
@@ -140,13 +152,13 @@ assets = [
         "type": "application/octet-stream"
     },
     {
-        "name": "TzdTools_Setup_v0.2.12_CPU.exe",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.12_CPU.exe"),
-        "type": "application/vnd.microsoft.portable-executable"
+        "name": "TzdSDK-v0.2.13-windows-x64.zip",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdSDK-v0.2.13-windows-x64.zip"),
+        "type": "application/zip"
     },
     {
-        "name": "TzdTools_Setup_v0.2.12.exe",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.12.exe"),
+        "name": "TzdTools_Setup_v0.2.13.exe",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.13.exe"),
         "type": "application/vnd.microsoft.portable-executable"
     }
 ]

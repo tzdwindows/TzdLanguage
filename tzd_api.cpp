@@ -161,7 +161,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 // 1. Version & Metadata
 // =========================================================================
 TZD_API const char* tzd_get_version_string(void) {
-    return "0.2.12";
+    return "0.2.13";
 }
 
 TZD_API int tzd_get_version_major(void) {
@@ -173,11 +173,11 @@ TZD_API int tzd_get_version_minor(void) {
 }
 
 TZD_API int tzd_get_version_patch(void) {
-    return 12;
+    return 13;
 }
 
 TZD_API const char* tzd_get_build_info(void) {
-    return "TzdLanguage 0.2.12 (x64, LLVM JIT, PyTorch, CUDA, NTT)";
+    return "TzdLanguage 0.2.13 (x64, LLVM JIT, PyTorch, CUDA, NTT)";
 }
 
 // =========================================================================

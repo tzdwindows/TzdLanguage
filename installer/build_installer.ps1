@@ -2,7 +2,7 @@
 # TzdTools Installer One-Click Build Script
 # ==============================================================================
 param(
-    [string]$Version = "0.2.11"
+    [string]$Version = "0.2.13"
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +67,17 @@ if (Test-Path $StdlibDir) {
     Copy-Item $StdlibDir (Join-Path $StagingDir "stdlib") -Recurse -Force
 }
 
+# Copy include, lib, licenses
+if (Test-Path (Join-Path $RepoRoot "include")) {
+    Copy-Item (Join-Path $RepoRoot "include") (Join-Path $StagingDir "include") -Recurse -Force
+}
+if (Test-Path (Join-Path $DistDir "lib")) {
+    Copy-Item (Join-Path $DistDir "lib") (Join-Path $StagingDir "lib") -Recurse -Force
+}
+if (Test-Path (Join-Path $RepoRoot "licenses")) {
+    Copy-Item (Join-Path $RepoRoot "licenses") (Join-Path $StagingDir "licenses") -Recurse -Force
+}
+
 # 增量复制所有运行时 DLL，绝不无意义全量覆写
 Get-ChildItem -Path $ReleaseDir -Filter "*.dll" | ForEach-Object {
     Sync-FileIncremental $_.FullName (Join-Path $StagingDir $_.Name) | Out-Null
@@ -101,7 +112,7 @@ $PayloadFile = Join-Path $InstallerDir "payload.7z"
 Push-Location $StagingDir
 try {
     if (Test-Path $PayloadFile) {
-        & $SevenZip u -y -mx=3 $PayloadFile "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" | Out-Null
+        & $SevenZip u -y -mx=3 $PayloadFile "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" "tzd.dll" "include" "lib" "licenses" | Out-Null
     } else {
         & $SevenZip a -y -mx=3 $PayloadFile "*" | Out-Null
     }
