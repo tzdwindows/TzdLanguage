@@ -29,6 +29,8 @@ struct ClassConstructor {
     std::vector<std::string> paramTypes;
     int paramCount = 0;
     bool isVararg = false;
+    bool isNative = false;
+    TzdFFIAdapter::WrapperFunc nativeWrapper;
     TzdLangParser::BlockContext* body = nullptr;
     TzdLangParser::ConstructorDeclContext* declCtx = nullptr;
     void (*jittedPtr)(void*, void*) = nullptr;

@@ -143,6 +143,30 @@ public final class TzdLanguage {
     public static native void setDynamicCompression(boolean enabled);
     public static native boolean isDynamicCompressionEnabled();
 
+    // Hardware & High-Resolution Timing APIs
+    public static class HardwareInfo {
+        public int logicalCores;
+        public int physicalCores;
+        public String cpuBrand;
+        public boolean hasAVX2;
+        public boolean hasAVX512;
+        public boolean hasFMA;
+        public long totalMemoryBytes;
+        public long availableMemoryBytes;
+        public long processMemoryBytes;
+
+        @Override
+        public String toString() {
+            return String.format("HardwareInfo[cpu='%s', cores=%d/%d, avx2=%b, mem=%.1f/%.1f GB]",
+                cpuBrand != null ? cpuBrand.trim() : "Unknown", physicalCores, logicalCores, hasAVX2,
+                processMemoryBytes / (1024.0 * 1024.0 * 1024.0),
+                totalMemoryBytes / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
+
+    public static native long nanoTime();
+    public static native HardwareInfo getHardwareInfo();
+
     // Error Message
     public static native String getLastError();
 }

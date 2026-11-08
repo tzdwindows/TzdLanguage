@@ -5396,6 +5396,14 @@ TzdValue TzdInterpreter::callMethod(ClassMethod &method, TzdInstance *receiver,
     // --- 原生方法 ---
     if (method.isNative)
     {
+        if (receiver != nullptr)
+        {
+            std::vector<TzdValue> nativeArgs;
+            nativeArgs.reserve(args.size() + 1);
+            nativeArgs.push_back(TzdValue(receiver));
+            nativeArgs.insert(nativeArgs.end(), args.begin(), args.end());
+            return method.nativeWrapper(nativeArgs);
+        }
         return method.nativeWrapper(args);
     }
 
@@ -8628,15 +8636,26 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext *ctx)
         }
         if (ctor)
         {
-            TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
-            ctorFunc.ensureExtra().paramTypes = ctor->paramTypes;
-            ctorFunc.ensureExtra().isVararg = ctor->isVararg;
-            ctorFunc.ensureExtra().jittedPtr = ctor->jittedPtr;
-            ctorFunc.setInstance(inst);
-            ctorFunc.ensureExtra().sourceFile = ctor->sourceFile;
-            ctorFunc.ensureExtra().line = ctor->line;
-            ctorFunc.ensureExtra().column = ctor->column;
-            this->callFunction(ctorFunc, args);
+            if (ctor->isNative && ctor->nativeWrapper)
+            {
+                std::vector<TzdValue> nativeArgs;
+                nativeArgs.reserve(args.size() + 1);
+                nativeArgs.push_back(TzdValue(inst));
+                nativeArgs.insert(nativeArgs.end(), args.begin(), args.end());
+                ctor->nativeWrapper(nativeArgs);
+            }
+            else
+            {
+                TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
+                ctorFunc.ensureExtra().paramTypes = ctor->paramTypes;
+                ctorFunc.ensureExtra().isVararg = ctor->isVararg;
+                ctorFunc.ensureExtra().jittedPtr = ctor->jittedPtr;
+                ctorFunc.setInstance(inst);
+                ctorFunc.ensureExtra().sourceFile = ctor->sourceFile;
+                ctorFunc.ensureExtra().line = ctor->line;
+                ctorFunc.ensureExtra().column = ctor->column;
+                this->callFunction(ctorFunc, args);
+            }
         }
     }
     catch (...)
@@ -9546,6 +9565,14 @@ TzdValue TzdInterpreter::executeFunction(const TzdValue &funcVal, const std::vec
     // 1. 处理原生函数 (NATIVE_FUNCTION)
     if (finalFunc.type == TzdValue::NATIVE_FUNCTION)
     {
+        if (finalFunc.instanceVal != nullptr)
+        {
+            std::vector<TzdValue> nativeArgs;
+            nativeArgs.reserve(args.size() + 1);
+            nativeArgs.push_back(TzdValue(finalFunc.instanceVal));
+            nativeArgs.insert(nativeArgs.end(), args.begin(), args.end());
+            return finalFunc.extra ? finalFunc.extra->nativeFunc(nativeArgs) : TzdValue();
+        }
         return finalFunc.extra ? finalFunc.extra->nativeFunc(args) : TzdValue();
     }
 

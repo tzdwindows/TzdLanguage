@@ -153,8 +153,13 @@ TzdInstance* TzdInstance::create(TzdClassDef* def) {
     return s_instancePool.get(def);
 }
 
+extern void tzdOnRecycleByteBuffer(TzdInstance* inst);
+
 void TzdInstance::recycle(TzdInstance* inst) {
     if (!inst) return;
+    if (inst->definition && inst->definition->name == "ByteBuffer") {
+        tzdOnRecycleByteBuffer(inst);
+    }
     s_instancePool.put(inst);
 }
 

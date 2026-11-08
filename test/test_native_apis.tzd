@@ -1,0 +1,124 @@
+// test_native_apis.tzd - Verification test for Hardware, Benchmark, Encoding and ByteBuffer native APIs
+
+print("========================================================");
+print("  TzdLanguage Native Modules & APIs Test Suite");
+print("========================================================");
+
+// 1. Hardware Module Test
+print("\n[1] Testing Hardware Native Module...");
+var hw = Hardware.getInfo();
+print("    Logical Cores: " + hw.logicalCores);
+print("    CPU Brand:     " + hw.cpuBrand);
+print("    AVX2 Support:  " + hw.hasAVX2);
+print("    Total Memory:  " + (hw.totalMemory / 1073741824.0) + " GB");
+print("    Proc Memory:   " + (hw.processMemory / 1048576.0) + " MB");
+
+if (hw.logicalCores < 1) {
+    throw "Hardware.getInfo logicalCores check failed";
+}
+print("    [PASS] Hardware Module");
+
+// 2. Benchmark Module Test
+print("\n[2] Testing Benchmark Native Module...");
+var tStart = Benchmark.nanoTime();
+var mStart = Benchmark.microTime();
+
+fun computeLoop() {
+    var sum = 0;
+    for (var i = 0; i < 10000; i++) {
+        sum = sum + i;
+    }
+    return sum;
+}
+
+var measured = Benchmark.measure(computeLoop);
+
+var tEnd = Benchmark.nanoTime();
+print("    Nano time delta:  " + (tEnd - tStart) + " ns");
+print("    Micro time:       " + mStart + " us");
+print("    Benchmark.measure result sum: " + measured.result + ", time: " + measured.timeMs + " ms (" + measured.timeNs + " ns)");
+
+if (measured.result != 49995000) {
+    throw "Benchmark.measure returned incorrect result: " + measured.result;
+}
+print("    [PASS] Benchmark Module");
+
+// 3. Encoding Module Test
+print("\n[3] Testing Encoding Native Module (Base64, Hex, CRC32, Adler32)...");
+var text = "Hello Tzd Native API!";
+var b64 = Encoding.base64Encode(text);
+var decText = Encoding.base64Decode(b64);
+print("    Original:      " + text);
+print("    Base64 Encode: " + b64);
+print("    Base64 Decode: " + decText);
+if (decText != text) {
+    throw "Base64 decode mismatch: expected " + text + ", got " + decText;
+}
+
+var hex = Encoding.hexEncode(text);
+var decHex = Encoding.hexDecode(hex);
+print("    Hex Encode:    " + hex);
+print("    Hex Decode:    " + decHex);
+if (decHex != text) {
+    throw "Hex decode mismatch";
+}
+
+var crc = Encoding.crc32(text);
+var adler = Encoding.adler32(text);
+print("    CRC-32:        " + crc);
+print("    Adler-32:      " + adler);
+if (crc == 0 || adler == 0) {
+    throw "Checksum calculation failed";
+}
+print("    [PASS] Encoding Module");
+
+// 4. ByteBuffer Native Module Test
+print("\n[4] Testing ByteBuffer Native Module...");
+var buf = ByteBuffer.allocate(64);
+print("    Buffer capacity: " + buf.capacity() + ", isDirect: " + buf.isDirect());
+if (buf.capacity() != 64) {
+    throw "ByteBuffer capacity mismatch";
+}
+
+// Write and read integer types
+buf.writeI8(0, 42);
+buf.writeI16(2, 1024);
+buf.writeI32(4, 999999);
+buf.writeI64(8, 1234567890123);
+
+var v8 = buf.readI8(0);
+var v16 = buf.readI16(2);
+var v32 = buf.readI32(4);
+var v64 = buf.readI64(8);
+
+print("    Read I8:  " + v8 + " (expected 42)");
+print("    Read I16: " + v16 + " (expected 1024)");
+print("    Read I32: " + v32 + " (expected 999999)");
+print("    Read I64: " + v64 + " (expected 1234567890123)");
+
+if (v8 != 42 || v16 != 1024 || v32 != 999999 || v64 != 1234567890123) {
+    throw "ByteBuffer integer read/write verification failed";
+}
+
+// Write and read string
+buf.writeString(16, "TzdBuffer");
+var strRead = buf.readString(16, 9);
+print("    Read String: " + strRead + " (expected TzdBuffer)");
+if (strRead != "TzdBuffer") {
+    throw "ByteBuffer string read/write verification failed";
+}
+
+// ByteBuffer fromHex
+var hexBuf = ByteBuffer.fromHex("0102030405");
+print("    fromHex capacity: " + hexBuf.capacity() + ", hex: " + hexBuf.toHex());
+if (hexBuf.toHex() != "0102030405") {
+    throw "ByteBuffer fromHex mismatch: " + hexBuf.toHex();
+}
+
+buf.dispose();
+hexBuf.dispose();
+print("    [PASS] ByteBuffer Module");
+
+print("\n========================================================");
+print("  >>> All Native Modules & APIs tests PASSED! <<<");
+print("========================================================");

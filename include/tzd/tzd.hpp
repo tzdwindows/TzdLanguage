@@ -231,6 +231,38 @@ public:
     static int runString(const std::string& code) { return tzd_run_string(code.c_str()); }
     static int runMain(int argc, char** argv) { return tzd_run_main(argc, argv); }
     static std::string getVersion() { return tzd_get_version_string(); }
+    static uint64_t nanoTime() { return tzd_nano_time(); }
+};
+
+struct HardwareInfo {
+    uint32_t logicalCores = 0;
+    uint32_t physicalCores = 0;
+    std::string cpuBrand;
+    bool hasAVX2 = false;
+    bool hasAVX512 = false;
+    bool hasFMA = false;
+    uint64_t totalMemoryBytes = 0;
+    uint64_t availableMemoryBytes = 0;
+    uint64_t processMemoryBytes = 0;
+};
+
+class Hardware {
+public:
+    static HardwareInfo getInfo() {
+        tzd_hardware_info_t raw = {0};
+        tzd_get_hardware_info(&raw);
+        HardwareInfo info;
+        info.logicalCores = raw.logical_cores;
+        info.physicalCores = raw.physical_cores;
+        info.cpuBrand = raw.cpu_brand;
+        info.hasAVX2 = raw.has_avx2 != 0;
+        info.hasAVX512 = raw.has_avx512 != 0;
+        info.hasFMA = raw.has_fma != 0;
+        info.totalMemoryBytes = raw.total_memory_bytes;
+        info.availableMemoryBytes = raw.available_memory_bytes;
+        info.processMemoryBytes = raw.process_memory_bytes;
+        return info;
+    }
 };
 
 // =========================================================================

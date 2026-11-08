@@ -226,6 +226,25 @@ typedef void (*tzd_compression_listener_t)(tzd_context_t* ctx, const tzd_compres
 /* Register / unregister compression event listener */
 TZD_API int tzd_set_compression_listener(tzd_context_t* ctx, tzd_compression_listener_t listener, void* user_data);
 
+/* Hardware Information */
+typedef struct tzd_hardware_info_s {
+    uint32_t logical_cores;
+    uint32_t physical_cores;
+    char cpu_brand[64];
+    int has_avx2;
+    int has_avx512;
+    int has_fma;
+    uint64_t total_memory_bytes;
+    uint64_t available_memory_bytes;
+    uint64_t process_memory_bytes;
+} tzd_hardware_info_t;
+
+/* Retrieve hardware & platform metrics */
+TZD_API int tzd_get_hardware_info(tzd_hardware_info_t* out_info);
+
+/* High-resolution nanosecond timestamp */
+TZD_API uint64_t tzd_nano_time(void);
+
 #ifdef __cplusplus
 }
 #endif

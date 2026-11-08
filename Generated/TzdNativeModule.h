@@ -26,6 +26,10 @@ private:
     static void regConv(TzdInterpreter* interp);
     static void regExtraMath(TzdInterpreter* interp);
     static void regExtended(TzdInterpreter* interp);
+    static void regHardware(TzdInterpreter* interp);
+    static void regBenchmark(TzdInterpreter* interp);
+    static void regEncoding(TzdInterpreter* interp);
+    static void regByteBuffer(TzdInterpreter* interp);
 
     // ���?���
     static Eigen::MatrixXd toEigen(const TzdValue& arr);

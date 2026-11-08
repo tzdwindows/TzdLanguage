@@ -47,18 +47,25 @@ struct tzd_native_interface_s {
     tzd_method_id_t (*GetMethodID)(tzd_env_t env, tzd_class_t clazz, const char* name, const char* sig);
     tzd_object_t    (*NewObject)(tzd_env_t env, tzd_class_t clazz, int argc, const char** argv);
     int             (*CallMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv, char* out_buf, size_t out_buf_size);
+    int             (*CallVoidMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv);
+    int             (*CallBooleanMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv);
     double          (*CallDoubleMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv);
     int64_t         (*CallLongMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv);
     int             (*CallStringMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv, char* out_buf, size_t out_buf_size);
+    tzd_object_t    (*CallObjectMethod)(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv);
 
     /* 4. Field Access */
     tzd_field_id_t (*GetFieldID)(tzd_env_t env, tzd_class_t clazz, const char* name);
+    int            (*GetBooleanField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID);
+    void           (*SetBooleanField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, int val);
     double         (*GetDoubleField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID);
     void           (*SetDoubleField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, double val);
     int64_t        (*GetIntField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID);
     void           (*SetIntField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, int64_t val);
     int            (*GetStringField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, char* out_buf, size_t out_buf_size);
     void           (*SetStringField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, const char* val);
+    tzd_object_t   (*GetObjectField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID);
+    void           (*SetObjectField)(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, tzd_object_t val);
 
     /* 5. String Utilities */
     tzd_string_t (*NewStringUTF)(tzd_env_t env, const char* bytes);
@@ -90,6 +97,15 @@ struct tzd_native_interface_s {
     /* 9. Object and Class Retransformation */
     size_t       (*GetObjectSize)(tzd_env_t env, tzd_object_t obj);
     int          (*RetransformClass)(tzd_env_t env, const char* name, const char* class_source);
+
+    /* 10. Global Reference Management */
+    tzd_object_t (*NewGlobalRef)(tzd_env_t env, tzd_object_t lobj);
+    void         (*DeleteGlobalRef)(tzd_env_t env, tzd_object_t gref);
+
+    /* 11. Direct Byte Buffer Operations */
+    tzd_object_t (*NewDirectByteBuffer)(tzd_env_t env, void* address, size_t capacity);
+    void*        (*GetDirectBufferAddress)(tzd_env_t env, tzd_object_t buf);
+    size_t       (*GetDirectBufferCapacity)(tzd_env_t env, tzd_object_t buf);
 };
 
 /* Obtain the TNI environment from a context */

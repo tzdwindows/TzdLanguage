@@ -1388,6 +1388,30 @@ static int TNI_CallMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t metho
     }
 }
 
+static int TNI_CallVoidMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv) {
+    if (!obj || !methodID) return TZD_ERR_INVALID_ARG;
+    TzdInstance* inst = (TzdInstance*)obj;
+    ClassMethod* m = (ClassMethod*)methodID;
+    std::vector<TzdValue> args;
+    for (int i = 0; i < argc; ++i) args.push_back(parseStringArg(argv[i]));
+    try {
+        invokeInstanceMethod(env, inst, m, args);
+        return TZD_OK;
+    } catch (...) {
+        return TZD_ERR_RUNTIME;
+    }
+}
+
+static int TNI_CallBooleanMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv) {
+    if (!obj || !methodID) return 0;
+    TzdInstance* inst = (TzdInstance*)obj;
+    ClassMethod* m = (ClassMethod*)methodID;
+    std::vector<TzdValue> args;
+    for (int i = 0; i < argc; ++i) args.push_back(parseStringArg(argv[i]));
+    TzdValue ret = invokeInstanceMethod(env, inst, m, args);
+    return ret.bVal ? 1 : 0;
+}
+
 static double TNI_CallDoubleMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv) {
     if (!obj || !methodID) return 0.0;
     TzdInstance* inst = (TzdInstance*)obj;
@@ -1412,6 +1436,20 @@ static int TNI_CallStringMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t
     return TNI_CallMethod(env, obj, methodID, argc, argv, out_buf, out_buf_size);
 }
 
+static tzd_object_t TNI_CallObjectMethod(tzd_env_t env, tzd_object_t obj, tzd_method_id_t methodID, int argc, const char** argv) {
+    if (!obj || !methodID) return nullptr;
+    TzdInstance* inst = (TzdInstance*)obj;
+    ClassMethod* m = (ClassMethod*)methodID;
+    std::vector<TzdValue> args;
+    for (int i = 0; i < argc; ++i) args.push_back(parseStringArg(argv[i]));
+    TzdValue ret = invokeInstanceMethod(env, inst, m, args);
+    if (ret.type == TzdValue::INSTANCE && ret.instanceVal) {
+        ret.instanceVal->retain();
+        return (tzd_object_t)ret.instanceVal;
+    }
+    return nullptr;
+}
+
 static tzd_field_id_t TNI_GetFieldID(tzd_env_t env, tzd_class_t clazz, const char* name) {
     if (!clazz || !name) return nullptr;
     TzdClassDef* cls = (TzdClassDef*)clazz;
@@ -1420,63 +1458,88 @@ static tzd_field_id_t TNI_GetFieldID(tzd_env_t env, tzd_class_t clazz, const cha
     return (tzd_field_id_t)(intptr_t)(idx + 1);
 }
 
+static int TNI_GetBooleanField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID) {
+    if (!obj || !fieldID) return 0;
+    TzdInstance* inst = (TzdInstance*)obj;
+    int idx = (int)(intptr_t)fieldID - 1;
+    TzdValue val = inst->getMemberByIndex(idx);
+    return val.bVal ? 1 : 0;
+}
+
+static void TNI_SetBooleanField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, int val) {
+    if (!obj || !fieldID) return;
+    TzdInstance* inst = (TzdInstance*)obj;
+    int idx = (int)(intptr_t)fieldID - 1;
+    TzdValue tv;
+    tv.type = TzdValue::BOOL;
+    tv.bVal = (val != 0);
+    inst->setMemberByIndex(idx, tv);
+}
+
 static double TNI_GetDoubleField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID) {
     if (!obj || !fieldID) return 0.0;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        return inst->fieldValues[idx].dVal;
-    }
-    return 0.0;
+    TzdValue val = inst->getMemberByIndex(idx);
+    return val.dVal;
 }
 
 static void TNI_SetDoubleField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, double val) {
     if (!obj || !fieldID) return;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        inst->fieldValues[idx] = TzdValue(val);
-    }
+    inst->setMemberByIndex(idx, TzdValue(val));
 }
 
 static int64_t TNI_GetIntField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID) {
     if (!obj || !fieldID) return 0;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        return inst->fieldValues[idx].lVal;
-    }
-    return 0;
+    TzdValue val = inst->getMemberByIndex(idx);
+    return val.lVal;
 }
 
 static void TNI_SetIntField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, int64_t val) {
     if (!obj || !fieldID) return;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        inst->fieldValues[idx] = TzdValue((long long)val);
-    }
+    inst->setMemberByIndex(idx, TzdValue((long long)val));
 }
 
 static int TNI_GetStringField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, char* out_buf, size_t out_buf_size) {
     if (!obj || !fieldID) return TZD_ERR_INVALID_ARG;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        std::string s = formatTzdValue(inst->fieldValues[idx]);
-        copyToBuffer(s, out_buf, out_buf_size);
-        return TZD_OK;
-    }
-    return TZD_ERR_NOT_FOUND;
+    TzdValue val = inst->getMemberByIndex(idx);
+    std::string s = formatTzdValue(val);
+    copyToBuffer(s, out_buf, out_buf_size);
+    return TZD_OK;
 }
 
 static void TNI_SetStringField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, const char* val) {
     if (!obj || !fieldID) return;
     TzdInstance* inst = (TzdInstance*)obj;
     int idx = (int)(intptr_t)fieldID - 1;
-    if (idx >= 0 && idx < (int)inst->fieldValues.size()) {
-        inst->fieldValues[idx] = TzdValue(val ? std::string(val) : std::string(""));
+    inst->setMemberByIndex(idx, TzdValue(val ? std::string(val) : std::string("")));
+}
+
+static tzd_object_t TNI_GetObjectField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID) {
+    if (!obj || !fieldID) return nullptr;
+    TzdInstance* inst = (TzdInstance*)obj;
+    int idx = (int)(intptr_t)fieldID - 1;
+    TzdValue val = inst->getMemberByIndex(idx);
+    if (val.type == TzdValue::INSTANCE && val.instanceVal) {
+        val.instanceVal->retain();
+        return (tzd_object_t)val.instanceVal;
     }
+    return nullptr;
+}
+
+static void TNI_SetObjectField(tzd_env_t env, tzd_object_t obj, tzd_field_id_t fieldID, tzd_object_t val) {
+    if (!obj || !fieldID) return;
+    TzdInstance* inst = (TzdInstance*)obj;
+    int idx = (int)(intptr_t)fieldID - 1;
+    inst->setMemberByIndex(idx, TzdValue((TzdInstance*)val));
 }
 
 static tzd_string_t TNI_NewStringUTF(tzd_env_t env, const char* bytes) {
@@ -1616,6 +1679,61 @@ static int TNI_RetransformClass(tzd_env_t env, const char* name, const char* cla
     return tzd_retransform_class(ctx, name, class_source);
 }
 
+static tzd_object_t TNI_NewGlobalRef(tzd_env_t env, tzd_object_t lobj) {
+    if (!lobj) return nullptr;
+    TzdInstance* inst = (TzdInstance*)lobj;
+    inst->retain();
+    return (tzd_object_t)inst;
+}
+
+static void TNI_DeleteGlobalRef(tzd_env_t env, tzd_object_t gref) {
+    if (!gref) return;
+    TzdInstance* inst = (TzdInstance*)gref;
+    inst->release();
+}
+
+static tzd_object_t TNI_NewDirectByteBuffer(tzd_env_t env, void* address, size_t capacity) {
+    TzdClassDef* cls = TzdOopManager::getClass("ByteBuffer");
+    if (!cls) return nullptr;
+    TzdInstance* inst = TzdInstance::create(cls);
+    if (!inst) return nullptr;
+    inst->retain();
+
+    int ptrIdx = cls->getFieldIndex("_ptr");
+    int capIdx = cls->getFieldIndex("_cap");
+    int dirIdx = cls->getFieldIndex("_isDirect");
+
+    if (ptrIdx >= 0) inst->setMemberByIndex(ptrIdx, TzdValue((long long)(uintptr_t)address));
+    if (capIdx >= 0) inst->setMemberByIndex(capIdx, TzdValue((long long)capacity));
+    if (dirIdx >= 0) {
+        TzdValue bVal;
+        bVal.type = TzdValue::BOOL;
+        bVal.bVal = true;
+        inst->setMemberByIndex(dirIdx, bVal);
+    }
+    return (tzd_object_t)inst;
+}
+
+static void* TNI_GetDirectBufferAddress(tzd_env_t env, tzd_object_t buf) {
+    if (!buf) return nullptr;
+    TzdInstance* inst = (TzdInstance*)buf;
+    if (!inst->definition) return nullptr;
+    int ptrIdx = inst->definition->getFieldIndex("_ptr");
+    if (ptrIdx < 0) return nullptr;
+    TzdValue val = inst->getMemberByIndex(ptrIdx);
+    return (void*)(uintptr_t)val.lVal;
+}
+
+static size_t TNI_GetDirectBufferCapacity(tzd_env_t env, tzd_object_t buf) {
+    if (!buf) return 0;
+    TzdInstance* inst = (TzdInstance*)buf;
+    if (!inst->definition) return 0;
+    int capIdx = inst->definition->getFieldIndex("_cap");
+    if (capIdx < 0) return 0;
+    TzdValue val = inst->getMemberByIndex(capIdx);
+    return (size_t)val.lVal;
+}
+
 static const tzd_native_interface_t g_tni_interface = {
     TNI_GetVersion,
     TNI_GetContext,
@@ -1626,16 +1744,23 @@ static const tzd_native_interface_t g_tni_interface = {
     TNI_GetMethodID,
     TNI_NewObject,
     TNI_CallMethod,
+    TNI_CallVoidMethod,
+    TNI_CallBooleanMethod,
     TNI_CallDoubleMethod,
     TNI_CallLongMethod,
     TNI_CallStringMethod,
+    TNI_CallObjectMethod,
     TNI_GetFieldID,
+    TNI_GetBooleanField,
+    TNI_SetBooleanField,
     TNI_GetDoubleField,
     TNI_SetDoubleField,
     TNI_GetIntField,
     TNI_SetIntField,
     TNI_GetStringField,
     TNI_SetStringField,
+    TNI_GetObjectField,
+    TNI_SetObjectField,
     TNI_NewStringUTF,
     TNI_GetStringUTFChars,
     TNI_ReleaseStringUTFChars,
@@ -1655,7 +1780,12 @@ static const tzd_native_interface_t g_tni_interface = {
     TNI_ExceptionDescribe,
     TNI_ExceptionClear,
     TNI_GetObjectSize,
-    TNI_RetransformClass
+    TNI_RetransformClass,
+    TNI_NewGlobalRef,
+    TNI_DeleteGlobalRef,
+    TNI_NewDirectByteBuffer,
+    TNI_GetDirectBufferAddress,
+    TNI_GetDirectBufferCapacity
 };
 
 TZD_API tzd_env_t tzd_get_env(tzd_context_t* ctx) {
@@ -1972,6 +2102,45 @@ JNIEXPORT void JNICALL Java_com_tzd_TzdLanguage_setCompressionEventListener(JNIE
     }
 }
 
+JNIEXPORT jlong JNICALL Java_com_tzd_TzdLanguage_nanoTime(JNIEnv* env, jclass cls) {
+    return (jlong)tzd_nano_time();
+}
+
+JNIEXPORT jobject JNICALL Java_com_tzd_TzdLanguage_getHardwareInfo(JNIEnv* env, jclass cls) {
+    tzd_hardware_info_t info;
+    memset(&info, 0, sizeof(info));
+    tzd_get_hardware_info(&info);
+
+    jclass hwCls = env->FindClass("com/tzd/TzdLanguage$HardwareInfo");
+    if (!hwCls) return nullptr;
+    jmethodID ctor = env->GetMethodID(hwCls, "<init>", "()V");
+    if (!ctor) return nullptr;
+    jobject obj = env->NewObject(hwCls, ctor);
+    if (!obj) return nullptr;
+
+    jfieldID fLog = env->GetFieldID(hwCls, "logicalCores", "I");
+    jfieldID fPhy = env->GetFieldID(hwCls, "physicalCores", "I");
+    jfieldID fBrand = env->GetFieldID(hwCls, "cpuBrand", "Ljava/lang/String;");
+    jfieldID fAvx2 = env->GetFieldID(hwCls, "hasAVX2", "Z");
+    jfieldID fAvx512 = env->GetFieldID(hwCls, "hasAVX512", "Z");
+    jfieldID fFma = env->GetFieldID(hwCls, "hasFMA", "Z");
+    jfieldID fTotMem = env->GetFieldID(hwCls, "totalMemoryBytes", "J");
+    jfieldID fAvailMem = env->GetFieldID(hwCls, "availableMemoryBytes", "J");
+    jfieldID fProcMem = env->GetFieldID(hwCls, "processMemoryBytes", "J");
+
+    if (fLog) env->SetIntField(obj, fLog, (jint)info.logical_cores);
+    if (fPhy) env->SetIntField(obj, fPhy, (jint)info.physical_cores);
+    if (fBrand) env->SetObjectField(obj, fBrand, env->NewStringUTF(info.cpu_brand));
+    if (fAvx2) env->SetBooleanField(obj, fAvx2, info.has_avx2 ? JNI_TRUE : JNI_FALSE);
+    if (fAvx512) env->SetBooleanField(obj, fAvx512, info.has_avx512 ? JNI_TRUE : JNI_FALSE);
+    if (fFma) env->SetBooleanField(obj, fFma, info.has_fma ? JNI_TRUE : JNI_FALSE);
+    if (fTotMem) env->SetLongField(obj, fTotMem, (jlong)info.total_memory_bytes);
+    if (fAvailMem) env->SetLongField(obj, fAvailMem, (jlong)info.available_memory_bytes);
+    if (fProcMem) env->SetLongField(obj, fProcMem, (jlong)info.process_memory_bytes);
+
+    return obj;
+}
+
 } // extern "C"
 
 // =========================================================================
@@ -2070,5 +2239,105 @@ TZD_API int tzd_thread_detect_deadlocks(char* out_buf, size_t out_buf_size) {
     oss << "]";
     std::string s = oss.str();
     copyToBuffer(s, out_buf, out_buf_size);
+    return TZD_OK;
+}
+
+// =========================================================================
+// 11. Hardware & High-Resolution Timing Implementation
+// =========================================================================
+#if defined(_MSC_VER)
+#include <intrin.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#endif
+
+TZD_API uint64_t tzd_nano_time(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq = []() {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (uint64_t)((counter.QuadPart * 1000000000ULL) / freq.QuadPart);
+#else
+    auto now = std::chrono::high_resolution_clock::now();
+    return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+#endif
+}
+
+TZD_API int tzd_get_hardware_info(tzd_hardware_info_t* out_info) {
+    if (!out_info) return TZD_ERR_INVALID_ARG;
+    memset(out_info, 0, sizeof(tzd_hardware_info_t));
+
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    out_info->logical_cores = (int)sysInfo.dwNumberOfProcessors;
+
+    DWORD length = 0;
+    GetLogicalProcessorInformation(nullptr, &length);
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && length > 0) {
+        std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> buffer(length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+        if (GetLogicalProcessorInformation(buffer.data(), &length)) {
+            int physCores = 0;
+            for (const auto& info : buffer) {
+                if (info.Relationship == RelationProcessorCore) {
+                    physCores++;
+                }
+            }
+            out_info->physical_cores = physCores > 0 ? physCores : out_info->logical_cores;
+        }
+    }
+    if (out_info->physical_cores == 0) {
+        out_info->physical_cores = out_info->logical_cores;
+    }
+
+    int cpuInfo[4] = {0};
+    __cpuid(cpuInfo, 0x80000000);
+    unsigned int nExIds = (unsigned int)cpuInfo[0];
+    char brand[65] = {0};
+    if (nExIds >= 0x80000004) {
+        for (unsigned int i = 0x80000002; i <= 0x80000004; ++i) {
+            __cpuid(cpuInfo, i);
+            memcpy(brand + (i - 0x80000002) * 16, cpuInfo, sizeof(cpuInfo));
+        }
+        brand[64] = '\0';
+        char* p = brand;
+        while (*p == ' ') p++;
+        strncpy_s(out_info->cpu_brand, sizeof(out_info->cpu_brand), p, _TRUNCATE);
+    } else {
+        strncpy_s(out_info->cpu_brand, sizeof(out_info->cpu_brand), "Generic x86_64", _TRUNCATE);
+    }
+
+    __cpuid(cpuInfo, 0);
+    if (cpuInfo[0] >= 1) {
+        __cpuid(cpuInfo, 1);
+        out_info->has_fma = (cpuInfo[2] & (1 << 12)) ? 1 : 0;
+    }
+    if (cpuInfo[0] >= 7) {
+        __cpuidex(cpuInfo, 7, 0);
+        out_info->has_avx2 = (cpuInfo[1] & (1 << 5)) ? 1 : 0;
+        out_info->has_avx512 = (cpuInfo[1] & (1 << 16)) ? 1 : 0;
+    }
+
+    MEMORYSTATUSEX memStatus;
+    memStatus.dwLength = sizeof(memStatus);
+    if (GlobalMemoryStatusEx(&memStatus)) {
+        out_info->total_memory_bytes = (uint64_t)memStatus.ullTotalPhys;
+        out_info->available_memory_bytes = (uint64_t)memStatus.ullAvailPhys;
+    }
+
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        out_info->process_memory_bytes = (uint64_t)pmc.WorkingSetSize;
+    }
+#else
+    out_info->logical_cores = (int)std::thread::hardware_concurrency();
+    out_info->physical_cores = out_info->logical_cores;
+    strncpy_s(out_info->cpu_brand, sizeof(out_info->cpu_brand), "POSIX Generic", _TRUNCATE);
+#endif
+
     return TZD_OK;
 }

@@ -216,6 +216,78 @@ int main() {
     std::cout << "    [PASS] Object Decompressed event fired on write mutation!\n";
     std::cout << "    [PASS] Dynamic Compression Events System\n\n";
 
+    // 11. Hardware, Benchmark, Encoding and Advanced TNI APIs
+    std::cout << "[11] Testing Hardware Info, High-Res Timer & Advanced TNI APIs...\n" << std::flush;
+
+    // Test C Hardware API
+    tzd_hardware_info_t hw = {0};
+    int hw_rc = tzd_get_hardware_info(&hw);
+    assert(hw_rc == TZD_OK);
+    std::cout << "    [C API] Hardware Info: CPU=\"" << hw.cpu_brand << "\", Cores=" << hw.physical_cores
+              << "/" << hw.logical_cores << ", AVX2=" << hw.has_avx2 << ", AVX512=" << hw.has_avx512
+              << ", Mem=" << (hw.process_memory_bytes / 1048576) << "MB / "
+              << (hw.total_memory_bytes / 1073741824) << "GB\n";
+    assert(hw.logical_cores >= 1);
+
+    // Test C++ Hardware wrapper
+    auto cppHw = tzd::Hardware::getInfo();
+    assert(cppHw.logicalCores >= 1);
+    assert(cppHw.cpuBrand == hw.cpu_brand);
+
+    // Test High-Resolution Nano Timer
+    uint64_t t1 = tzd_nano_time();
+    uint64_t t2 = tzd::Engine::nanoTime();
+    assert(t2 >= t1);
+    std::cout << "    [Timer] Nano time: " << t1 << " ns -> " << t2 << " ns\n";
+
+    // Test TNI Environment & Direct Byte Buffer
+    tzd_env_t env = tzd_get_env(tiCtx.getContext());
+    assert(env != nullptr);
+    assert(env->GetVersion(env) >= 0x00010000);
+
+    // Direct Byte Buffer creation & verification
+    uint8_t rawMemory[128] = {0};
+    for (int i = 0; i < 128; ++i) rawMemory[i] = (uint8_t)(i * 2);
+
+    tzd_object_t dBuf = env->NewDirectByteBuffer(env, rawMemory, 128);
+    assert(dBuf != nullptr);
+    assert(env->GetDirectBufferAddress(env, dBuf) == rawMemory);
+    assert(env->GetDirectBufferCapacity(env, dBuf) == 128);
+    std::cout << "    [TNI] NewDirectByteBuffer successfully wrapped 128 bytes raw buffer!\n";
+
+    // Global Reference management
+    tzd_object_t gRef = env->NewGlobalRef(env, dBuf);
+    assert(gRef == dBuf);
+    env->DeleteGlobalRef(env, gRef);
+    std::cout << "    [TNI] NewGlobalRef & DeleteGlobalRef verified successfully!\n";
+
+    // TNI Method Call: CallBooleanMethod, CallLongMethod
+    tzd_class_t bbCls = env->FindClass(env, "ByteBuffer");
+    assert(bbCls != nullptr);
+    tzd_method_id_t isDirM = env->GetMethodID(env, bbCls, "isDirect", nullptr);
+    assert(isDirM != nullptr);
+    int isDirect = env->CallBooleanMethod(env, dBuf, isDirM, 0, nullptr);
+    assert(isDirect == 1);
+
+    tzd_method_id_t capM = env->GetMethodID(env, bbCls, "capacity", nullptr);
+    assert(capM != nullptr);
+    int64_t dCap = env->CallLongMethod(env, dBuf, capM, 0, nullptr);
+    assert(dCap == 128);
+
+    // Field Access: GetBooleanField, GetIntField
+    tzd_field_id_t fCap = env->GetFieldID(env, bbCls, "_cap");
+    assert(fCap != nullptr);
+    int64_t capVal = env->GetIntField(env, dBuf, fCap);
+    assert(capVal == 128);
+
+    tzd_field_id_t fDir = env->GetFieldID(env, bbCls, "_isDirect");
+    assert(fDir != nullptr);
+    int dirVal = env->GetBooleanField(env, dBuf, fDir);
+    assert(dirVal == 1);
+
+    std::cout << "    [TNI] CallBooleanMethod, CallLongMethod, GetFieldID, GetIntField verified!\n";
+    std::cout << "    [PASS] Hardware Info, High-Res Timer & Advanced TNI APIs\n\n";
+
     std::cout << "========================================================\n";
     std::cout << "  >>> All Tzd C/C++ API tests PASSED successfully! <<<\n";
     std::cout << "========================================================\n";

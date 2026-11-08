@@ -342,6 +342,10 @@ void TzdNativeModule::init(TzdInterpreter *interp)
     regConv(interp);
     regExtraMath(interp);
     regExtended(interp);
+    regHardware(interp);
+    regBenchmark(interp);
+    regEncoding(interp);
+    regByteBuffer(interp);
     TzdNetModule::init(interp);
     TzdGlModule::init(interp);
     TzdUiModule::init(interp);
@@ -4062,4 +4066,784 @@ void TzdNativeModule::regExtended(TzdInterpreter *interp)
             result[k] = interp->callFunction(args[1], tArgs);
         }
         return TzdValue(result); });
+}
+
+// =========================================================================
+// 15. Hardware & Platform Metrics Native Module
+// =========================================================================
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#include <intrin.h>
+#pragma comment(lib, "psapi.lib")
+#endif
+
+using NativeWrapper = TzdFFIAdapter::WrapperFunc;
+
+void TzdNativeModule::regHardware(TzdInterpreter *interp)
+{
+    if (TzdClassDef* existing = TzdOopManager::getClass("Hardware")) {
+        interp->setGlobalVariable("Hardware", TzdValue(existing));
+        return;
+    }
+
+    TzdClassDef* hwCls = new TzdClassDef("Hardware");
+
+    auto addStatic = [hwCls](const std::string& name, NativeWrapper wrapper) {
+        ClassMethod m;
+        m.name = name;
+        m.isStatic = true;
+        m.isNative = true;
+        m.nativeWrapper = wrapper;
+        hwCls->methods[name] = m;
+    };
+
+    addStatic("cpuCount", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+        return TzdValue((double)std::thread::hardware_concurrency());
+    });
+
+    addStatic("physicalCores", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#ifdef _WIN32
+        DWORD length = 0;
+        GetLogicalProcessorInformation(nullptr, &length);
+        if (length > 0) {
+            std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> buffer(length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+            if (GetLogicalProcessorInformation(buffer.data(), &length)) {
+                uint32_t physical = 0;
+                for (const auto& info : buffer) {
+                    if (info.Relationship == RelationProcessorCore) physical++;
+                }
+                if (physical > 0) return TzdValue((double)physical);
+            }
+        }
+#endif
+        return TzdValue((double)std::thread::hardware_concurrency());
+    });
+
+    addStatic("cpuBrand", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#ifdef _WIN32
+        int cpuInfo[4] = {0};
+        __cpuid(cpuInfo, 0x80000000);
+        unsigned int nExIds = cpuInfo[0];
+        if (nExIds >= 0x80000004) {
+            char brand[0x40] = {0};
+            for (unsigned int i = 0x80000002; i <= 0x80000004; ++i) {
+                __cpuid(cpuInfo, i);
+                memcpy(brand + (i - 0x80000002) * 16, cpuInfo, sizeof(cpuInfo));
+            }
+            return TzdValue(std::string(brand));
+        }
+#endif
+        return TzdValue(std::string("Generic x86_64"));
+    });
+
+    addStatic("hasAVX2", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+        int cpuInfo[4] = {0};
+        __cpuid(cpuInfo, 0);
+        if (cpuInfo[0] >= 7) {
+            __cpuidex(cpuInfo, 7, 0);
+            return TzdValue((cpuInfo[1] & (1 << 5)) != 0);
+        }
+#endif
+        return TzdValue(false);
+    });
+
+    addStatic("hasAVX512", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+        int cpuInfo[4] = {0};
+        __cpuid(cpuInfo, 0);
+        if (cpuInfo[0] >= 7) {
+            __cpuidex(cpuInfo, 7, 0);
+            return TzdValue((cpuInfo[1] & (1 << 16)) != 0);
+        }
+#endif
+        return TzdValue(false);
+    });
+
+    addStatic("hasFMA", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+        int cpuInfo[4] = {0};
+        __cpuid(cpuInfo, 0);
+        if (cpuInfo[0] >= 1) {
+            __cpuid(cpuInfo, 1);
+            return TzdValue((cpuInfo[2] & (1 << 12)) != 0);
+        }
+#endif
+        return TzdValue(false);
+    });
+
+    addStatic("totalMemory", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#ifdef _WIN32
+        MEMORYSTATUSEX memStatus;
+        memStatus.dwLength = sizeof(memStatus);
+        if (GlobalMemoryStatusEx(&memStatus)) {
+            return TzdValue((double)memStatus.ullTotalPhys);
+        }
+#endif
+        return TzdValue(0.0);
+    });
+
+    addStatic("availableMemory", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#ifdef _WIN32
+        MEMORYSTATUSEX memStatus;
+        memStatus.dwLength = sizeof(memStatus);
+        if (GlobalMemoryStatusEx(&memStatus)) {
+            return TzdValue((double)memStatus.ullAvailPhys);
+        }
+#endif
+        return TzdValue(0.0);
+    });
+
+    addStatic("processMemory", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS pmc;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            return TzdValue((double)pmc.WorkingSetSize);
+        }
+#endif
+        return TzdValue(0.0);
+    });
+
+    addStatic("getInfo", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+        std::unordered_map<std::string, TzdValue> info;
+        info["logicalCores"] = TzdValue((double)std::thread::hardware_concurrency());
+#ifdef _WIN32
+        int cpuInfo[4] = {0};
+        __cpuid(cpuInfo, 0x80000000);
+        unsigned int nExIds = cpuInfo[0];
+        if (nExIds >= 0x80000004) {
+            char brand[0x40] = {0};
+            for (unsigned int i = 0x80000002; i <= 0x80000004; ++i) {
+                __cpuid(cpuInfo, i);
+                memcpy(brand + (i - 0x80000002) * 16, cpuInfo, sizeof(cpuInfo));
+            }
+            info["cpuBrand"] = TzdValue(std::string(brand));
+        } else {
+            info["cpuBrand"] = TzdValue(std::string("Generic x86_64"));
+        }
+        __cpuid(cpuInfo, 0);
+        if (cpuInfo[0] >= 7) {
+            __cpuidex(cpuInfo, 7, 0);
+            info["hasAVX2"] = TzdValue((cpuInfo[1] & (1 << 5)) != 0);
+            info["hasAVX512"] = TzdValue((cpuInfo[1] & (1 << 16)) != 0);
+        }
+        MEMORYSTATUSEX memStatus;
+        memStatus.dwLength = sizeof(memStatus);
+        if (GlobalMemoryStatusEx(&memStatus)) {
+            info["totalMemory"] = TzdValue((double)memStatus.ullTotalPhys);
+            info["availableMemory"] = TzdValue((double)memStatus.ullAvailPhys);
+        }
+        PROCESS_MEMORY_COUNTERS pmc;
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            info["processMemory"] = TzdValue((double)pmc.WorkingSetSize);
+        }
+#endif
+        return TzdValue(info);
+    });
+
+    TzdOopManager::registerClass(hwCls);
+    interp->setGlobalVariable("Hardware", TzdValue(hwCls));
+}
+
+// =========================================================================
+// 16. Benchmark & High-Precision Timing Native Module
+// =========================================================================
+void TzdNativeModule::regBenchmark(TzdInterpreter *interp)
+{
+    if (TzdClassDef* existing = TzdOopManager::getClass("Benchmark")) {
+        interp->setGlobalVariable("Benchmark", TzdValue(existing));
+        return;
+    }
+
+    TzdClassDef* bmCls = new TzdClassDef("Benchmark");
+
+    auto addStatic = [bmCls](const std::string& name, NativeWrapper wrapper) {
+        ClassMethod m;
+        m.name = name;
+        m.isStatic = true;
+        m.isNative = true;
+        m.nativeWrapper = wrapper;
+        bmCls->methods[name] = m;
+    };
+
+    addStatic("nanoTime", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+        auto now = std::chrono::high_resolution_clock::now();
+        double ns = (double)std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        return TzdValue(ns);
+    });
+
+    addStatic("microTime", [](const std::vector<TzdValue>& args) -> TzdValue {
+        (void)args;
+        auto now = std::chrono::high_resolution_clock::now();
+        double us = (double)std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+        return TzdValue(us);
+    });
+
+    addStatic("measure", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue();
+        auto start = std::chrono::high_resolution_clock::now();
+        TzdValue ret;
+        try {
+            if (g_CurrentInterpreter) {
+                ret = g_CurrentInterpreter->callFunction(args[0], {});
+            }
+        } catch (...) {}
+        auto end = std::chrono::high_resolution_clock::now();
+        double elapsedNs = (double)std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        double elapsedMs = elapsedNs / 1000000.0;
+
+        std::unordered_map<std::string, TzdValue> res;
+        res["timeNs"] = TzdValue(elapsedNs);
+        res["timeMs"] = TzdValue(elapsedMs);
+        res["result"] = ret;
+        return TzdValue(res);
+    });
+
+    TzdOopManager::registerClass(bmCls);
+    interp->setGlobalVariable("Benchmark", TzdValue(bmCls));
+}
+
+// =========================================================================
+// 17. Encoding & Checksum Native Module (Base64, Hex, CRC32, Adler32)
+// =========================================================================
+static const char s_b64chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static std::string base64EncodeInternal(const std::string& in) {
+    std::string out;
+    int val = 0, valb = -6;
+    for (uint8_t c : in) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            out.push_back(s_b64chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) out.push_back(s_b64chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (out.size() % 4) out.push_back('=');
+    return out;
+}
+
+static std::string base64DecodeInternal(const std::string& in) {
+    std::string out;
+    std::vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T[(unsigned char)s_b64chars[i]] = i;
+    int val = 0, valb = -8;
+    for (uint8_t c : in) {
+        if (T[c] == -1) break;
+        val = (val << 6) + T[c];
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
+
+static std::string hexEncodeInternal(const std::string& in) {
+    static const char hexDigits[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(in.size() * 2);
+    for (uint8_t b : in) {
+        out.push_back(hexDigits[(b >> 4) & 0x0F]);
+        out.push_back(hexDigits[b & 0x0F]);
+    }
+    return out;
+}
+
+static std::string hexDecodeInternal(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() / 2);
+    for (size_t i = 0; i + 1 < in.size(); i += 2) {
+        auto hexVal = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return 0;
+        };
+        uint8_t byte = (hexVal(in[i]) << 4) | hexVal(in[i + 1]);
+        out.push_back((char)byte);
+    }
+    return out;
+}
+
+static uint32_t crc32Internal(const std::string& data) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (uint8_t b : data) {
+        crc ^= b;
+        for (int k = 0; k < 8; ++k) {
+            crc = (crc >> 1) ^ (0xEDB88320 & (-(int)(crc & 1)));
+        }
+    }
+    return ~crc;
+}
+
+static uint32_t adler32Internal(const std::string& data) {
+    uint32_t a = 1, b = 0;
+    for (uint8_t c : data) {
+        a = (a + c) % 65521;
+        b = (b + a) % 65521;
+    }
+    return (b << 16) | a;
+}
+
+void TzdNativeModule::regEncoding(TzdInterpreter *interp)
+{
+    if (TzdClassDef* existing = TzdOopManager::getClass("Encoding")) {
+        interp->setGlobalVariable("Encoding", TzdValue(existing));
+        return;
+    }
+
+    TzdClassDef* encCls = new TzdClassDef("Encoding");
+
+    auto addStatic = [encCls](const std::string& name, NativeWrapper wrapper) {
+        ClassMethod m;
+        m.name = name;
+        m.isStatic = true;
+        m.isNative = true;
+        m.nativeWrapper = wrapper;
+        encCls->methods[name] = m;
+    };
+
+    addStatic("base64Encode", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(std::string(""));
+        return TzdValue(base64EncodeInternal(args[0].sVal));
+    });
+
+    addStatic("base64Decode", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(std::string(""));
+        return TzdValue(base64DecodeInternal(args[0].sVal));
+    });
+
+    addStatic("hexEncode", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(std::string(""));
+        return TzdValue(hexEncodeInternal(args[0].sVal));
+    });
+
+    addStatic("hexDecode", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(std::string(""));
+        return TzdValue(hexDecodeInternal(args[0].sVal));
+    });
+
+    addStatic("crc32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(0.0);
+        return TzdValue((double)crc32Internal(args[0].sVal));
+    });
+
+    addStatic("adler32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue(0.0);
+        return TzdValue((double)adler32Internal(args[0].sVal));
+    });
+
+    TzdOopManager::registerClass(encCls);
+    interp->setGlobalVariable("Encoding", TzdValue(encCls));
+}
+
+// =========================================================================
+// 18. ByteBuffer Native Buffer & Raw Memory Module
+// =========================================================================
+struct TzdRawBuffer {
+    std::vector<uint8_t> bytes;
+};
+
+static std::unordered_map<TzdInstance*, TzdRawBuffer> s_rawBuffers;
+static std::mutex s_rawBufferMutex;
+
+void tzdOnRecycleByteBuffer(TzdInstance* inst) {
+    std::lock_guard<std::mutex> lock(s_rawBufferMutex);
+    s_rawBuffers.erase(inst);
+}
+
+static uint8_t* getByteBufferPtr(TzdInstance* inst, size_t* outCap = nullptr) {
+    if (!inst || !inst->definition) return nullptr;
+    int ptrIdx = inst->definition->getFieldIndex("_ptr");
+    int capIdx = inst->definition->getFieldIndex("_cap");
+    if (ptrIdx < 0) return nullptr;
+    TzdValue ptrVal = inst->getMemberByIndex(ptrIdx);
+    uint8_t* ptr = (uint8_t*)(uintptr_t)ptrVal.lVal;
+    if (outCap && capIdx >= 0) {
+        *outCap = (size_t)inst->getMemberByIndex(capIdx).lVal;
+    }
+    return ptr;
+}
+
+static void initByteBufferInstance(TzdClassDef* bbCls, TzdInstance* inst, size_t capacity) {
+    if (!bbCls || !inst) return;
+    std::lock_guard<std::mutex> lock(s_rawBufferMutex);
+    auto& raw = s_rawBuffers[inst];
+    raw.bytes.assign(capacity, 0);
+
+    int ptrIdx = bbCls->getFieldIndex("_ptr");
+    int capIdx = bbCls->getFieldIndex("_cap");
+    int dirIdx = bbCls->getFieldIndex("_isDirect");
+
+    if (ptrIdx >= 0) inst->setMemberByIndex(ptrIdx, TzdValue((long long)(uintptr_t)raw.bytes.data()));
+    if (capIdx >= 0) inst->setMemberByIndex(capIdx, TzdValue((long long)capacity));
+    if (dirIdx >= 0) {
+        TzdValue bVal;
+        bVal.type = TzdValue::BOOL;
+        bVal.bVal = false;
+        inst->setMemberByIndex(dirIdx, bVal);
+    }
+}
+
+void TzdNativeModule::regByteBuffer(TzdInterpreter *interp)
+{
+    if (TzdClassDef* existing = TzdOopManager::getClass("ByteBuffer")) {
+        interp->setGlobalVariable("ByteBuffer", TzdValue(existing));
+        return;
+    }
+
+    TzdClassDef* bbCls = new TzdClassDef("ByteBuffer");
+
+    // Fields
+    ClassField fPtr;
+    fPtr.name = "_ptr";
+    fPtr.type = "long";
+    bbCls->fields["_ptr"] = fPtr;
+
+    ClassField fCap;
+    fCap.name = "_cap";
+    fCap.type = "long";
+    bbCls->fields["_cap"] = fCap;
+
+    ClassField fDir;
+    fDir.name = "_isDirect";
+    fDir.type = "bool";
+    bbCls->fields["_isDirect"] = fDir;
+
+    bbCls->rebuildFieldIndexMap();
+
+    // Constructors
+    ClassConstructor ctor1;
+    ctor1.paramCount = 1;
+    ctor1.params = { "capacity" };
+    ctor1.isNative = true;
+    ctor1.nativeWrapper = [bbCls](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue();
+        TzdInstance* inst = args[0].instanceVal;
+        size_t cap = args.size() > 1 ? (size_t)args[1].lVal : 1024;
+        initByteBufferInstance(bbCls, inst, cap);
+        return TzdValue();
+    };
+    bbCls->constructors.push_back(ctor1);
+
+    ClassConstructor ctor0;
+    ctor0.paramCount = 0;
+    ctor0.params = {};
+    ctor0.isNative = true;
+    ctor0.nativeWrapper = [bbCls](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue();
+        TzdInstance* inst = args[0].instanceVal;
+        initByteBufferInstance(bbCls, inst, 1024);
+        return TzdValue();
+    };
+    bbCls->constructors.push_back(ctor0);
+
+    auto addMethod = [bbCls](const std::string& name, NativeWrapper wrapper) {
+        ClassMethod m;
+        m.name = name;
+        m.isStatic = false;
+        m.isNative = true;
+        m.nativeWrapper = wrapper;
+        bbCls->methods[name] = m;
+    };
+
+    auto addStatic = [bbCls](const std::string& name, NativeWrapper wrapper) {
+        ClassMethod m;
+        m.name = name;
+        m.isStatic = true;
+        m.isNative = true;
+        m.nativeWrapper = wrapper;
+        bbCls->methods[name] = m;
+    };
+
+    // Static Factory Methods
+    addStatic("allocate", [bbCls](const std::vector<TzdValue>& args) -> TzdValue {
+        size_t cap = !args.empty() ? (size_t)args[0].lVal : 1024;
+        TzdInstance* inst = TzdInstance::create(bbCls);
+        if (!inst) return TzdValue();
+        inst->retain();
+        initByteBufferInstance(bbCls, inst, cap);
+        return TzdValue(inst);
+    });
+
+    addStatic("fromHex", [bbCls](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty()) return TzdValue();
+        std::string hexStr = args[0].sVal;
+        std::string raw = hexDecodeInternal(hexStr);
+        TzdInstance* inst = TzdInstance::create(bbCls);
+        if (!inst) return TzdValue();
+        inst->retain();
+        initByteBufferInstance(bbCls, inst, raw.size());
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(inst, &cap);
+        if (ptr && !raw.empty()) {
+            memcpy(ptr, raw.data(), raw.size());
+        }
+        return TzdValue(inst);
+    });
+
+    // Instance Methods
+    addMethod("capacity", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(0LL);
+        size_t cap = 0;
+        getByteBufferPtr(args[0].instanceVal, &cap);
+        return TzdValue((long long)cap);
+    });
+
+    addMethod("size", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(0LL);
+        size_t cap = 0;
+        getByteBufferPtr(args[0].instanceVal, &cap);
+        return TzdValue((long long)cap);
+    });
+
+    addMethod("isDirect", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        TzdInstance* inst = args[0].instanceVal;
+        int dirIdx = inst->definition ? inst->definition->getFieldIndex("_isDirect") : -1;
+        if (dirIdx >= 0) return inst->getMemberByIndex(dirIdx);
+        return TzdValue(false);
+    });
+
+    addMethod("address", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(0LL);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        return TzdValue((long long)(uintptr_t)ptr);
+    });
+
+    addMethod("writeI8", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 1 <= cap) {
+            ptr[offset] = (uint8_t)args[2].lVal;
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readI8", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 1 <= cap) {
+            return TzdValue((int)(int8_t)ptr[offset]);
+        }
+        return TzdValue(0);
+    });
+
+    addMethod("writeI16", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 2 <= cap) {
+            int16_t v = (int16_t)args[2].lVal;
+            memcpy(ptr + offset, &v, 2);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readI16", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 2 <= cap) {
+            int16_t v = 0;
+            memcpy(&v, ptr + offset, 2);
+            return TzdValue((int)v);
+        }
+        return TzdValue(0);
+    });
+
+    addMethod("writeI32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 4 <= cap) {
+            int32_t v = (int32_t)args[2].lVal;
+            memcpy(ptr + offset, &v, 4);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readI32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 4 <= cap) {
+            int32_t v = 0;
+            memcpy(&v, ptr + offset, 4);
+            return TzdValue((int)v);
+        }
+        return TzdValue(0);
+    });
+
+    addMethod("writeI64", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 8 <= cap) {
+            int64_t v = (int64_t)args[2].lVal;
+            memcpy(ptr + offset, &v, 8);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readI64", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0LL);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 8 <= cap) {
+            int64_t v = 0;
+            memcpy(&v, ptr + offset, 8);
+            return TzdValue((long long)v);
+        }
+        return TzdValue(0LL);
+    });
+
+    addMethod("writeF32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 4 <= cap) {
+            float v = (float)args[2].dVal;
+            memcpy(ptr + offset, &v, 4);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readF32", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0.0);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 4 <= cap) {
+            float v = 0.0f;
+            memcpy(&v, ptr + offset, 4);
+            return TzdValue((double)v);
+        }
+        return TzdValue(0.0);
+    });
+
+    addMethod("writeF64", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 8 <= cap) {
+            double v = args[2].dVal;
+            memcpy(ptr + offset, &v, 8);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readF64", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 2 || args[0].type != TzdValue::INSTANCE) return TzdValue(0.0);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        if (ptr && offset + 8 <= cap) {
+            double v = 0.0;
+            memcpy(&v, ptr + offset, 8);
+            return TzdValue(v);
+        }
+        return TzdValue(0.0);
+    });
+
+    addMethod("writeString", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        const std::string& s = args[2].sVal;
+        if (ptr && offset + s.size() <= cap) {
+            memcpy(ptr + offset, s.data(), s.size());
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("readString", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.size() < 3 || args[0].type != TzdValue::INSTANCE) return TzdValue(std::string(""));
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        size_t offset = (size_t)args[1].lVal;
+        size_t len = (size_t)args[2].lVal;
+        if (ptr && offset + len <= cap) {
+            return TzdValue(std::string((char*)ptr + offset, len));
+        }
+        return TzdValue(std::string(""));
+    });
+
+    addMethod("fill", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        uint8_t b = args.size() > 1 ? (uint8_t)args[1].lVal : 0;
+        if (ptr && cap > 0) {
+            memset(ptr, b, cap);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("clear", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        if (ptr && cap > 0) {
+            memset(ptr, 0, cap);
+            return TzdValue(true);
+        }
+        return TzdValue(false);
+    });
+
+    addMethod("toHex", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(std::string(""));
+        size_t cap = 0;
+        uint8_t* ptr = getByteBufferPtr(args[0].instanceVal, &cap);
+        if (ptr && cap > 0) {
+            return TzdValue(hexEncodeInternal(std::string((char*)ptr, cap)));
+        }
+        return TzdValue(std::string(""));
+    });
+
+    addMethod("dispose", [](const std::vector<TzdValue>& args) -> TzdValue {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE) return TzdValue(false);
+        tzdOnRecycleByteBuffer(args[0].instanceVal);
+        return TzdValue(true);
+    });
+
+    TzdOopManager::registerClass(bbCls);
+    interp->setGlobalVariable("ByteBuffer", TzdValue(bbCls));
 }

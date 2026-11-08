@@ -104,6 +104,18 @@ public class TestTzdJava {
             System.out.println("    [PASS] TzdContext operations all succeeded\n");
         }
 
+        // 8. Hardware & High-Resolution NanoTime API
+        System.out.println("[8] Testing Hardware & NanoTime Java API...");
+        long t1 = TzdLanguage.nanoTime();
+        TzdLanguage.HardwareInfo hw = TzdLanguage.getHardwareInfo();
+        long t2 = TzdLanguage.nanoTime();
+        System.out.println("    Hardware Info: " + hw);
+        System.out.println("    NanoTime delta: " + (t2 - t1) + " ns");
+        if (hw == null || hw.logicalCores < 1 || hw.cpuBrand == null) {
+            throw new RuntimeException("HardwareInfo validation failed");
+        }
+        System.out.println("    [PASS] Hardware & NanoTime Java API succeeded\n");
+
         System.out.println("========================================================");
         System.out.println("  >>> All Tzd Java Interface tests PASSED! <<<");
         System.out.println("========================================================");
