@@ -322,6 +322,7 @@ struct TzdExtra {
     std::vector<std::string> paramTypes;
     std::string returnType;
     std::string declaringClass;
+    std::string declaredType;
     bool isVararg = false;
     TzdLangParser::BlockContext* funcBody = nullptr;
     using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
@@ -366,7 +367,14 @@ struct TzdValue {
     };
     Type type = NONE;
     std::string name = "";
-    std::string declaredType = "";
+
+    inline const std::string& getDeclaredType() const {
+        static const std::string s_empty = "";
+        return extra ? extra->declaredType : s_empty;
+    }
+    inline void setDeclaredType(const std::string& dt) {
+        if (!dt.empty()) ensureExtra().declaredType = dt;
+    }
 
     double dVal = 0.0;
     long long lVal = 0;

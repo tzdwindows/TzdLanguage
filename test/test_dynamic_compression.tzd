@@ -1,0 +1,66 @@
+print("=================================================");
+print("  TzdLanguage Dynamic Compression Verification   ");
+print("=================================================");
+
+class ItemRecord {
+    var int id;
+    var string name;
+    var ptr unused1;
+    var ptr unused2;
+    var ptr unused3;
+
+    ItemRecord(idx) {
+        this.id = idx;
+        this.name = "item_" + toString(idx);
+        this.unused1 = null;
+        this.unused2 = null;
+        this.unused3 = null;
+    }
+
+    fun getId() {
+        return this.id;
+    }
+
+    fun getName() {
+        return this.name;
+    }
+}
+
+var items = [];
+for (var i = 0; i < 50; i++) {
+    var it = new ItemRecord(i);
+    items = push(items, it);
+}
+
+print("Created " + toString(len(items)) + " ItemRecord instances.");
+var item10 = items[10];
+print("Sample item before compress: id=" + toString(item10.getId()) + ", name=" + item10.getName());
+
+var stats = Runtime.dynamicCompress();
+print("Dynamic Compression Result:");
+print("  Objects Scanned: " + toString(stats["scanned"]));
+print("  Instances Compressed: " + toString(stats["compressed"]));
+print("  Bytes Saved: " + toString(stats["saved"]));
+print("  Ratio: " + toString(stats["ratio"]) + "%");
+
+// Verify read works transparently after compression
+var item10_after = items[10];
+print("Sample item after compress: id=" + toString(item10_after.getId()) + ", name=" + item10_after.getName());
+if (item10_after.getId() == 10 && item10_after.getName() == "item_10") {
+    print("[PASS] Transparent reading from compressed instance succeeded!");
+} else {
+    print("[FAIL] Mismatch reading from compressed instance!");
+}
+
+// Verify write works (decompress-on-write)
+item10_after.name = "item_10_updated";
+print("Sample item after write (decompression): name=" + item10_after.getName());
+if (item10_after.getName() == "item_10_updated") {
+    print("[PASS] Transparent decompress-on-write succeeded!");
+} else {
+    print("[FAIL] Mismatch on decompress-on-write!");
+}
+
+print("=================================================");
+print("  Dynamic Compression Script Test Completed!     ");
+print("=================================================");

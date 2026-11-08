@@ -114,6 +114,7 @@ public:
 
     // --- Statistics ---
     size_t getTotalInstances() const;
+    void getRegisteredInstances(std::vector<TzdInstance*>& out) const;
     size_t getLastCollectedCount() const { return m_lastCollected; }
     size_t getYoungGenCount() const;
     size_t getTotalCollections() const { return m_totalCollections.load(); }

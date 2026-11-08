@@ -194,6 +194,7 @@ exit /B 0</Command>
     <ClCompile Include="src\TzdMemoryAsm.cpp" />
     <ClCompile Include="src\TzdDebugger.cpp" />
     <ClCompile Include="src\TzdStackTrace.cpp" />
+    <ClCompile Include="src\TzdDynamicCompressor.cpp" />
     <ClCompile Include="src\tzd_api.cpp" />
     <ClCompile Include="External\colunwind\src\capture.c" />
     <ClCompile Include="External\colunwind\src\unwind.c" />
@@ -268,6 +269,7 @@ exit /B 0</Command>
     <ClInclude Include="src\TzdMemoryAsm.h" />
     <ClInclude Include="src\TzdDebugger.h" />
     <ClInclude Include="src\TzdStackTrace.h" />
+    <ClInclude Include="src\TzdDynamicCompressor.h" />
     <ClInclude Include="Generated\TzdNetModule.h" />
     <ClInclude Include="Generated\TzdGlModule.h" />
     <ClInclude Include="Generated\TzdUiModule.h" />

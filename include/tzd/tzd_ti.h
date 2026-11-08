@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 typedef struct tzd_context tzd_context_t;
+typedef struct tzd_compression_stats_s tzd_compression_stats_t;
 
 /* ------------------------------------------------------------------------- */
 /* JVMTI-style Event Flags (Bitmask)                                         */
@@ -114,6 +115,11 @@ TZD_API int tzd_ti_retransform_class(tzd_ti_env_t* env, tzd_context_t* ctx,
  * buffers, arrays, maps, and AI tensor storage.
  */
 TZD_API int tzd_ti_get_object_size(tzd_ti_env_t* env, const void* object, size_t* out_size);
+
+/* Dynamic Compression TI API */
+TZD_API int tzd_ti_dynamic_compress(tzd_ti_env_t* env, tzd_compression_stats_t* stats);
+TZD_API int tzd_ti_compress_object(tzd_ti_env_t* env, const void* object, size_t* out_bytes_saved);
+TZD_API int tzd_ti_decompress_object(tzd_ti_env_t* env, const void* object);
 
 /* Trigger hooks programmatically (used internally by JIT and interpreter) */
 TZD_API void tzd_ti_notify_method_entry(tzd_context_t* ctx, const char* cls, const char* method, const char* file, int line);

@@ -143,6 +143,40 @@ int main() {
 
     std::cout << "    [PASS] Object Size API\n\n";
 
+    // 9. Dynamic Compression API (动态压缩技术)
+    std::cout << "[9] Testing Dynamic Compression API (tzd_dynamic_compress & tzd_compress_instance)...\n" << std::flush;
+    tzd_compression_stats_t c_stats = {0};
+    int comp_rc = tzd_dynamic_compress(tiCtx.getContext(), &c_stats);
+    assert(comp_rc == TZD_OK);
+    std::cout << "    Dynamic Compression executed successfully:\n";
+    std::cout << "      Objects Scanned:      " << c_stats.total_objects_scanned << "\n";
+    std::cout << "      Instances Compressed: " << c_stats.instances_compressed << "\n";
+    std::cout << "      Bytes Saved:          " << c_stats.bytes_saved << " bytes\n";
+    std::cout << "      Compression Ratio:    " << c_stats.compression_ratio << "%\n";
+
+    // Test C++ wrapper dynamicCompress()
+    auto cpp_stats = tiCtx.dynamicCompress();
+    std::cout << "    Via C++ wrapper dynamicCompress(): ratio = " << cpp_stats.compression_ratio << "%\n";
+
+    // Test single instance compression / decompression
+    assert(foundCount > 0);
+    size_t saved = 0;
+    int inst_comp_rc = tzd_compress_instance(objs[0], &saved);
+    assert(inst_comp_rc == TZD_OK);
+    size_t compSize = 0;
+    tzd_get_object_size(objs[0], &compSize);
+    std::cout << "    Compressed instance size: " << compSize << " bytes (was " << objSize << " bytes)\n";
+    assert(compSize <= objSize);
+
+    // Decompress instance
+    int de_rc = tzd_decompress_instance(objs[0]);
+    assert(de_rc == TZD_OK);
+    size_t decompSize = 0;
+    tzd_get_object_size(objs[0], &decompSize);
+    std::cout << "    Decompressed instance size: " << decompSize << " bytes\n";
+
+    std::cout << "    [PASS] Dynamic Compression API\n\n";
+
     std::cout << "========================================================\n";
     std::cout << "  >>> All Tzd C/C++ API tests PASSED successfully! <<<\n";
     std::cout << "========================================================\n";

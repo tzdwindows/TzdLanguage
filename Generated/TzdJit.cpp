@@ -3474,6 +3474,7 @@ extern "C"
         if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
         {
             TzdInstance *in = v->instanceVal;
+            if (in->isCompressed()) in->ensureDecompressed();
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
             {
                 const auto &fv = in->fieldValues[fieldIndex];
@@ -3493,6 +3494,7 @@ extern "C"
         if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
         {
             TzdInstance *in = v->instanceVal;
+            if (in->isCompressed()) in->ensureDecompressed();
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
             {
                 const auto &fv = in->fieldValues[fieldIndex];
@@ -3512,6 +3514,7 @@ extern "C"
         if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
         {
             TzdInstance *in = v->instanceVal;
+            if (in->isCompressed()) in->ensureDecompressed();
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
             {
                 in->fieldValues[fieldIndex].type = TzdValue::INT;
@@ -3527,6 +3530,7 @@ extern "C"
         if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
         {
             TzdInstance *in = v->instanceVal;
+            if (in->isCompressed()) in->ensureDecompressed();
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
             {
                 return &in->fieldValues[fieldIndex];
@@ -3541,6 +3545,7 @@ extern "C"
         if (v && v->type == TzdValue::INSTANCE && v->instanceVal)
         {
             TzdInstance *in = v->instanceVal;
+            if (in->isCompressed()) in->ensureDecompressed();
             if (fieldIndex >= 0 && (size_t)fieldIndex < in->fieldValues.size())
             {
                 in->fieldValues[fieldIndex].type = TzdValue::DOUBLE;
@@ -9983,9 +9988,9 @@ std::any TzdCompiler::visitAssignmentExpr(TzdLangParser::AssignmentExprContext *
         for (auto it = g_CurrentInterpreter->scopes.rbegin(); it != g_CurrentInterpreter->scopes.rend(); ++it)
         {
             auto fit = it->find(name);
-            if (fit != it->end() && !fit->second.declaredType.empty())
+            if (fit != it->end() && !fit->second.getDeclaredType().empty())
             {
-                expectedType = fit->second.declaredType;
+                expectedType = fit->second.getDeclaredType();
                 break;
             }
         }

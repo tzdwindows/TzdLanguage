@@ -28,7 +28,7 @@ TzdValue::TzdValue(TzdInstance *i) : type(INSTANCE), instanceVal(i)
 }
 
 TzdValue::TzdValue(const TzdValue &o)
-    : type(o.type), name(o.name), declaredType(o.declaredType),
+    : type(o.type), name(o.name),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(o.sVal), bVal(o.bVal), arrVal(o.arrVal), mapVal(o.mapVal),
       extra(o.extra), classDefVal(o.classDefVal),
@@ -48,7 +48,7 @@ TzdValue::TzdValue(const TzdValue &o)
 }
 
 TzdValue::TzdValue(TzdValue &&o) noexcept
-    : type(o.type), name(std::move(o.name)), declaredType(std::move(o.declaredType)),
+    : type(o.type), name(std::move(o.name)),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(std::move(o.sVal)), bVal(o.bVal), arrVal(std::move(o.arrVal)), mapVal(std::move(o.mapVal)),
       extra(std::move(o.extra)), classDefVal(o.classDefVal),
@@ -79,7 +79,6 @@ TzdValue &TzdValue::operator=(const TzdValue &o)
 
     type = o.type;
     name = o.name;
-    declaredType = o.declaredType;
     dVal = o.dVal;
     lVal = o.lVal;
     ulVal = o.ulVal;
@@ -123,7 +122,6 @@ TzdValue &TzdValue::operator=(TzdValue &&o) noexcept
 
     type = o.type;
     name = std::move(o.name);
-    declaredType = std::move(o.declaredType);
     dVal = o.dVal;
     lVal = o.lVal;
     ulVal = o.ulVal;
@@ -4393,15 +4391,15 @@ void TzdInterpreter::setVariable(const std::string &name, TzdValue val)
         if (it->count(name))
         {
             TzdValue &target = (*it)[name];
-            if (!target.declaredType.empty())
+            if (!target.getDeclaredType().empty())
             {
                 TzdValue converted;
-                if (!isTzdValueCompatibleWithType(target.declaredType, val, &converted))
+                if (!isTzdValueCompatibleWithType(target.getDeclaredType(), val, &converted))
                 {
-                    throw std::runtime_error("类型不匹配: 无法将 " + getTzdValueTypeName(val) + " 类型的值赋给 " + target.declaredType + " 类型的变量 '" + name + "'");
+                    throw std::runtime_error("类型不匹配: 无法将 " + getTzdValueTypeName(val) + " 类型的值赋给 " + target.getDeclaredType() + " 类型的变量 '" + name + "'");
                 }
                 val = converted;
-                val.declaredType = target.declaredType;
+                val.setDeclaredType(target.getDeclaredType());
             }
             target = val;
             return;
@@ -5606,7 +5604,7 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string &name,
                 callScope[params[i]] = TzdValue();
             if (i < paramTypes.size() && !paramTypes[i].empty())
             {
-                callScope[params[i]].declaredType = paramTypes[i];
+                callScope[params[i]].setDeclaredType(paramTypes[i]);
             }
         }
         if (!params.empty())
@@ -5629,7 +5627,7 @@ TzdValue TzdInterpreter::callScriptFunction(const std::string &name,
             callScope[params[i]] = args[i];
             if (i < paramTypes.size() && !paramTypes[i].empty())
             {
-                callScope[params[i]].declaredType = paramTypes[i];
+                callScope[params[i]].setDeclaredType(paramTypes[i]);
             }
         }
     }
@@ -6508,7 +6506,7 @@ std::any TzdInterpreter::visitVariableDeclaration(TzdLangParser::VariableDeclara
             else
                 val = TzdValue();
         }
-        val.declaredType = declaredType;
+        val.setDeclaredType(declaredType);
     }
     else
     {
@@ -6877,20 +6875,20 @@ std::any TzdInterpreter::visitAssignmentExpr(TzdLangParser::AssignmentExprContex
         if (it->count(id))
         {
             TzdValue &target = (*it)[id];
-            if (!target.declaredType.empty())
+            if (!target.getDeclaredType().empty())
             {
                 TzdValue converted;
-                if (!isTzdValueCompatibleWithType(target.declaredType, rightVal, &converted))
+                if (!isTzdValueCompatibleWithType(target.getDeclaredType(), rightVal, &converted))
                 {
-                    throw TzdRuntimeException("类型不匹配: 无法将 " + getTzdValueTypeName(rightVal) + " 类型的值赋给 " + target.declaredType + " 类型的变量 '" + id + "'", ctx->getStart());
+                    throw TzdRuntimeException("类型不匹配: 无法将 " + getTzdValueTypeName(rightVal) + " 类型的值赋给 " + target.getDeclaredType() + " 类型的变量 '" + id + "'", ctx->getStart());
                 }
                 TzdValue compoundRes = calculateCompound(target, converted);
                 TzdValue finalVal;
-                if (!isTzdValueCompatibleWithType(target.declaredType, compoundRes, &finalVal))
+                if (!isTzdValueCompatibleWithType(target.getDeclaredType(), compoundRes, &finalVal))
                 {
-                    throw TzdRuntimeException("类型不匹配: 无法将 " + getTzdValueTypeName(compoundRes) + " 类型的值赋给 " + target.declaredType + " 类型的变量 '" + id + "'", ctx->getStart());
+                    throw TzdRuntimeException("类型不匹配: 无法将 " + getTzdValueTypeName(compoundRes) + " 类型的值赋给 " + target.getDeclaredType() + " 类型的变量 '" + id + "'", ctx->getStart());
                 }
-                finalVal.declaredType = target.declaredType;
+                finalVal.setDeclaredType(target.getDeclaredType());
                 target = finalVal;
                 return finalVal;
             }
@@ -7582,7 +7580,7 @@ std::any TzdInterpreter::visitForEachStmt(TzdLangParser::ForEachStmtContext *ctx
                 throw TzdRuntimeException("forEach 循环变量 '" + varName + "' 类型不匹配: 期望 " + expectedType + "，实际为 " + getTzdValueTypeName(itemVal), ctx->getStart());
             }
             itemVal = converted;
-            itemVal.declaredType = expectedType;
+            itemVal.setDeclaredType(expectedType);
         }
 
         if (isOuterVar)

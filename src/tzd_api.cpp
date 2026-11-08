@@ -17,6 +17,7 @@
 #include "Generated/TzdPyTorch.h"
 #include "TzdCommandSystem.h"
 #include "TzdExeCompiler.h"
+#include "TzdDynamicCompressor.h"
 #include <colunwind/colunwind.h>
 
 #include <iostream>
@@ -858,6 +859,10 @@ static size_t compute_tzd_object_size(const void* rootPtr) {
         visited.insert(inst);
 
         size_t total = sizeof(TzdInstance);
+        if (inst->isCompressed()) {
+            total += inst->getCompressedMemoryBytes();
+            return total;
+        }
         total += inst->fieldValues.capacity() * sizeof(TzdValue);
 
         for (const auto& fVal : inst->fieldValues) {
@@ -974,6 +979,68 @@ TZD_API int tzd_get_object_size(const void* object_or_val, size_t* out_size) {
 
 TZD_API int tzd_ti_get_object_size(tzd_ti_env_t* env, const void* object, size_t* out_size) {
     return tzd_get_object_size(object, out_size);
+}
+
+TZD_API int tzd_dynamic_compress(tzd_context_t* ctx, tzd_compression_stats_t* stats) {
+    if (!stats) return TZD_ERR_INVALID_ARG;
+    TzdInterpreter* interp = ctx ? ctx->interp.get() : nullptr;
+    if (!interp) {
+        auto mainTcb = TzdThreading::TzdThreadManager::instance().getThread(1);
+        if (mainTcb) {
+            interp = mainTcb->childInterp;
+        }
+    }
+    auto s = TzdDynamicCompressor::instance().compressAll(interp);
+    stats->total_objects_scanned = s.totalObjectsScanned;
+    stats->instances_compressed = s.instancesCompressed;
+    stats->strings_deduped = s.stringsDeduped;
+    stats->containers_shrunk = s.containersShrunk;
+    stats->original_bytes = s.originalBytes;
+    stats->compressed_bytes = s.compressedBytes;
+    stats->bytes_saved = s.bytesSaved;
+    stats->compression_ratio = s.compressionRatio;
+    return TZD_OK;
+}
+
+TZD_API int tzd_set_dynamic_compression(tzd_context_t* ctx, int enabled) {
+    (void)ctx;
+    TzdDynamicCompressor::instance().setEnabled(enabled != 0);
+    return TZD_OK;
+}
+
+TZD_API int tzd_get_dynamic_compression(tzd_context_t* ctx, int* out_enabled) {
+    (void)ctx;
+    if (!out_enabled) return TZD_ERR_INVALID_ARG;
+    *out_enabled = TzdDynamicCompressor::instance().isEnabled() ? 1 : 0;
+    return TZD_OK;
+}
+
+TZD_API int tzd_compress_instance(tzd_object_t inst, size_t* out_bytes_saved) {
+    if (!inst) return TZD_ERR_INVALID_ARG;
+    size_t s = TzdDynamicCompressor::instance().compressInstance((TzdInstance*)inst);
+    if (out_bytes_saved) *out_bytes_saved = s;
+    return TZD_OK;
+}
+
+TZD_API int tzd_decompress_instance(tzd_object_t inst) {
+    if (!inst) return TZD_ERR_INVALID_ARG;
+    TzdDynamicCompressor::instance().decompressInstance((TzdInstance*)inst);
+    return TZD_OK;
+}
+
+TZD_API int tzd_ti_dynamic_compress(tzd_ti_env_t* env, tzd_compression_stats_t* stats) {
+    (void)env;
+    return tzd_dynamic_compress(nullptr, stats);
+}
+
+TZD_API int tzd_ti_compress_object(tzd_ti_env_t* env, const void* object, size_t* out_bytes_saved) {
+    (void)env;
+    return tzd_compress_instance((tzd_object_t)object, out_bytes_saved);
+}
+
+TZD_API int tzd_ti_decompress_object(tzd_ti_env_t* env, const void* object) {
+    (void)env;
+    return tzd_decompress_instance((tzd_object_t)object);
 }
 
 TZD_API int tzd_retransform_class(tzd_context_t* ctx, const char* class_name, const char* class_source) {
@@ -1723,6 +1790,48 @@ JNIEXPORT jlong JNICALL Java_com_tzd_TzdLanguage_getVariableSize(JNIEnv* env, jc
     env->ReleaseStringUTFChars(varName, cName);
     if (rc != TZD_OK) return 0;
     return (jlong)sz;
+}
+
+JNIEXPORT jobject JNICALL Java_com_tzd_TzdLanguage_dynamicCompress(JNIEnv* env, jclass cls, jlong handle) {
+    tzd_compression_stats_t stats = {0};
+    tzd_dynamic_compress((tzd_context_t*)(uintptr_t)handle, &stats);
+
+    jclass statsCls = env->FindClass("com/tzd/TzdLanguage$CompressionStats");
+    if (!statsCls) return nullptr;
+    jmethodID ctor = env->GetMethodID(statsCls, "<init>", "()V");
+    if (!ctor) return nullptr;
+    jobject obj = env->NewObject(statsCls, ctor);
+    if (!obj) return nullptr;
+
+    jfieldID fScanned = env->GetFieldID(statsCls, "totalObjectsScanned", "J");
+    jfieldID fCompressed = env->GetFieldID(statsCls, "instancesCompressed", "J");
+    jfieldID fDeduped = env->GetFieldID(statsCls, "stringsDeduped", "J");
+    jfieldID fContainers = env->GetFieldID(statsCls, "containersShrunk", "J");
+    jfieldID fOrig = env->GetFieldID(statsCls, "originalBytes", "J");
+    jfieldID fComp = env->GetFieldID(statsCls, "compressedBytes", "J");
+    jfieldID fSaved = env->GetFieldID(statsCls, "bytesSaved", "J");
+    jfieldID fRatio = env->GetFieldID(statsCls, "compressionRatio", "D");
+
+    if (fScanned) env->SetLongField(obj, fScanned, (jlong)stats.total_objects_scanned);
+    if (fCompressed) env->SetLongField(obj, fCompressed, (jlong)stats.instances_compressed);
+    if (fDeduped) env->SetLongField(obj, fDeduped, (jlong)stats.strings_deduped);
+    if (fContainers) env->SetLongField(obj, fContainers, (jlong)stats.containers_shrunk);
+    if (fOrig) env->SetLongField(obj, fOrig, (jlong)stats.original_bytes);
+    if (fComp) env->SetLongField(obj, fComp, (jlong)stats.compressed_bytes);
+    if (fSaved) env->SetLongField(obj, fSaved, (jlong)stats.bytes_saved);
+    if (fRatio) env->SetDoubleField(obj, fRatio, stats.compression_ratio);
+
+    return obj;
+}
+
+JNIEXPORT void JNICALL Java_com_tzd_TzdLanguage_setDynamicCompression(JNIEnv* env, jclass cls, jboolean enabled) {
+    tzd_set_dynamic_compression(nullptr, enabled ? 1 : 0);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_tzd_TzdLanguage_isDynamicCompressionEnabled(JNIEnv* env, jclass cls) {
+    int enabled = 0;
+    tzd_get_dynamic_compression(nullptr, &enabled);
+    return enabled ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

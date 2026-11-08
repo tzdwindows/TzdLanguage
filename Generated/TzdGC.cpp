@@ -350,6 +350,11 @@ size_t TzdGarbageCollector::getTotalInstances() const {
     return m_instances.size();
 }
 
+void TzdGarbageCollector::getRegisteredInstances(std::vector<TzdInstance*>& out) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    out.assign(m_instances.begin(), m_instances.end());
+}
+
 size_t TzdGarbageCollector::getYoungGenCount() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     size_t count = 0;

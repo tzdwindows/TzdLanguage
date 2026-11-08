@@ -69,6 +69,16 @@ public class TestTzdJava {
             if (dSize <= 0) throw new AssertionError("Expected positive object size for d");
             System.out.println("    [PASS] Object Size in Java succeeded\n");
 
+            // Dynamic Compression test in Java
+            System.out.println("[6] Testing Dynamic Compression from Java...");
+            TzdLanguage.CompressionStats stats = ctx.dynamicCompress();
+            System.out.println("    " + stats);
+            ctx.setDynamicCompression(true);
+            if (!ctx.isDynamicCompressionEnabled()) {
+                throw new AssertionError("Dynamic compression expected to be enabled");
+            }
+            System.out.println("    [PASS] Dynamic Compression in Java succeeded\n");
+
             System.out.println("    [PASS] TzdContext operations all succeeded\n");
         }
 

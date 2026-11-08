@@ -2125,7 +2125,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                         }
                         TzdValue popped;
                         pop(popped);
-                        converted.declaredType = expectedType;
+                        converted.setDeclaredType(expectedType);
                         moveValueFast(m_locals[localBase + slot], std::move(converted));
                     } else {
                         moveValueFast(m_locals[localBase + slot], std::move(m_stack[--m_sp]));
@@ -2652,7 +2652,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                                 std::string paramName = (i < (int)calleeFunc.localNames.size() && !calleeFunc.localNames[i].empty()) ? calleeFunc.localNames[i] : std::to_string(i);
                                 throw std::runtime_error("类型不匹配: 函数参数 '" + paramName + "' 期望类型 " + expectedType + "，但传入了 " + getTzdValueTypeName(argVal) + " 类型的值");
                             }
-                            converted.declaredType = expectedType;
+                            converted.setDeclaredType(expectedType);
                             argVal = std::move(converted);
                         }
                         moveValueFast(m_locals[newLocalBase + i], std::move(argVal));
@@ -2787,7 +2787,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                                         std::string paramName = (slot < (int)calleeFunc.localNames.size() && !calleeFunc.localNames[slot].empty()) ? calleeFunc.localNames[slot] : std::to_string(i);
                                         throw std::runtime_error("类型不匹配: 方法参数 '" + paramName + "' 期望类型 " + expectedType + "，但传入了 " + getTzdValueTypeName(argVal) + " 类型的值");
                                     }
-                                    converted.declaredType = expectedType;
+                                    converted.setDeclaredType(expectedType);
                                     argVal = std::move(converted);
                                 }
                                 moveValueFast(m_locals[newLocalBase + slot], std::move(argVal));

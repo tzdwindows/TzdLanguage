@@ -122,6 +122,7 @@ struct TzdInstancePool {
             TzdInstance* inst = slots[--count];
             inst->definition = def;
             inst->refCount.store(0, std::memory_order_relaxed);
+            inst->clearCompression();
             if (def) {
                 inst->fieldValues = def->defaultFieldValues;
             } else {
@@ -135,6 +136,7 @@ struct TzdInstancePool {
     inline void put(TzdInstance* inst) {
         if (!inst) return;
         inst->fieldValues.clear();
+        inst->clearCompression();
         inst->definition = nullptr;
         if (count < POOL_CAP) {
             slots[count++] = inst;
@@ -174,11 +176,95 @@ TzdInstance::TzdInstance(TzdClassDef* def) : definition(def) {
     }
 }
 
+struct TzdCompressedField {
+    uint16_t index;
+    TzdValue value;
+};
+
+struct TzdInstance::CompressedData {
+    std::vector<TzdCompressedField> fields;
+};
+
 TzdInstance::~TzdInstance() {
+    clearCompression();
     // Unregister from GC only if enabled
     if (TzdGarbageCollector::getInstance().isEnabled()) {
         TzdGarbageCollector::getInstance().unregisterInstance(this);
     }
+}
+
+void TzdInstance::clearCompression() {
+    if (m_compressed) {
+        delete m_compressed;
+        m_compressed = nullptr;
+    }
+    m_isCompressed = false;
+}
+
+size_t TzdInstance::getCompressedMemoryBytes() const {
+    if (!m_isCompressed || !m_compressed) return 0;
+    size_t sz = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdCompressedField);
+    for (const auto& entry : m_compressed->fields) {
+        if (!entry.value.sVal.empty()) sz += entry.value.sVal.capacity();
+        if (entry.value.fastBuf && entry.value.fastLen > 0) sz += (size_t)entry.value.fastLen * sizeof(double);
+    }
+    return sz;
+}
+
+size_t TzdInstance::compress() {
+    if (m_isCompressed) return 0;
+    if (fieldValues.empty()) {
+        m_isCompressed = true;
+        return 0;
+    }
+    size_t beforeBytes = fieldValues.capacity() * sizeof(TzdValue);
+    if (!m_compressed) {
+        m_compressed = new CompressedData();
+    }
+    m_compressed->fields.clear();
+    for (size_t i = 0; i < fieldValues.size(); ++i) {
+        bool isDefault = false;
+        if (definition && i < definition->defaultFieldValues.size()) {
+            const auto& defVal = definition->defaultFieldValues[i];
+            if (fieldValues[i].type == defVal.type &&
+                fieldValues[i].dVal == defVal.dVal &&
+                fieldValues[i].lVal == defVal.lVal &&
+                fieldValues[i].bVal == defVal.bVal &&
+                fieldValues[i].ptrVal == defVal.ptrVal &&
+                fieldValues[i].sVal == defVal.sVal) {
+                isDefault = true;
+            }
+        } else if (fieldValues[i].type == TzdValue::NONE) {
+            isDefault = true;
+        }
+        if (!isDefault) {
+            m_compressed->fields.push_back({ (uint16_t)i, std::move(fieldValues[i]) });
+        }
+    }
+    fieldValues.clear();
+    fieldValues.shrink_to_fit();
+    m_isCompressed = true;
+    m_compressed->fields.shrink_to_fit();
+    size_t afterBytes = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdCompressedField);
+    return (beforeBytes > afterBytes) ? (beforeBytes - afterBytes) : 0;
+}
+
+void TzdInstance::decompress() {
+    if (!m_isCompressed) return;
+    if (definition) {
+        fieldValues = definition->defaultFieldValues;
+    }
+    if (m_compressed) {
+        for (auto& entry : m_compressed->fields) {
+            if (entry.index >= fieldValues.size()) {
+                fieldValues.resize(entry.index + 1);
+            }
+            fieldValues[entry.index] = std::move(entry.value);
+        }
+        delete m_compressed;
+        m_compressed = nullptr;
+    }
+    m_isCompressed = false;
 }
 
 TzdClassDef::~TzdClassDef() {
@@ -201,6 +287,19 @@ struct TzdValue TzdInstance::getMember(TzdSelector selector, const std::string& 
         const TzdMemberSlot* slot = definition->tzdDispatch.find(selector);
         if (slot) {
             if (slot->fieldIndex >= 0) {
+                if (m_isCompressed) {
+                    if (m_compressed) {
+                        for (const auto& entry : m_compressed->fields) {
+                            if (entry.index == (uint16_t)slot->fieldIndex) {
+                                return entry.value;
+                            }
+                        }
+                    }
+                    if (definition && slot->fieldIndex < (int)definition->defaultFieldValues.size()) {
+                        return definition->defaultFieldValues[slot->fieldIndex];
+                    }
+                    return TzdValue();
+                }
                 if (slot->fieldIndex < (int)fieldValues.size()) {
                     return fieldValues[slot->fieldIndex];
                 }
@@ -265,6 +364,7 @@ struct TzdValue TzdInstance::getMember(const std::string& name) {
 
 TzdValue* TzdInstance::getMemberPtr(TzdSelector selector) {
     if (!definition || selector == 0) return nullptr;
+    if (m_isCompressed) ensureDecompressed();
     const TzdMemberSlot* slot = definition->tzdDispatch.find(selector);
     if (slot) {
         if (slot->fieldIndex >= 0 && slot->fieldIndex < (int)fieldValues.size()) {
@@ -573,6 +673,7 @@ bool isTzdValueCompatibleWithType(const std::string& expectedType, const TzdValu
 
 void TzdInstance::setMember(TzdSelector selector, const std::string& name, const struct TzdValue& val) {
     if (!definition) throw std::runtime_error("Instance definition is null");
+    if (m_isCompressed) ensureDecompressed();
     if (selector == 0) {
         if (!name.empty()) selector = tzdInternSelector(name);
     }
@@ -893,16 +994,29 @@ int TzdClassDef::getFieldIndex(const std::string& fieldName) const {
 // ============================================================================
 
 TzdValue* TzdInstance::getMemberPtrByIndex(int index) {
+    if (m_isCompressed) ensureDecompressed();
     if (index >= 0 && index < (int)fieldValues.size()) return &fieldValues[index];
     return nullptr;
 }
 
 TzdValue TzdInstance::getMemberByIndex(int index) {
+    if (m_isCompressed) {
+        if (m_compressed) {
+            for (const auto& entry : m_compressed->fields) {
+                if (entry.index == (uint16_t)index) return entry.value;
+            }
+        }
+        if (definition && index < (int)definition->defaultFieldValues.size()) {
+            return definition->defaultFieldValues[index];
+        }
+        return TzdValue();
+    }
     if (index >= 0 && index < (int)fieldValues.size()) return fieldValues[index];
     return TzdValue();
 }
 
 void TzdInstance::setMemberByIndex(int index, const TzdValue& val) {
+    if (m_isCompressed) ensureDecompressed();
     if (index >= 0 && index < (int)fieldValues.size() && definition) {
         TzdValue finalVal = val;
         if (index < (int)definition->fieldIndices.size()) {

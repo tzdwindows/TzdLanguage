@@ -128,6 +128,24 @@ public:
 
     std::vector<struct TzdValue> fieldValues;
 
+    // 动态压缩 (Dynamic Compression)
+    struct CompressedData;
+
+    bool isCompressed() const { return m_isCompressed; }
+    size_t compress();
+    void decompress();
+    inline void ensureDecompressed() {
+        if (m_isCompressed) decompress();
+    }
+    void clearCompression();
+    size_t getCompressedMemoryBytes() const;
+    CompressedData* getCompressedData() const { return m_compressed; }
+
+private:
+    bool m_isCompressed = false;
+    CompressedData* m_compressed = nullptr;
+
+public:
     static TzdInstance* create(TzdClassDef* def);
     static void recycle(TzdInstance* inst);
 

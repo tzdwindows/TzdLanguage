@@ -102,6 +102,19 @@ public class TzdContext implements AutoCloseable {
         return TzdLanguage.getVariableSize(handle, varName);
     }
 
+    public TzdLanguage.CompressionStats dynamicCompress() {
+        checkValid();
+        return TzdLanguage.dynamicCompress(handle);
+    }
+
+    public void setDynamicCompression(boolean enabled) {
+        TzdLanguage.setDynamicCompression(enabled);
+    }
+
+    public boolean isDynamicCompressionEnabled() {
+        return TzdLanguage.isDynamicCompressionEnabled();
+    }
+
     @Override
     public synchronized void close() {
         if (handle != 0) {

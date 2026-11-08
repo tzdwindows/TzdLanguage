@@ -215,6 +215,7 @@ set(TZD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdTools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdDebugger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdStackTrace.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdDynamicCompressor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdCommandSystem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdExeCompiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdNativeCodegen.cpp

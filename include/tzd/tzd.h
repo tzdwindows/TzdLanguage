@@ -177,6 +177,29 @@ TZD_API int      tzd_thread_detach(uint64_t thread_id);
 TZD_API int      tzd_thread_get_dump(char* out_buf, size_t out_buf_size);
 TZD_API int      tzd_thread_detect_deadlocks(char* out_buf, size_t out_buf_size);
 
+/* ========================================================================= */
+/* 9. Dynamic Compression API (动态压缩技术)                                 */
+/* ========================================================================= */
+typedef struct tzd_compression_stats_s {
+    size_t total_objects_scanned;
+    size_t instances_compressed;
+    size_t strings_deduped;
+    size_t containers_shrunk;
+    size_t original_bytes;
+    size_t compressed_bytes;
+    size_t bytes_saved;
+    double compression_ratio; /* Percentage: 0.0 to 100.0 */
+} tzd_compression_stats_t;
+
+/* Execute dynamic compression across active heap objects and scopes */
+TZD_API int tzd_dynamic_compress(tzd_context_t* ctx, tzd_compression_stats_t* stats);
+TZD_API int tzd_set_dynamic_compression(tzd_context_t* ctx, int enabled);
+TZD_API int tzd_get_dynamic_compression(tzd_context_t* ctx, int* out_enabled);
+
+/* Compress or decompress a specific instance object */
+TZD_API int tzd_compress_instance(tzd_object_t inst, size_t* out_bytes_saved);
+TZD_API int tzd_decompress_instance(tzd_object_t inst);
+
 #ifdef __cplusplus
 }
 #endif

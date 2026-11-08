@@ -82,6 +82,28 @@ public final class TzdLanguage {
     public static native long getObjectSize(long objectHandle);
     public static native long getVariableSize(long ctxHandle, String varName);
 
+    // Dynamic Compression (动态压缩技术)
+    public static class CompressionStats {
+        public long totalObjectsScanned;
+        public long instancesCompressed;
+        public long stringsDeduped;
+        public long containersShrunk;
+        public long originalBytes;
+        public long compressedBytes;
+        public long bytesSaved;
+        public double compressionRatio;
+
+        @Override
+        public String toString() {
+            return String.format("CompressionStats[scanned=%d, compressed=%d, saved=%d bytes (%.1f%%)]",
+                totalObjectsScanned, instancesCompressed, bytesSaved, compressionRatio);
+        }
+    }
+
+    public static native CompressionStats dynamicCompress(long ctxHandle);
+    public static native void setDynamicCompression(boolean enabled);
+    public static native boolean isDynamicCompressionEnabled();
+
     // Error Message
     public static native String getLastError();
 }

@@ -167,6 +167,25 @@ public:
         return sz;
     }
 
+    tzd_compression_stats_t dynamicCompress() {
+        tzd_compression_stats_t stats = {0};
+        int rc = tzd_dynamic_compress(ctx_, &stats);
+        if (rc != TZD_OK) {
+            throw TzdException(rc, "Dynamic compression failed");
+        }
+        return stats;
+    }
+
+    void setDynamicCompression(bool enabled) {
+        tzd_set_dynamic_compression(ctx_, enabled ? 1 : 0);
+    }
+
+    bool isDynamicCompressionEnabled() const {
+        int en = 0;
+        tzd_get_dynamic_compression(ctx_, &en);
+        return en != 0;
+    }
+
     tzd_context_t* getContext() const {
         return ctx_;
     }

@@ -63,6 +63,7 @@ namespace std
 
 #include "TzdInterpreter.h"
 #include "TzdOop.h"
+#include "../src/TzdDynamicCompressor.h"
 #include "TzdThreadManager.h"
 #ifdef WITH_LIBTORCH
 #include "TzdPyTorch.h"
@@ -452,6 +453,87 @@ void TzdNativeModule::regRuntime(TzdInterpreter *interp)
         return TzdValue(oss.str());
     };
     runtimeCls->methods["captureStackTrace"] = captureTrace;
+
+    ClassMethod dynamicCompressM;
+    dynamicCompressM.name = "dynamicCompress";
+    dynamicCompressM.isStatic = true;
+    dynamicCompressM.isNative = true;
+    dynamicCompressM.sourceFile = "native";
+    dynamicCompressM.nativeWrapper = [interp](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        (void)args;
+        auto s = TzdDynamicCompressor::instance().compressAll(interp);
+        std::unordered_map<std::string, TzdValue> res;
+        res["totalObjectsScanned"] = TzdValue((double)s.totalObjectsScanned);
+        res["scanned"] = TzdValue((double)s.totalObjectsScanned);
+        res["instancesCompressed"] = TzdValue((double)s.instancesCompressed);
+        res["compressed"] = TzdValue((double)s.instancesCompressed);
+        res["stringsDeduped"] = TzdValue((double)s.stringsDeduped);
+        res["containersShrunk"] = TzdValue((double)s.containersShrunk);
+        res["originalBytes"] = TzdValue((double)s.originalBytes);
+        res["compressedBytes"] = TzdValue((double)s.compressedBytes);
+        res["bytesSaved"] = TzdValue((double)s.bytesSaved);
+        res["saved"] = TzdValue((double)s.bytesSaved);
+        res["compressionRatio"] = TzdValue(s.compressionRatio);
+        res["ratio"] = TzdValue(s.compressionRatio);
+        return TzdValue(res);
+    };
+    runtimeCls->methods["dynamicCompress"] = dynamicCompressM;
+
+    ClassMethod setDynCompM;
+    setDynCompM.name = "setDynamicCompression";
+    setDynCompM.isStatic = true;
+    setDynCompM.isNative = true;
+    setDynCompM.sourceFile = "native";
+    setDynCompM.nativeWrapper = [](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        bool en = !args.empty() ? args[0].bVal : true;
+        TzdDynamicCompressor::instance().setEnabled(en);
+        return TzdValue(en);
+    };
+    runtimeCls->methods["setDynamicCompression"] = setDynCompM;
+
+    ClassMethod isDynCompM;
+    isDynCompM.name = "isDynamicCompressionEnabled";
+    isDynCompM.isStatic = true;
+    isDynCompM.isNative = true;
+    isDynCompM.sourceFile = "native";
+    isDynCompM.nativeWrapper = [](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        (void)args;
+        return TzdValue(TzdDynamicCompressor::instance().isEnabled());
+    };
+    runtimeCls->methods["isDynamicCompressionEnabled"] = isDynCompM;
+
+    ClassMethod compObjM;
+    compObjM.name = "compressObject";
+    compObjM.isStatic = true;
+    compObjM.isNative = true;
+    compObjM.sourceFile = "native";
+    compObjM.nativeWrapper = [](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        if (args.empty() || args[0].type != TzdValue::INSTANCE || !args[0].instanceVal) {
+            return TzdValue(0.0);
+        }
+        size_t saved = TzdDynamicCompressor::instance().compressInstance(args[0].instanceVal);
+        return TzdValue((double)saved);
+    };
+    runtimeCls->methods["compressObject"] = compObjM;
+
+    ClassMethod decompObjM;
+    decompObjM.name = "decompressObject";
+    decompObjM.isStatic = true;
+    decompObjM.isNative = true;
+    decompObjM.sourceFile = "native";
+    decompObjM.nativeWrapper = [](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        if (!args.empty() && args[0].type == TzdValue::INSTANCE && args[0].instanceVal) {
+            TzdDynamicCompressor::instance().decompressInstance(args[0].instanceVal);
+        }
+        return TzdValue(true);
+    };
+    runtimeCls->methods["decompressObject"] = decompObjM;
+
     TzdOopManager::registerClass(runtimeCls);
     interp->setGlobalVariable("Runtime", TzdValue(runtimeCls));
 }
