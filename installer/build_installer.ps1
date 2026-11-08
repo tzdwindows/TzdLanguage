@@ -2,7 +2,7 @@
 # TzdTools Installer One-Click Build Script
 # ==============================================================================
 param(
-    [string]$Version = "0.2.13"
+    [string]$Version = "0.2.14"
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,8 +58,10 @@ if (-not (Test-Path $StagingDir)) {
 }
 
 # Copy binary & runtime header
+$NativeRuntimeSrc = if (Test-Path (Join-Path $RepoRoot "src\TzdNativeRuntime.hpp")) { Join-Path $RepoRoot "src\TzdNativeRuntime.hpp" } else { Join-Path $RepoRoot "TzdNativeRuntime.hpp" }
 Sync-FileIncremental (Join-Path $ReleaseDir "TzdTools.exe") (Join-Path $StagingDir "TzdTools.exe") | Out-Null
-Sync-FileIncremental (Join-Path $RepoRoot "TzdNativeRuntime.hpp") (Join-Path $StagingDir "TzdNativeRuntime.hpp") | Out-Null
+Sync-FileIncremental (Join-Path $ReleaseDir "tzd.dll") (Join-Path $StagingDir "tzd.dll") | Out-Null
+Sync-FileIncremental $NativeRuntimeSrc (Join-Path $StagingDir "TzdNativeRuntime.hpp") | Out-Null
 
 # Copy stdlib
 $StdlibDir = Join-Path $RepoRoot "stdlib"
@@ -134,38 +136,70 @@ if (Test-Path $SetupExe) {
     throw "NSIS compilation failed to produce $SetupExe"
 }
 
-# 5. Build CPU Edition Installer if CPU staging directory exists
-if (Test-Path $CpuStagingDir) {
-    Write-Host "[4/5] Preparing and compressing CPU Edition payload..." -ForegroundColor Yellow
-    Sync-FileIncremental (Join-Path $ReleaseDir "TzdTools.exe") (Join-Path $CpuStagingDir "TzdTools.exe") | Out-Null
-    Sync-FileIncremental (Join-Path $RepoRoot "TzdNativeRuntime.hpp") (Join-Path $CpuStagingDir "TzdNativeRuntime.hpp") | Out-Null
-    if (Test-Path $StdlibDir) {
-        Copy-Item $StdlibDir (Join-Path $CpuStagingDir "stdlib") -Recurse -Force
-    }
+# 5. Build CPU Edition Installer
+Write-Host "[4/5] Preparing and compressing CPU Edition payload..." -ForegroundColor Yellow
+if (-not (Test-Path $CpuStagingDir)) {
+    New-Item -ItemType Directory -Path $CpuStagingDir -Force | Out-Null
+}
 
-    $PayloadCpu = Join-Path $InstallerDir "payload_cpu.7z"
-    Push-Location $CpuStagingDir
-    try {
-        if (Test-Path $PayloadCpu) {
-            & $SevenZip u -y -mx=3 $PayloadCpu "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" | Out-Null
-        } else {
-            & $SevenZip a -y -mx=3 $PayloadCpu "*" | Out-Null
-        }
-    } finally {
-        Pop-Location
-    }
-    $CpuPayloadSize = (Get-Item $PayloadCpu).Length / 1MB
-    Write-Host "  -> CPU Payload compressed: $([Math]::Round($CpuPayloadSize, 1)) MB" -ForegroundColor Green
+Sync-FileIncremental (Join-Path $ReleaseDir "TzdTools.exe") (Join-Path $CpuStagingDir "TzdTools.exe") | Out-Null
+Sync-FileIncremental (Join-Path $ReleaseDir "tzd.dll") (Join-Path $CpuStagingDir "tzd.dll") | Out-Null
+Sync-FileIncremental $NativeRuntimeSrc (Join-Path $CpuStagingDir "TzdNativeRuntime.hpp") | Out-Null
+if (Test-Path $StdlibDir) {
+    Copy-Item $StdlibDir (Join-Path $CpuStagingDir "stdlib") -Recurse -Force
+}
+if (Test-Path (Join-Path $RepoRoot "include")) {
+    Copy-Item (Join-Path $RepoRoot "include") (Join-Path $CpuStagingDir "include") -Recurse -Force
+}
+if (Test-Path (Join-Path $DistDir "lib")) {
+    Copy-Item (Join-Path $DistDir "lib") (Join-Path $CpuStagingDir "lib") -Recurse -Force
+}
+if (Test-Path (Join-Path $RepoRoot "licenses")) {
+    Copy-Item (Join-Path $RepoRoot "licenses") (Join-Path $CpuStagingDir "licenses") -Recurse -Force
+}
 
-    Write-Host "[5/5] Compiling NSIS Windows Installer (CPU Edition)..." -ForegroundColor Yellow
-    $NsiCpuScript = Join-Path $InstallerDir "TzdTools_Installer_CPU.nsi"
-    if (Test-Path $NsiCpuScript) {
-        & $MakeNSIS $NsiCpuScript
-        $SetupCpuExe = Join-Path $DistDir "TzdTools_Setup_v${Version}_CPU.exe"
-        if (Test-Path $SetupCpuExe) {
-            $SetupCpuSize = (Get-Item $SetupCpuExe).Length / 1MB
-            Write-Host "  -> CPU Installer generated: $SetupCpuExe ($([Math]::Round($SetupCpuSize, 1)) MB)" -ForegroundColor Green
+$ExcludeGpuPatterns = @("torch_cuda.dll", "cublas*", "cudnn*", "cufft*", "curand*", "cusolver*", "cusparse*", "nvJitLink*")
+Get-ChildItem -Path $ReleaseDir -Filter "*.dll" | ForEach-Object {
+    $dllName = $_.Name
+    $isGpu = $false
+    foreach ($pat in $ExcludeGpuPatterns) {
+        if ($dllName -like $pat) {
+            $isGpu = $true
+            break
         }
+    }
+    if (-not $isGpu) {
+        Sync-FileIncremental $_.FullName (Join-Path $CpuStagingDir $dllName) | Out-Null
+    }
+}
+
+$TzdCmdCpu = Join-Path $CpuStagingDir "tzd.cmd"
+"@echo off`r`nrem TzdLang CLI Launcher`r`n`"%~dp0TzdTools.exe`" %*`r`n" | Set-Content -Path $TzdCmdCpu -Encoding ASCII
+Copy-Item (Join-Path $InstallerDir "setup_env.cmd") $CpuStagingDir -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $InstallerDir "uninstall.cmd") $CpuStagingDir -Force -ErrorAction SilentlyContinue
+
+$PayloadCpu = Join-Path $InstallerDir "payload_cpu.7z"
+Push-Location $CpuStagingDir
+try {
+    if (Test-Path $PayloadCpu) {
+        & $SevenZip u -y -mx=3 $PayloadCpu "TzdTools.exe" "TzdNativeRuntime.hpp" "stdlib" "tzd.dll" "include" "lib" "licenses" | Out-Null
+    } else {
+        & $SevenZip a -y -mx=3 $PayloadCpu "*" | Out-Null
+    }
+} finally {
+    Pop-Location
+}
+$CpuPayloadSize = (Get-Item $PayloadCpu).Length / 1MB
+Write-Host "  -> CPU Payload compressed: $([Math]::Round($CpuPayloadSize, 1)) MB" -ForegroundColor Green
+
+Write-Host "[5/5] Compiling NSIS Windows Installer (CPU Edition)..." -ForegroundColor Yellow
+$NsiCpuScript = Join-Path $InstallerDir "TzdTools_Installer_CPU.nsi"
+if (Test-Path $NsiCpuScript) {
+    & $MakeNSIS $NsiCpuScript
+    $SetupCpuExe = Join-Path $DistDir "TzdTools_Setup_v${Version}_CPU.exe"
+    if (Test-Path $SetupCpuExe) {
+        $SetupCpuSize = (Get-Item $SetupCpuExe).Length / 1MB
+        Write-Host "  -> CPU Installer generated: $SetupCpuExe ($([Math]::Round($SetupCpuSize, 1)) MB)" -ForegroundColor Green
     }
 }
 

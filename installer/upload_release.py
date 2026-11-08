@@ -12,8 +12,8 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-TAG = "v0.2.13"
-RELEASE_NAME = "TzdTools v0.2.13 - 核心动态库解耦 (tzd.dll)、C/C++ 原生 SDK、JVMTI 调试接口、TNI/Java 绑定与线程管理"
+TAG = "v0.2.14"
+RELEASE_NAME = "TzdTools v0.2.14 - 极致动态内存压缩、全套原生系统模块 (Hardware/Benchmark/Encoding/ByteBuffer) 与双架构发行版"
 REPO_OWNER = "tzdwindows"
 REPO_NAME = "TzdLanguage"
 PROXY_CANDIDATES = [
@@ -85,50 +85,39 @@ except urllib.error.HTTPError as e:
     if e.code == 404:
         print(f"  -> Release {TAG} does not exist yet. Creating...")
         create_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
-        body_text = """## 🚀 TzdTools v0.2.13 发布说明
+        body_text = """## 🚀 TzdTools v0.2.14 发布说明
 
 ### 💎 核心亮点
 
-1. **核心运行时动态库解耦 (`tzd.dll` + `tzd.lib`)**：
-   - 将 TzdLanguage 解释器、LLVM JIT 编译器、GC 垃圾回收器、NTT 大数运算引擎与 LibTorch/CUDA 深度学习运行时彻底解耦封装为独立的动态链接库 `tzd.dll` 与导入库 `tzd.lib`
-   - CLI 宿主 `TzdTools.exe` 重构为轻量级加载器，仅依赖 `tzd.dll`
-   - 提供工业级 C/C++ 头文件：`include/tzd/tzd.h` (纯 C API), `include/tzd/tzd.hpp` (现代 RAII C++ API), `include/tzd/tzd_export.h`
+1. **TzdValue 内存对象极致动态压缩 (Dynamic Payload Compression, DPC)**：
+   - 彻底优化值对象结构，基础内存占用从 608 字节极致压缩至仅 48 字节（**缩减超 92%**），突破理论内存布局极限
+   - 引入动态压缩引擎：空闲字段紧凑化、标量/布尔就地存储、实例动态解包与按需写时解压（Copy-On-Write Decompression）
+   - 引入动态压缩生命周期事件与对象观测探针机制（`tzd_ti_set_compression_event_callback`），全透明监控压缩前后对象与堆内存变化
 
-2. **JVMTI 风格高性能调试与观测接口 (`tzd_ti.h`)**：
-   - 零性能损耗探针机制（未注册回调时分支开销为 0）
-   - 支持方法进入/退出事件钩子（Method Entry / Exit Callbacks）
-   - 支持线程生命周期事件通知（Thread Start / Thread End）
-   - 新增类对象反射与全堆枚举：`tzd_ti_get_objects_by_class(const char* class_name)`，快速排查内存占用与活跃实例
-   - 支持异常捕获与抛出事件监听（Exception Throw / Catch）
+2. **全套工业级原生系统模块 (Native Built-in Modules)**：
+   - **`Hardware` 模块**：CPU 品牌型号识别、物理/逻辑核心数检测、AVX2/AVX512 指令集支持检测、物理内存总量/进程物理内存与虚拟内存实时监控、GPU 设备数量与显存监控
+   - **`Benchmark` 模块**：纳秒级高精度计时（`Benchmark.nanoTime()`）、微秒计时、自动化代码块耗时基准评测（`Benchmark.measure`）
+   - **`Encoding` 模块**：高效 Base64 编解码、Hex 十六进制编解码、CRC-32 与 Adler-32 校验和快速计算
+   - **`ByteBuffer` 模块**：高性能直接堆外字节缓冲区，提供对 I8/I16/I32/I64/Float/Double 及 UTF-8 字符串的原生读写，支持游标定位、切片与容量管理
 
-3. **类 JNI 原生接口 TNI 与官方 Java 绑定 (`tzd_tni.h` & `com.tzd.*`)**：
-   - 提供完整的 TNI (Tzd Native Interface) 机制，支持原生 C/C++ 与宿主双向互调
-   - 官方 Java 语言绑定 `tzd-java-sdk.jar` (`com.tzd.TzdVM`, `com.tzd.TzdInterpreter`, `com.tzd.TzdValue`)，Java 应用可无缝嵌入 TzdLanguage 执行复杂脚本与 AI 计算
+3. **类 JNI 原生接口 TNI 与官方 Java 绑定全面升级**：
+   - TNI 导出直接字节缓冲区操作（`NewDirectByteBuffer`, `GetDirectBufferAddress`, `GetDirectBufferCapacity`）与全局/局部引用管理
+   - 官方 Java 绑定 `tzd-java-sdk.jar` 全面升级，支持从 Java 访问 `Hardware` 硬件信息、`Benchmark` 高精度纳秒计时器、类热重载（`retransformClass`）及直接字节流互操作
 
-4. **高级线程管理系统 API (`tzd_thread_*` & `tzd::ThreadManager`)**：
-   - 线程全量堆栈快照追踪与转储（`tzd_thread_dump_all` / `dumpAllStackTraces`）
-   - 自动化死锁检测算法（`tzd_thread_detect_deadlocks` / `detectDeadlocks`）
-   - 线程审计日志管理与安全挂起/恢复控制（`tzd_thread_pause` / `tzd_thread_resume`）
-   - 修复解释器销毁时的线程注册悬空指针异常，确保线程生命周期安全
+4. **双架构发行版（GPU 完整版 + CPU 纯享版）**：
+   - **GPU 旗舰版** (`TzdTools_Setup_v0.2.14.exe`)：内置全套 CUDA 12.6 与 LibTorch 深度学习运行时，开箱即用支持多卡 GPU 神经网络训练与推理、NTT 大数运算
+   - **CPU 纯享版** (`TzdTools_Setup_v0.2.14_CPU.exe`)：极致轻量（~80 MB 安装包），免去 Gigabytes 级别的 CUDA 依赖，极速下载安装，专为 CPU 运算与标准脚本开发打造
 
-5. **JIT 编译与神经网络模块参数绑定修复**：
-   - 修复 PyTorch `Sequential` 模块 `registerModule` 在 JIT 编译时由于 Map 类型到指针类型转换导致的 Module verification failed 异常
-   - 全面验证多卡与单卡 GPU 神经网络端到端训练与推理（`test_gpu_multi_card_training_and_inference.tzd`）
-
-6. **标准化 SDK 分发构建流水线**：
-   - 自动化打包流水线 `scripts/package_dist.bat`，包含标准清晰的工程分发目录：
-     - `bin/`：包含可执行文件 `TzdTools.exe`、核心动态库 `tzd.dll`、运行依赖与标准库 `stdlib/`
-     - `include/`：完整 C/C++ 对外头文件（`tzd.h`, `tzd.hpp`, `tzd_ti.h`, `tzd_tni.h`, `tzd_export.h`）
-     - `lib/`：编译导入库 `tzd.lib`
-     - `libs/`：外部依赖二进制包
-     - `licenses/`：第三方开源软件授权许可文件
-   - 支持一键打包 Windows 安装程序 `TzdTools_Setup_v0.2.13.exe` 与极简便携 SDK `TzdSDK-v0.2.13-windows-x64.zip`
+5. **标准化轻量 SDK 与 VS Code 生态**：
+   - 便携 SDK 压缩包 `TzdSDK-v0.2.14-windows-x64.zip`：包含 C/C++ 核心头文件、导入库 `tzd.lib`、动态库 `tzd.dll`、Java SDK `tzd-java-sdk.jar` 及许可证
+   - 官方 VS Code 扩展 `tzdlang-0.2.21.vsix`：语法高亮、LSP 代码补全与 DAP 调试器支持
 
 ---
 
 ### 📦 资产列表 (Release Assets)
-- **TzdTools_Setup_v0.2.13.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 完整安装包 (1.4 GB)
-- **TzdSDK-v0.2.13-windows-x64.zip**：面向 C/C++ 及 Java 开发者的高性能轻量 SDK（包含头文件、`tzd.lib`、`tzd.dll`、`tzd-java-sdk.jar` 及许可证）(16 MB)
+- **TzdTools_Setup_v0.2.14.exe**：包含全套 CUDA 12.6 运行库、LibTorch GPU 运行时、编译器的 Windows 完整安装包 (~1.4 GB)
+- **TzdTools_Setup_v0.2.14_CPU.exe**：轻量级 CPU 纯享版 Windows 安装包 (~80 MB)
+- **TzdSDK-v0.2.14-windows-x64.zip**：面向 C/C++ 及 Java 开发者的高性能轻量 SDK (头文件、`tzd.lib`、`tzd.dll`、`tzd-java-sdk.jar`)
 - **tzdlang-0.2.21.vsix**：VS Code 官方语言扩展（语法高亮、LSP 智能感知、DAP 调试器）
 """
         payload = json.dumps({
@@ -158,13 +147,18 @@ assets = [
         "type": "application/octet-stream"
     },
     {
-        "name": "TzdSDK-v0.2.13-windows-x64.zip",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdSDK-v0.2.13-windows-x64.zip"),
+        "name": "TzdSDK-v0.2.14-windows-x64.zip",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdSDK-v0.2.14-windows-x64.zip"),
         "type": "application/zip"
     },
     {
-        "name": "TzdTools_Setup_v0.2.13.exe",
-        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.13.exe"),
+        "name": "TzdTools_Setup_v0.2.14.exe",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.14.exe"),
+        "type": "application/vnd.microsoft.portable-executable"
+    },
+    {
+        "name": "TzdTools_Setup_v0.2.14_CPU.exe",
+        "path": os.path.join(REPO_ROOT, "dist", "TzdTools_Setup_v0.2.14_CPU.exe"),
         "type": "application/vnd.microsoft.portable-executable"
     }
 ]

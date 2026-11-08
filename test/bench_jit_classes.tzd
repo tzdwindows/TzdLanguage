@@ -128,4 +128,3 @@ print("Rate: " + toFixed(1000000 / (elapsed / 1000.0), 0) + " iter/sec");
 print("");
 
 print("=== Benchmark Complete ===");
-exit;
