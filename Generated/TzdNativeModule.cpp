@@ -534,6 +534,46 @@ void TzdNativeModule::regRuntime(TzdInterpreter *interp)
     };
     runtimeCls->methods["decompressObject"] = decompObjM;
 
+    ClassMethod setCompListenerM;
+    setCompListenerM.name = "setCompressionListener";
+    setCompListenerM.isStatic = true;
+    setCompListenerM.isNative = true;
+    setCompListenerM.sourceFile = "native";
+    setCompListenerM.nativeWrapper = [interp](const std::vector<TzdValue> &args) -> TzdValue
+    {
+        if (args.empty()) return TzdValue(false);
+        TzdValue callback = args[0];
+        TzdDynamicCompressor::instance().addListener([interp, callback](const TzdCompressionEventInfo& evt) {
+            std::unordered_map<std::string, TzdValue> evtMap;
+            switch (evt.type) {
+                case TzdCompressionEventType::START: evtMap["type"] = TzdValue("start"); break;
+                case TzdCompressionEventType::FINISH: evtMap["type"] = TzdValue("finish"); break;
+                case TzdCompressionEventType::OBJECT_COMPRESSED: evtMap["type"] = TzdValue("object_compressed"); break;
+                case TzdCompressionEventType::OBJECT_DECOMPRESSED: evtMap["type"] = TzdValue("object_decompressed"); break;
+            }
+            evtMap["className"] = TzdValue(evt.className);
+            evtMap["originalBytes"] = TzdValue((double)evt.originalBytes);
+            evtMap["compressedBytes"] = TzdValue((double)evt.compressedBytes);
+            evtMap["bytesSaved"] = TzdValue((double)evt.bytesSaved);
+            evtMap["saved"] = TzdValue((double)evt.bytesSaved);
+            evtMap["nonDefaultFields"] = TzdValue((double)evt.nonDefaultFields);
+            if (evt.type == TzdCompressionEventType::FINISH) {
+                std::unordered_map<std::string, TzdValue> sMap;
+                sMap["scanned"] = TzdValue((double)evt.stats.totalObjectsScanned);
+                sMap["compressed"] = TzdValue((double)evt.stats.instancesCompressed);
+                sMap["saved"] = TzdValue((double)evt.stats.bytesSaved);
+                sMap["ratio"] = TzdValue(evt.stats.compressionRatio);
+                evtMap["stats"] = TzdValue(sMap);
+            }
+            try {
+                interp->callFunction(callback, { TzdValue(evtMap) });
+            } catch (...) {}
+        });
+        return TzdValue(true);
+    };
+    runtimeCls->methods["setCompressionListener"] = setCompListenerM;
+    runtimeCls->methods["onDynamicCompression"] = setCompListenerM;
+
     TzdOopManager::registerClass(runtimeCls);
     interp->setGlobalVariable("Runtime", TzdValue(runtimeCls));
 }

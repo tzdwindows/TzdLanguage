@@ -140,6 +140,7 @@ public:
     void clearCompression();
     size_t getCompressedMemoryBytes() const;
     CompressedData* getCompressedData() const { return m_compressed; }
+    void gcMarkCompressedFields(const std::function<void(const struct TzdValue&)>& marker) const;
 
 private:
     bool m_isCompressed = false;

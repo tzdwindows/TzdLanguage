@@ -79,6 +79,28 @@ public class TestTzdJava {
             }
             System.out.println("    [PASS] Dynamic Compression in Java succeeded\n");
 
+            // Dynamic Compression Events in Java
+            System.out.println("[7] Testing Dynamic Compression Events in Java...");
+            final int[] eventCount = new int[4]; // 0: start, 1: finish, 2: compressed, 3: decompressed
+            ctx.setCompressionEventListener(new TzdLanguage.CompressionEventListener() {
+                @Override
+                public void onCompressionEvent(TzdLanguage.CompressionEvent event) {
+                    if (event.type == TzdLanguage.CompressionEventType.START) eventCount[0]++;
+                    else if (event.type == TzdLanguage.CompressionEventType.FINISH) eventCount[1]++;
+                    else if (event.type == TzdLanguage.CompressionEventType.OBJECT_COMPRESSED) eventCount[2]++;
+                    else if (event.type == TzdLanguage.CompressionEventType.OBJECT_DECOMPRESSED) eventCount[3]++;
+                }
+            });
+
+            ctx.eval("class Session { var string user; var int token; var ptr extra; Session(u, t) { this.user = u; this.token = t; } }");
+            ctx.eval("var s1 = new Session(\"admin\", 1001); var s2 = new Session(\"guest\", 1002);");
+            ctx.dynamicCompress();
+            if (eventCount[0] < 1 || eventCount[1] < 1) {
+                throw new AssertionError("Expected START and FINISH compression events");
+            }
+            System.out.println("    Captured Java compression events: start=" + eventCount[0] + ", finish=" + eventCount[1] + ", objects=" + eventCount[2]);
+            System.out.println("    [PASS] Dynamic Compression Events in Java succeeded\n");
+
             System.out.println("    [PASS] TzdContext operations all succeeded\n");
         }
 

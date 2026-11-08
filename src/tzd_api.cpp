@@ -45,11 +45,14 @@ static thread_local std::string g_lastError;
 static bool g_globalJitEnabled = true;
 static bool g_silentMode = false;
 static std::vector<std::string> g_globalIncludePaths;
+static thread_local tzd_context_t* tl_current_context = nullptr;
 
 struct tzd_context {
     std::unique_ptr<TzdInterpreter> interp;
     std::string lastError;
     std::string lastResult;
+    tzd_compression_listener_t compressionListener = nullptr;
+    void* compressionUserData = nullptr;
 
     tzd_context() {
         interp = std::make_unique<TzdInterpreter>();
@@ -981,8 +984,131 @@ TZD_API int tzd_ti_get_object_size(tzd_ti_env_t* env, const void* object, size_t
     return tzd_get_object_size(object, out_size);
 }
 
+static JavaVM* g_javaVm = nullptr;
+static jobject g_javaCompressionListener = nullptr;
+
+static void ensureCompressionBridgeInitialized() {
+    static std::once_flag s_bridge_flag;
+    std::call_once(s_bridge_flag, []() {
+        TzdDynamicCompressor::instance().addListener([](const TzdCompressionEventInfo& info) {
+            uint32_t mask = g_tzd_ti_event_mask.load(std::memory_order_relaxed);
+            tzd_context_t* ctx = tl_current_context;
+
+            // 1. Tool Interface (TI) callbacks
+            if ((mask & TZD_TI_EVENT_DYNAMIC_COMPRESSION_START) && info.type == TzdCompressionEventType::START && g_tzd_ti_callbacks.on_dynamic_compression_start) {
+                g_tzd_ti_callbacks.on_dynamic_compression_start(ctx);
+            }
+            if ((mask & TZD_TI_EVENT_DYNAMIC_COMPRESSION_FINISH) && info.type == TzdCompressionEventType::FINISH && g_tzd_ti_callbacks.on_dynamic_compression_finish) {
+                tzd_compression_stats_t c_stats = {
+                    info.stats.totalObjectsScanned,
+                    info.stats.instancesCompressed,
+                    info.stats.stringsDeduped,
+                    info.stats.containersShrunk,
+                    info.stats.originalBytes,
+                    info.stats.compressedBytes,
+                    info.stats.bytesSaved,
+                    info.stats.compressionRatio
+                };
+                g_tzd_ti_callbacks.on_dynamic_compression_finish(ctx, &c_stats);
+            }
+            if ((mask & TZD_TI_EVENT_OBJECT_COMPRESSED) && info.type == TzdCompressionEventType::OBJECT_COMPRESSED && g_tzd_ti_callbacks.on_object_compressed) {
+                g_tzd_ti_callbacks.on_object_compressed(ctx, info.instance, info.className.c_str(), info.originalBytes, info.compressedBytes, info.bytesSaved);
+            }
+            if ((mask & TZD_TI_EVENT_OBJECT_DECOMPRESSED) && info.type == TzdCompressionEventType::OBJECT_DECOMPRESSED && g_tzd_ti_callbacks.on_object_decompressed) {
+                g_tzd_ti_callbacks.on_object_decompressed(ctx, info.instance, info.className.c_str());
+            }
+
+            // 2. Context-specific listener
+            if (ctx && ctx->compressionListener) {
+                tzd_compression_stats_t c_stats = {
+                    info.stats.totalObjectsScanned,
+                    info.stats.instancesCompressed,
+                    info.stats.stringsDeduped,
+                    info.stats.containersShrunk,
+                    info.stats.originalBytes,
+                    info.stats.compressedBytes,
+                    info.stats.bytesSaved,
+                    info.stats.compressionRatio
+                };
+                tzd_compression_event_t evt;
+                evt.type = (tzd_compression_event_type_t)(int)info.type;
+                evt.instance = info.instance;
+                evt.class_name = info.className.c_str();
+                evt.original_bytes = info.originalBytes;
+                evt.compressed_bytes = info.compressedBytes;
+                evt.bytes_saved = info.bytesSaved;
+                evt.non_default_fields = info.nonDefaultFields;
+                evt.stats = &c_stats;
+                ctx->compressionListener(ctx, &evt, ctx->compressionUserData);
+            }
+
+            // 3. Java listener
+            if (g_javaCompressionListener && g_javaVm) {
+                JNIEnv* jenv = nullptr;
+                bool attached = false;
+                jint getEnvRes = g_javaVm->GetEnv((void**)&jenv, JNI_VERSION_1_8);
+                if (getEnvRes == JNI_EDETACHED) {
+                    if (g_javaVm->AttachCurrentThread((void**)&jenv, nullptr) == 0) {
+                        attached = true;
+                    }
+                }
+                if (jenv) {
+                    jclass evtCls = jenv->FindClass("com/tzd/TzdLanguage$CompressionEvent");
+                    if (evtCls) {
+                        jmethodID ctor = jenv->GetMethodID(evtCls, "<init>", "()V");
+                        jobject evtObj = jenv->NewObject(evtCls, ctor);
+
+                        jclass enumCls = jenv->FindClass("com/tzd/TzdLanguage$CompressionEventType");
+                        jmethodID fromIdM = jenv->GetStaticMethodID(enumCls, "fromId", "(I)Lcom/tzd/TzdLanguage$CompressionEventType;");
+                        jobject typeEnum = jenv->CallStaticObjectMethod(enumCls, fromIdM, (jint)info.type);
+
+                        jfieldID fType = jenv->GetFieldID(evtCls, "type", "Lcom/tzd/TzdLanguage$CompressionEventType;");
+                        jfieldID fAddr = jenv->GetFieldID(evtCls, "instanceAddress", "J");
+                        jfieldID fClass = jenv->GetFieldID(evtCls, "className", "Ljava/lang/String;");
+                        jfieldID fOrig = jenv->GetFieldID(evtCls, "originalBytes", "J");
+                        jfieldID fComp = jenv->GetFieldID(evtCls, "compressedBytes", "J");
+                        jfieldID fSaved = jenv->GetFieldID(evtCls, "bytesSaved", "J");
+                        jfieldID fFields = jenv->GetFieldID(evtCls, "nonDefaultFields", "J");
+
+                        if (fType) jenv->SetObjectField(evtObj, fType, typeEnum);
+                        if (fAddr) jenv->SetLongField(evtObj, fAddr, (jlong)(uintptr_t)info.instance);
+                        if (fClass) jenv->SetObjectField(evtObj, fClass, jenv->NewStringUTF(info.className.c_str()));
+                        if (fOrig) jenv->SetLongField(evtObj, fOrig, (jlong)info.originalBytes);
+                        if (fComp) jenv->SetLongField(evtObj, fComp, (jlong)info.compressedBytes);
+                        if (fSaved) jenv->SetLongField(evtObj, fSaved, (jlong)info.bytesSaved);
+                        if (fFields) jenv->SetLongField(evtObj, fFields, (jlong)info.nonDefaultFields);
+
+                        jclass listenerCls = jenv->GetObjectClass(g_javaCompressionListener);
+                        jmethodID onEvt = jenv->GetMethodID(listenerCls, "onCompressionEvent", "(Lcom/tzd/TzdLanguage$CompressionEvent;)V");
+                        if (onEvt) {
+                            jenv->CallVoidMethod(g_javaCompressionListener, onEvt, evtObj);
+                        }
+                        if (jenv->ExceptionCheck()) {
+                            jenv->ExceptionClear();
+                        }
+                    }
+                    if (attached) {
+                        g_javaVm->DetachCurrentThread();
+                    }
+                }
+            }
+        });
+    });
+}
+
+TZD_API int tzd_set_compression_listener(tzd_context_t* ctx, tzd_compression_listener_t listener, void* user_data) {
+    ensureCompressionBridgeInitialized();
+    if (ctx) {
+        ctx->compressionListener = listener;
+        ctx->compressionUserData = user_data;
+    }
+    return TZD_OK;
+}
+
 TZD_API int tzd_dynamic_compress(tzd_context_t* ctx, tzd_compression_stats_t* stats) {
     if (!stats) return TZD_ERR_INVALID_ARG;
+    ensureCompressionBridgeInitialized();
+    if (ctx) tl_current_context = ctx;
     TzdInterpreter* interp = ctx ? ctx->interp.get() : nullptr;
     if (!interp) {
         auto mainTcb = TzdThreading::TzdThreadManager::instance().getThread(1);
@@ -1150,8 +1276,6 @@ TZD_API int tzd_ti_retransform_class(tzd_ti_env_t* env, tzd_context_t* ctx,
 // =========================================================================
 // 8. JNI-like Native Interface (TNI)
 // =========================================================================
-static thread_local tzd_context_t* tl_current_context = nullptr;
-
 static int TNI_GetVersion(tzd_env_t env) {
     return 0x00010000;
 }
@@ -1832,6 +1956,20 @@ JNIEXPORT jboolean JNICALL Java_com_tzd_TzdLanguage_isDynamicCompressionEnabled(
     int enabled = 0;
     tzd_get_dynamic_compression(nullptr, &enabled);
     return enabled ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_com_tzd_TzdLanguage_setCompressionEventListener(JNIEnv* env, jclass cls, jobject listener) {
+    ensureCompressionBridgeInitialized();
+    if (!g_javaVm) {
+        env->GetJavaVM(&g_javaVm);
+    }
+    if (g_javaCompressionListener) {
+        env->DeleteGlobalRef(g_javaCompressionListener);
+        g_javaCompressionListener = nullptr;
+    }
+    if (listener) {
+        g_javaCompressionListener = env->NewGlobalRef(listener);
+    }
 }
 
 } // extern "C"

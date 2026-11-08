@@ -6,6 +6,7 @@
 #include <vector>
 #include <stdexcept>
 #include <memory>
+#include <functional>
 
 namespace tzd {
 
@@ -186,12 +187,29 @@ public:
         return en != 0;
     }
 
+    using CompressionEventListener = std::function<void(const tzd_compression_event_t&)>;
+
+    void setCompressionEventListener(CompressionEventListener listener) {
+        if (listener) {
+            listener_ = std::make_unique<CompressionEventListener>(std::move(listener));
+            tzd_set_compression_listener(ctx_, [](tzd_context_t* c, const tzd_compression_event_t* evt, void* udata) {
+                (void)c;
+                auto* cb = static_cast<CompressionEventListener*>(udata);
+                if (cb && *cb) (*cb)(*evt);
+            }, listener_.get());
+        } else {
+            listener_.reset();
+            tzd_set_compression_listener(ctx_, nullptr, nullptr);
+        }
+    }
+
     tzd_context_t* getContext() const {
         return ctx_;
     }
 
 private:
     tzd_context_t* ctx_ = nullptr;
+    std::unique_ptr<CompressionEventListener> listener_;
 };
 
 /**

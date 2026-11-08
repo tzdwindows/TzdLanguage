@@ -28,7 +28,11 @@ typedef enum tzd_ti_event_e {
     TZD_TI_EVENT_COMPILED_METHOD_LOAD = (1 << 9),
     TZD_TI_EVENT_GARBAGE_COLLECTION   = (1 << 10),
     TZD_TI_EVENT_THREAD_START         = (1 << 11),
-    TZD_TI_EVENT_THREAD_END           = (1 << 12)
+    TZD_TI_EVENT_THREAD_END           = (1 << 12),
+    TZD_TI_EVENT_DYNAMIC_COMPRESSION_START  = (1 << 13),
+    TZD_TI_EVENT_DYNAMIC_COMPRESSION_FINISH = (1 << 14),
+    TZD_TI_EVENT_OBJECT_COMPRESSED          = (1 << 15),
+    TZD_TI_EVENT_OBJECT_DECOMPRESSED        = (1 << 16)
 } tzd_ti_event_t;
 
 /* Stack frame structure for stack inspection */
@@ -56,6 +60,12 @@ typedef struct tzd_ti_callbacks_s {
     void (*on_garbage_collection)(tzd_context_t* ctx, size_t freed_bytes, size_t total_alive);
     void (*on_thread_start)(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
     void (*on_thread_end)(tzd_context_t* ctx, uint64_t thread_id, const char* thread_name);
+
+    /* Dynamic Compression Lifecycle & Object Events */
+    void (*on_dynamic_compression_start)(tzd_context_t* ctx);
+    void (*on_dynamic_compression_finish)(tzd_context_t* ctx, const tzd_compression_stats_t* stats);
+    void (*on_object_compressed)(tzd_context_t* ctx, void* instance, const char* class_name, size_t original_bytes, size_t compressed_bytes, size_t bytes_saved);
+    void (*on_object_decompressed)(tzd_context_t* ctx, void* instance, const char* class_name);
 } tzd_ti_callbacks_t;
 
 /* Opaque Tool Interface Environment Handle */

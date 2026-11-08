@@ -177,6 +177,45 @@ int main() {
 
     std::cout << "    [PASS] Dynamic Compression API\n\n";
 
+    // 10. Dynamic Compression Events (动态压缩事件系统)
+    std::cout << "[10] Testing Dynamic Compression Events (Lifecycle & Object Hooks)...\n" << std::flush;
+    static int g_eventStartCount = 0;
+    static int g_eventFinishCount = 0;
+    static int g_eventCompressedCount = 0;
+    static int g_eventDecompressedCount = 0;
+
+    tiCtx.setCompressionEventListener([](const tzd_compression_event_t& evt) {
+        if (evt.type == TZD_COMPRESSION_EVENT_START) {
+            g_eventStartCount++;
+        } else if (evt.type == TZD_COMPRESSION_EVENT_FINISH) {
+            g_eventFinishCount++;
+        } else if (evt.type == TZD_COMPRESSION_EVENT_OBJECT_COMPRESSED) {
+            g_eventCompressedCount++;
+        } else if (evt.type == TZD_COMPRESSION_EVENT_OBJECT_DECOMPRESSED) {
+            g_eventDecompressedCount++;
+        }
+    });
+
+    tiCtx.eval("class MetricNode { var string tag; var int count; var ptr p1; var ptr p2; MetricNode(t, c) { this.tag = t; this.count = c; } }");
+    tiCtx.eval("var m1 = new MetricNode(\"cpu_load\", 85); var m2 = new MetricNode(\"mem_load\", 42);");
+
+    int prevStart = g_eventStartCount;
+    int prevFinish = g_eventFinishCount;
+    auto eventStats = tiCtx.dynamicCompress();
+    std::cout << "    dynamicCompress() finished: scanned " << eventStats.total_objects_scanned
+              << ", saved " << eventStats.bytes_saved << " bytes\n";
+    assert(g_eventStartCount > prevStart);
+    assert(g_eventFinishCount > prevFinish);
+    assert(g_eventCompressedCount > 0);
+    std::cout << "    [PASS] Compression Lifecycle & Object Compressed events fired successfully!\n";
+
+    // Test decompress-on-write event
+    int prevDecomp = g_eventDecompressedCount;
+    tiCtx.eval("m1.count = 99;");
+    assert(g_eventDecompressedCount > prevDecomp);
+    std::cout << "    [PASS] Object Decompressed event fired on write mutation!\n";
+    std::cout << "    [PASS] Dynamic Compression Events System\n\n";
+
     std::cout << "========================================================\n";
     std::cout << "  >>> All Tzd C/C++ API tests PASSED successfully! <<<\n";
     std::cout << "========================================================\n";

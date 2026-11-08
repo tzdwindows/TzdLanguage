@@ -2,6 +2,15 @@ print("=================================================");
 print("  TzdLanguage Dynamic Compression Verification   ");
 print("=================================================");
 
+// Register Dynamic Compression Event Listener in Script
+var eventCount = 0;
+Runtime.setCompressionListener(fun(evt) {
+    eventCount = eventCount + 1;
+    if (evt["type"] == "finish") {
+        print("[Event] Dynamic Compression Finished: saved " + toString(evt["bytesSaved"]) + " bytes");
+    }
+});
+
 class ItemRecord {
     var int id;
     var string name;
@@ -59,6 +68,12 @@ if (item10_after.getName() == "item_10_updated") {
     print("[PASS] Transparent decompress-on-write succeeded!");
 } else {
     print("[FAIL] Mismatch on decompress-on-write!");
+}
+
+if (eventCount > 0) {
+    print("[PASS] Script compression listener captured " + toString(eventCount) + " events!");
+} else {
+    print("[WARN] No compression events captured by script listener");
 }
 
 print("=================================================");

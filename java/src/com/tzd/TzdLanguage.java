@@ -100,6 +100,45 @@ public final class TzdLanguage {
         }
     }
 
+    public enum CompressionEventType {
+        START(1),
+        FINISH(2),
+        OBJECT_COMPRESSED(3),
+        OBJECT_DECOMPRESSED(4);
+
+        public final int id;
+        CompressionEventType(int id) { this.id = id; }
+        public static CompressionEventType fromId(int id) {
+            for (CompressionEventType t : values()) {
+                if (t.id == id) return t;
+            }
+            return START;
+        }
+    }
+
+    public static class CompressionEvent {
+        public CompressionEventType type;
+        public long instanceAddress;
+        public String className;
+        public long originalBytes;
+        public long compressedBytes;
+        public long bytesSaved;
+        public long nonDefaultFields;
+        public CompressionStats stats;
+
+        @Override
+        public String toString() {
+            return String.format("CompressionEvent[type=%s, class=%s, saved=%d bytes]",
+                type, className != null ? className : "Object", bytesSaved);
+        }
+    }
+
+    public interface CompressionEventListener {
+        void onCompressionEvent(CompressionEvent event);
+    }
+
+    public static native void setCompressionEventListener(CompressionEventListener listener);
+
     public static native CompressionStats dynamicCompress(long ctxHandle);
     public static native void setDynamicCompression(boolean enabled);
     public static native boolean isDynamicCompressionEnabled();

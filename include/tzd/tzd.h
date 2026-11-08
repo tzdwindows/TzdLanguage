@@ -200,6 +200,32 @@ TZD_API int tzd_get_dynamic_compression(tzd_context_t* ctx, int* out_enabled);
 TZD_API int tzd_compress_instance(tzd_object_t inst, size_t* out_bytes_saved);
 TZD_API int tzd_decompress_instance(tzd_object_t inst);
 
+/* Dynamic Compression Event Types */
+typedef enum tzd_compression_event_type_e {
+    TZD_COMPRESSION_EVENT_START = 1,
+    TZD_COMPRESSION_EVENT_FINISH = 2,
+    TZD_COMPRESSION_EVENT_OBJECT_COMPRESSED = 3,
+    TZD_COMPRESSION_EVENT_OBJECT_DECOMPRESSED = 4
+} tzd_compression_event_type_t;
+
+/* Dynamic Compression Event Information */
+typedef struct tzd_compression_event_s {
+    tzd_compression_event_type_t type;
+    void* instance;
+    const char* class_name;
+    size_t original_bytes;
+    size_t compressed_bytes;
+    size_t bytes_saved;
+    size_t non_default_fields;
+    const tzd_compression_stats_t* stats;
+} tzd_compression_event_t;
+
+/* Dynamic Compression Listener Callback */
+typedef void (*tzd_compression_listener_t)(tzd_context_t* ctx, const tzd_compression_event_t* event, void* user_data);
+
+/* Register / unregister compression event listener */
+TZD_API int tzd_set_compression_listener(tzd_context_t* ctx, tzd_compression_listener_t listener, void* user_data);
+
 #ifdef __cplusplus
 }
 #endif

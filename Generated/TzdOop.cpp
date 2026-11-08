@@ -2,6 +2,7 @@
 #include "TzdOop.h"
 #include "TzdInterpreter.h"
 #include "TzdGC.h"
+#include "src/TzdDynamicCompressor.h"
 #include <mutex>
 
 static std::unordered_map<std::string, TzdSelector> s_nameToSelector;
@@ -176,13 +177,142 @@ TzdInstance::TzdInstance(TzdClassDef* def) : definition(def) {
     }
 }
 
-struct TzdCompressedField {
-    uint16_t index;
-    TzdValue value;
+enum class PackedFieldKind : uint8_t {
+    EMPTY = 0,
+    INT64,
+    DOUBLE,
+    BOOL,
+    PTR_RAW,
+    INSTANCE,
+    STR_INLINE,  // length <= 11 bytes stored directly in-place! No heap allocation!
+    STR_HEAP,    // const std::string* (interned in string pool)
+    COMPLEX_BOX  // TzdValue*
 };
 
+#pragma pack(push, 1)
+struct TzdPackedField {
+    uint16_t index;       // 2 bytes: field index
+    PackedFieldKind kind; // 1 byte: tag
+    uint8_t subType;      // 1 byte: original ValueType
+    union {
+        int64_t iVal;
+        double dVal;
+        bool bVal;
+        void* ptrVal;
+        struct {
+            uint8_t len;
+            char buf[11];
+        } strInline;
+        const std::string* strHeap;
+        TzdValue* complexVal;
+    } payload;            // 12 bytes
+};
+#pragma pack(pop)
+static_assert(sizeof(TzdPackedField) == 16, "TzdPackedField must be exactly 16 bytes for theoretical limit packing");
+
+static inline void packTzdValue(uint16_t index, TzdValue&& val, TzdPackedField& out) {
+    out.index = index;
+    out.subType = (uint8_t)val.type;
+    switch (val.type) {
+    case TzdValue::INT: case TzdValue::LONG: case TzdValue::SHORT: case TzdValue::SBYTE:
+    case TzdValue::BYTE: case TzdValue::UINT: case TzdValue::ULONG: case TzdValue::USHORT:
+    case TzdValue::ENUM_VAL:
+        out.kind = PackedFieldKind::INT64;
+        out.payload.iVal = val.lVal;
+        break;
+    case TzdValue::FLOAT: case TzdValue::DOUBLE:
+        out.kind = PackedFieldKind::DOUBLE;
+        out.payload.dVal = val.dVal;
+        break;
+    case TzdValue::BOOL:
+        out.kind = PackedFieldKind::BOOL;
+        out.payload.bVal = val.bVal;
+        break;
+    case TzdValue::POINTER:
+        out.kind = PackedFieldKind::PTR_RAW;
+        out.payload.ptrVal = val.ptrVal;
+        break;
+    case TzdValue::INSTANCE:
+        out.kind = PackedFieldKind::INSTANCE;
+        out.payload.ptrVal = val.instanceVal;
+        val.instanceVal = nullptr; // Take ownership without releasing ref
+        break;
+    case TzdValue::STRING:
+        if (val.sVal.size() <= 11) {
+            out.kind = PackedFieldKind::STR_INLINE;
+            out.payload.strInline.len = (uint8_t)val.sVal.size();
+            if (!val.sVal.empty()) {
+                memcpy(out.payload.strInline.buf, val.sVal.data(), val.sVal.size());
+            }
+        } else {
+            out.kind = PackedFieldKind::STR_HEAP;
+            out.payload.strHeap = TzdDynamicCompressor::instance().internString(val.sVal);
+        }
+        break;
+    default:
+        out.kind = PackedFieldKind::COMPLEX_BOX;
+        out.payload.complexVal = new TzdValue(std::move(val));
+        break;
+    }
+}
+
+static inline void unpackTzdValue(const TzdPackedField& pf, TzdValue& out) {
+    out.type = (TzdValue::Type)pf.subType;
+    switch (pf.kind) {
+    case PackedFieldKind::INT64:
+        out.lVal = pf.payload.iVal;
+        out.dVal = (double)pf.payload.iVal;
+        break;
+    case PackedFieldKind::DOUBLE:
+        out.dVal = pf.payload.dVal;
+        break;
+    case PackedFieldKind::BOOL:
+        out.bVal = pf.payload.bVal;
+        break;
+    case PackedFieldKind::PTR_RAW:
+        out.ptrVal = pf.payload.ptrVal;
+        break;
+    case PackedFieldKind::INSTANCE:
+        out.instanceVal = (TzdInstance*)pf.payload.ptrVal;
+        if (out.instanceVal) out.instanceVal->retain();
+        break;
+    case PackedFieldKind::STR_INLINE:
+        out.sVal.assign(pf.payload.strInline.buf, pf.payload.strInline.len);
+        break;
+    case PackedFieldKind::STR_HEAP:
+        if (pf.payload.strHeap) out.sVal = *pf.payload.strHeap;
+        break;
+    case PackedFieldKind::COMPLEX_BOX:
+        if (pf.payload.complexVal) out = *pf.payload.complexVal;
+        break;
+    default:
+        out.type = TzdValue::NONE;
+        break;
+    }
+}
+
+static inline void cleanupPackedField(TzdPackedField& pf) {
+    if (pf.kind == PackedFieldKind::COMPLEX_BOX) {
+        delete pf.payload.complexVal;
+        pf.payload.complexVal = nullptr;
+    } else if (pf.kind == PackedFieldKind::INSTANCE) {
+        if (pf.payload.ptrVal) {
+            ((TzdInstance*)pf.payload.ptrVal)->release();
+            pf.payload.ptrVal = nullptr;
+        }
+    }
+    pf.kind = PackedFieldKind::EMPTY;
+}
+
 struct TzdInstance::CompressedData {
-    std::vector<TzdCompressedField> fields;
+    std::vector<TzdPackedField> fields;
+
+    ~CompressedData() {
+        for (auto& f : fields) {
+            cleanupPackedField(f);
+        }
+        fields.clear();
+    }
 };
 
 TzdInstance::~TzdInstance() {
@@ -202,11 +332,13 @@ void TzdInstance::clearCompression() {
 }
 
 size_t TzdInstance::getCompressedMemoryBytes() const {
-    if (!m_isCompressed || !m_compressed) return 0;
-    size_t sz = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdCompressedField);
+    if (!m_isCompressed) return 0;
+    if (!m_compressed) return 0;
+    size_t sz = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdPackedField);
     for (const auto& entry : m_compressed->fields) {
-        if (!entry.value.sVal.empty()) sz += entry.value.sVal.capacity();
-        if (entry.value.fastBuf && entry.value.fastLen > 0) sz += (size_t)entry.value.fastLen * sizeof(double);
+        if (entry.kind == PackedFieldKind::COMPLEX_BOX && entry.payload.complexVal) {
+            sz += sizeof(TzdValue);
+        }
     }
     return sz;
 }
@@ -218,10 +350,9 @@ size_t TzdInstance::compress() {
         return 0;
     }
     size_t beforeBytes = fieldValues.capacity() * sizeof(TzdValue);
-    if (!m_compressed) {
-        m_compressed = new CompressedData();
-    }
-    m_compressed->fields.clear();
+    std::vector<TzdPackedField> packedFields;
+    packedFields.reserve(fieldValues.size());
+
     for (size_t i = 0; i < fieldValues.size(); ++i) {
         bool isDefault = false;
         if (definition && i < definition->defaultFieldValues.size()) {
@@ -238,15 +369,46 @@ size_t TzdInstance::compress() {
             isDefault = true;
         }
         if (!isDefault) {
-            m_compressed->fields.push_back({ (uint16_t)i, std::move(fieldValues[i]) });
+            TzdPackedField pf;
+            packTzdValue((uint16_t)i, std::move(fieldValues[i]), pf);
+            packedFields.push_back(pf);
         }
     }
     fieldValues.clear();
     fieldValues.shrink_to_fit();
     m_isCompressed = true;
-    m_compressed->fields.shrink_to_fit();
-    size_t afterBytes = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdCompressedField);
-    return (beforeBytes > afterBytes) ? (beforeBytes - afterBytes) : 0;
+
+    size_t afterBytes = 0;
+    if (packedFields.empty()) {
+        if (m_compressed) {
+            delete m_compressed;
+            m_compressed = nullptr;
+        }
+        afterBytes = 0; // Pure default instance occupies 0 extra heap bytes!
+    } else {
+        if (!m_compressed) {
+            m_compressed = new CompressedData();
+        } else {
+            for (auto& f : m_compressed->fields) cleanupPackedField(f);
+            m_compressed->fields.clear();
+        }
+        m_compressed->fields = std::move(packedFields);
+        m_compressed->fields.shrink_to_fit();
+        afterBytes = sizeof(CompressedData) + m_compressed->fields.capacity() * sizeof(TzdPackedField);
+    }
+
+    size_t saved = (beforeBytes > afterBytes) ? (beforeBytes - afterBytes) : 0;
+
+    TzdDynamicCompressor::instance().notifyObjectCompressed(
+        this,
+        definition ? definition->fullName.c_str() : "Object",
+        beforeBytes,
+        afterBytes,
+        saved,
+        m_compressed ? m_compressed->fields.size() : 0
+    );
+
+    return saved;
 }
 
 void TzdInstance::decompress() {
@@ -259,12 +421,29 @@ void TzdInstance::decompress() {
             if (entry.index >= fieldValues.size()) {
                 fieldValues.resize(entry.index + 1);
             }
-            fieldValues[entry.index] = std::move(entry.value);
+            unpackTzdValue(entry, fieldValues[entry.index]);
         }
         delete m_compressed;
         m_compressed = nullptr;
     }
     m_isCompressed = false;
+
+    TzdDynamicCompressor::instance().notifyObjectDecompressed(
+        this,
+        definition ? definition->fullName.c_str() : "Object"
+    );
+}
+
+void TzdInstance::gcMarkCompressedFields(const std::function<void(const struct TzdValue&)>& marker) const {
+    if (!m_isCompressed || !m_compressed) return;
+    for (const auto& entry : m_compressed->fields) {
+        if (entry.kind == PackedFieldKind::INSTANCE && entry.payload.ptrVal) {
+            TzdValue val((TzdInstance*)entry.payload.ptrVal);
+            marker(val);
+        } else if (entry.kind == PackedFieldKind::COMPLEX_BOX && entry.payload.complexVal) {
+            marker(*entry.payload.complexVal);
+        }
+    }
 }
 
 TzdClassDef::~TzdClassDef() {
@@ -291,7 +470,9 @@ struct TzdValue TzdInstance::getMember(TzdSelector selector, const std::string& 
                     if (m_compressed) {
                         for (const auto& entry : m_compressed->fields) {
                             if (entry.index == (uint16_t)slot->fieldIndex) {
-                                return entry.value;
+                                TzdValue res;
+                                unpackTzdValue(entry, res);
+                                return res;
                             }
                         }
                     }
@@ -1003,7 +1184,11 @@ TzdValue TzdInstance::getMemberByIndex(int index) {
     if (m_isCompressed) {
         if (m_compressed) {
             for (const auto& entry : m_compressed->fields) {
-                if (entry.index == (uint16_t)index) return entry.value;
+                if (entry.index == (uint16_t)index) {
+                    TzdValue res;
+                    unpackTzdValue(entry, res);
+                    return res;
+                }
             }
         }
         if (definition && index < (int)definition->defaultFieldValues.size()) {

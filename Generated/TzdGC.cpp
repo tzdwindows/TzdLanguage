@@ -163,8 +163,14 @@ void TzdGarbageCollector::processGrayList() {
         inst->gcMarkBlack();  // mark as scanned
 
         // Scan all fields — children get marked Gray
-        for (const auto& fv : inst->fieldValues) {
-            markValue(fv);
+        if (inst->isCompressed()) {
+            inst->gcMarkCompressedFields([this](const TzdValue& fv) {
+                markValue(fv);
+            });
+        } else {
+            for (const auto& fv : inst->fieldValues) {
+                markValue(fv);
+            }
         }
     }
 }

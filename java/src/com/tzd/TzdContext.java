@@ -115,6 +115,11 @@ public class TzdContext implements AutoCloseable {
         return TzdLanguage.isDynamicCompressionEnabled();
     }
 
+    public void setCompressionEventListener(TzdLanguage.CompressionEventListener listener) {
+        checkValid();
+        TzdLanguage.setCompressionEventListener(listener);
+    }
+
     @Override
     public synchronized void close() {
         if (handle != 0) {
