@@ -1,3 +1,7 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "include/tzd/tzd.h"
 #include "include/tzd/tzd_export.h"
 #include "include/tzd/tzd_ti.h"
@@ -10,6 +14,7 @@
 #include "Generated/TzdGC.h"
 #include "Generated/TzdOop.h"
 #include "Generated/TzdThreadManager.h"
+#include "Generated/TzdPyTorch.h"
 #include "TzdCommandSystem.h"
 #include "TzdExeCompiler.h"
 #include <colunwind/colunwind.h>
@@ -437,8 +442,10 @@ TZD_API int tzd_eval_string(tzd_context_t* ctx, const char* code,
 
         ctx->interp->loadScript(scriptCode);
 
-        // Check if there is a special variable '__result__' or format last evaluated
-        if (!ctx->interp->scopes.empty() && ctx->interp->scopes[0].count("__result__")) {
+        // Check if there is a evaluated expression result or special variable '__result__'
+        if (ctx->interp->getLastEvalValue().type != TzdValue::NONE) {
+            ctx->lastResult = formatTzdValue(ctx->interp->getLastEvalValue());
+        } else if (!ctx->interp->scopes.empty() && ctx->interp->scopes[0].count("__result__")) {
             ctx->lastResult = formatTzdValue(ctx->interp->scopes[0]["__result__"]);
         }
 
@@ -595,6 +602,19 @@ TZD_API int tzd_has_global(tzd_context_t* ctx, const char* name) {
     if (!ctx || !ctx->interp || !name) return 0;
     if (ctx->interp->scopes.empty()) return 0;
     return ctx->interp->scopes[0].count(name) ? 1 : 0;
+}
+
+TZD_API int tzd_context_get_variable_size(tzd_context_t* ctx, const char* name, size_t* out_size) {
+    if (!ctx || !ctx->interp || !name || !out_size) return TZD_ERR_INVALID_ARG;
+    *out_size = 0;
+    if (ctx->interp->scopes.empty() || !ctx->interp->scopes[0].count(name)) {
+        return TZD_ERR_NOT_FOUND;
+    }
+    const auto& val = ctx->interp->scopes[0][name];
+    if (val.type == TzdValue::INSTANCE && val.instanceVal) {
+        return tzd_get_object_size(val.instanceVal, out_size);
+    }
+    return tzd_get_object_size(&val, out_size);
 }
 
 // =========================================================================
@@ -823,6 +843,241 @@ TZD_API int tzd_ti_get_objects_by_class(tzd_ti_env_t* env, tzd_context_t* ctx,
     }
     *out_count = count;
     return TZD_OK;
+}
+
+// =========================================================================
+// 7.1 Object Size & Class Retransformation Implementation
+// =========================================================================
+static size_t compute_tzd_object_size(const void* rootPtr) {
+    if (!rootPtr) return 0;
+
+    std::unordered_set<const void*> visited;
+
+    auto calcInstanceSize = [&](const TzdInstance* inst, auto& selfRef) -> size_t {
+        if (!inst || visited.count(inst)) return 0;
+        visited.insert(inst);
+
+        size_t total = sizeof(TzdInstance);
+        total += inst->fieldValues.capacity() * sizeof(TzdValue);
+
+        for (const auto& fVal : inst->fieldValues) {
+            total += sizeof(TzdValue);
+            if (!fVal.sVal.empty()) {
+                total += fVal.sVal.capacity();
+            }
+            if (fVal.fastBuf && fVal.fastLen > 0) {
+                total += (size_t)fVal.fastLen * sizeof(double);
+            }
+            if (!fVal.arrVal.empty()) {
+                total += fVal.arrVal.capacity() * sizeof(TzdValue);
+                for (const auto& elem : fVal.arrVal) {
+                    if (elem.type == TzdValue::INSTANCE && elem.instanceVal) {
+                        total += selfRef(elem.instanceVal, selfRef);
+                    } else if (!elem.sVal.empty()) {
+                        total += elem.sVal.capacity();
+                    } else if (elem.fastBuf && elem.fastLen > 0) {
+                        total += (size_t)elem.fastLen * sizeof(double);
+                    }
+                }
+            }
+            if (!fVal.mapVal.empty()) {
+                total += fVal.mapVal.size() * (sizeof(std::string) + sizeof(TzdValue) + 32);
+                for (const auto& kv : fVal.mapVal) {
+                    total += kv.first.capacity();
+                    if (kv.second.type == TzdValue::INSTANCE && kv.second.instanceVal) {
+                        total += selfRef(kv.second.instanceVal, selfRef);
+                    } else if (!kv.second.sVal.empty()) {
+                        total += kv.second.sVal.capacity();
+                    }
+                }
+            }
+            if (fVal.type == TzdValue::INSTANCE && fVal.instanceVal) {
+                total += selfRef(fVal.instanceVal, selfRef);
+            }
+#if defined(WITH_LIBTORCH)
+            if ((fVal.type == TzdValue::TENSOR || fVal.type == TzdValue::POINTER) && fVal.ptrVal) {
+                try {
+                    at::Tensor* t = TzdPyTorch::getTensor(fVal);
+                    if (t && t->defined()) {
+                        total += sizeof(at::Tensor) + (size_t)t->nbytes();
+                    }
+                } catch (...) {}
+            }
+#endif
+        }
+        return total;
+    };
+
+    // Check if rootPtr is a TzdInstance
+    bool isInstance = false;
+    for (const auto& [name, def] : TzdOopManager::getClasses()) {
+        if (((const TzdInstance*)rootPtr)->definition == def) {
+            isInstance = true;
+            break;
+        }
+    }
+
+    if (isInstance) {
+        return calcInstanceSize((const TzdInstance*)rootPtr, calcInstanceSize);
+    }
+
+    // Otherwise treat as TzdValue
+    const TzdValue* val = (const TzdValue*)rootPtr;
+    size_t total = sizeof(TzdValue);
+    if (!val->sVal.empty()) total += val->sVal.capacity();
+    if (val->fastBuf && val->fastLen > 0) total += (size_t)val->fastLen * sizeof(double);
+    if (!val->arrVal.empty()) {
+        total += val->arrVal.capacity() * sizeof(TzdValue);
+        for (const auto& elem : val->arrVal) {
+            if (elem.type == TzdValue::INSTANCE && elem.instanceVal) {
+                total += calcInstanceSize(elem.instanceVal, calcInstanceSize);
+            } else if (!elem.sVal.empty()) {
+                total += elem.sVal.capacity();
+            }
+        }
+    }
+    if (!val->mapVal.empty()) {
+        total += val->mapVal.size() * (sizeof(std::string) + sizeof(TzdValue) + 32);
+        for (const auto& kv : val->mapVal) {
+            total += kv.first.capacity();
+            if (kv.second.type == TzdValue::INSTANCE && kv.second.instanceVal) {
+                total += calcInstanceSize(kv.second.instanceVal, calcInstanceSize);
+            } else if (!kv.second.sVal.empty()) {
+                total += kv.second.sVal.capacity();
+            }
+        }
+    }
+    if (val->type == TzdValue::INSTANCE && val->instanceVal) {
+        total += calcInstanceSize(val->instanceVal, calcInstanceSize);
+    }
+#if defined(WITH_LIBTORCH)
+    if ((val->type == TzdValue::TENSOR || val->type == TzdValue::POINTER) && val->ptrVal) {
+        try {
+            at::Tensor* t = TzdPyTorch::getTensor(*val);
+            if (t && t->defined()) {
+                total += sizeof(at::Tensor) + (size_t)t->nbytes();
+            }
+        } catch (...) {}
+    }
+#endif
+    return total;
+}
+
+TZD_API int tzd_get_object_size(const void* object_or_val, size_t* out_size) {
+    if (!out_size) return TZD_ERR_INVALID_ARG;
+    *out_size = 0;
+    if (!object_or_val) return TZD_OK;
+
+    *out_size = compute_tzd_object_size(object_or_val);
+    return TZD_OK;
+}
+
+TZD_API int tzd_ti_get_object_size(tzd_ti_env_t* env, const void* object, size_t* out_size) {
+    return tzd_get_object_size(object, out_size);
+}
+
+TZD_API int tzd_retransform_class(tzd_context_t* ctx, const char* class_name, const char* class_source) {
+    if (!class_name || !class_source) {
+        g_lastError = "Invalid class name or source code";
+        return TZD_ERR_INVALID_ARG;
+    }
+
+    TzdClassDef* oldDef = TzdOopManager::getClass(class_name);
+    if (!oldDef) {
+        g_lastError = std::string("Class '") + class_name + "' not found in registered classes";
+        return TZD_ERR_NOT_FOUND;
+    }
+
+    std::string fullName = oldDef->fullName;
+    std::string simpleName = oldDef->simpleName;
+
+    TzdInterpreter* interp = ctx ? ctx->interp.get() : nullptr;
+    if (!interp) {
+        auto mainTcb = TzdThreading::TzdThreadManager::instance().getThread(1);
+        if (mainTcb) {
+            interp = mainTcb->childInterp;
+        }
+    }
+    if (!interp) {
+        g_lastError = "No active interpreter available to retransform class";
+        return TZD_ERR_GENERIC;
+    }
+
+    // 1. Temporarily unregister old class from global manager
+    TzdOopManager::unregisterClass(fullName);
+    if (simpleName != fullName) {
+        TzdOopManager::unregisterClass(simpleName);
+    }
+
+    try {
+        // 2. Parse and execute the new class definition
+        interp->loadScript(class_source);
+
+        // 3. Retrieve the newly compiled class definition
+        TzdClassDef* newDef = TzdOopManager::getClass(fullName);
+        if (!newDef && simpleName != fullName) {
+            newDef = TzdOopManager::getClass(simpleName);
+        }
+
+        if (!newDef) {
+            // Rollback oldDef into classMap
+            TzdOopManager::registerClass(oldDef);
+            g_lastError = "Retransformation script did not define class '" + fullName + "'";
+            return TZD_ERR_RUNTIME;
+        }
+
+        if (newDef != oldDef) {
+            // 4. Hot-patch oldDef with new methods, fields, and constructors
+            oldDef->methods = newDef->methods;
+            oldDef->constructors = newDef->constructors;
+            oldDef->fields = newDef->fields;
+            oldDef->defaultFieldsTemplate = newDef->defaultFieldsTemplate;
+            oldDef->derivedClasses = newDef->derivedClasses;
+            oldDef->annotations = newDef->annotations;
+            oldDef->fieldIndices = newDef->fieldIndices;
+            oldDef->defaultFieldValues = newDef->defaultFieldValues;
+
+            // Unregister newDef from classMap, restore oldDef as the canonical entry
+            TzdOopManager::unregisterClass(fullName);
+            if (simpleName != fullName) {
+                TzdOopManager::unregisterClass(simpleName);
+            }
+            // Re-register oldDef to rebuild vtables and tzdDispatch directly pointing into oldDef's memory
+            TzdOopManager::registerClass(oldDef);
+
+            delete newDef;
+        }
+
+        // Update interpreter scopes so variables pointing to class hold oldDef
+        TzdValue classVal(oldDef);
+        interp->setVariable(fullName, classVal);
+        if (simpleName != fullName) {
+            interp->setVariable(simpleName, classVal);
+        }
+
+        return TZD_OK;
+    }
+    catch (const std::exception& e) {
+        if (!TzdOopManager::getClass(fullName)) {
+            try { TzdOopManager::registerClass(oldDef); } catch (...) {}
+        }
+        g_lastError = std::string("Retransform class failed: ") + e.what();
+        if (ctx) ctx->lastError = g_lastError;
+        return TZD_ERR_RUNTIME;
+    }
+    catch (...) {
+        if (!TzdOopManager::getClass(fullName)) {
+            try { TzdOopManager::registerClass(oldDef); } catch (...) {}
+        }
+        g_lastError = "Unknown error during class retransformation";
+        if (ctx) ctx->lastError = g_lastError;
+        return TZD_ERR_RUNTIME;
+    }
+}
+
+TZD_API int tzd_ti_retransform_class(tzd_ti_env_t* env, tzd_context_t* ctx,
+                                     const char* class_name, const char* class_source) {
+    return tzd_retransform_class(ctx, class_name, class_source);
 }
 
 // =========================================================================
@@ -1159,6 +1414,17 @@ static void TNI_ExceptionClear(tzd_env_t env) {
     g_lastError.clear();
 }
 
+static size_t TNI_GetObjectSize(tzd_env_t env, tzd_object_t obj) {
+    size_t sz = 0;
+    tzd_get_object_size((const void*)obj, &sz);
+    return sz;
+}
+
+static int TNI_RetransformClass(tzd_env_t env, const char* name, const char* class_source) {
+    tzd_context_t* ctx = TNI_GetContext(env);
+    return tzd_retransform_class(ctx, name, class_source);
+}
+
 static const tzd_native_interface_t g_tni_interface = {
     TNI_GetVersion,
     TNI_GetContext,
@@ -1196,7 +1462,9 @@ static const tzd_native_interface_t g_tni_interface = {
     TNI_ThrowNew,
     TNI_ExceptionOccurred,
     TNI_ExceptionDescribe,
-    TNI_ExceptionClear
+    TNI_ExceptionClear,
+    TNI_GetObjectSize,
+    TNI_RetransformClass
 };
 
 TZD_API tzd_env_t tzd_get_env(tzd_context_t* ctx) {
@@ -1419,6 +1687,42 @@ JNIEXPORT jboolean JNICALL Java_com_tzd_TzdLanguage_hasGlobal(JNIEnv* env, jclas
 
 JNIEXPORT jstring JNICALL Java_com_tzd_TzdLanguage_getLastError(JNIEnv* env, jclass cls) {
     return env->NewStringUTF(tzd_get_last_error());
+}
+
+JNIEXPORT jboolean JNICALL Java_com_tzd_TzdLanguage_retransformClass(JNIEnv* env, jclass cls, jlong handle, jstring className, jstring classSource) {
+    if (!className || !classSource) return JNI_FALSE;
+    const char* cName = env->GetStringUTFChars(className, nullptr);
+    const char* cSource = env->GetStringUTFChars(classSource, nullptr);
+    int rc = tzd_retransform_class((tzd_context_t*)(uintptr_t)handle, cName, cSource);
+    env->ReleaseStringUTFChars(className, cName);
+    env->ReleaseStringUTFChars(classSource, cSource);
+
+    if (rc != TZD_OK) {
+        jclass exCls = env->FindClass("com/tzd/TzdException");
+        if (exCls) {
+            const char* err = tzd_get_last_error();
+            env->ThrowNew(exCls, err ? err : "Retransform class failed");
+        }
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jlong JNICALL Java_com_tzd_TzdLanguage_getObjectSize(JNIEnv* env, jclass cls, jlong objectHandle) {
+    if (!objectHandle) return 0;
+    size_t sz = 0;
+    tzd_get_object_size((const void*)(uintptr_t)objectHandle, &sz);
+    return (jlong)sz;
+}
+
+JNIEXPORT jlong JNICALL Java_com_tzd_TzdLanguage_getVariableSize(JNIEnv* env, jclass cls, jlong handle, jstring varName) {
+    if (!handle || !varName) return 0;
+    const char* cName = env->GetStringUTFChars(varName, nullptr);
+    size_t sz = 0;
+    int rc = tzd_context_get_variable_size((tzd_context_t*)(uintptr_t)handle, cName, &sz);
+    env->ReleaseStringUTFChars(varName, cName);
+    if (rc != TZD_OK) return 0;
+    return (jlong)sz;
 }
 
 } // extern "C"

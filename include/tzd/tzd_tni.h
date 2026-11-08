@@ -86,6 +86,10 @@ struct tzd_native_interface_s {
     int          (*ExceptionOccurred)(tzd_env_t env);
     const char*  (*ExceptionDescribe)(tzd_env_t env);
     void         (*ExceptionClear)(tzd_env_t env);
+
+    /* 9. Object and Class Retransformation */
+    size_t       (*GetObjectSize)(tzd_env_t env, tzd_object_t obj);
+    int          (*RetransformClass)(tzd_env_t env, const char* name, const char* class_source);
 };
 
 /* Obtain the TNI environment from a context */

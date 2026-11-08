@@ -59,6 +59,7 @@ if exist "%SOLUTION_DIR%\licenses" robocopy "%SOLUTION_DIR%\licenses" "%DIST_DIR
 
 rem 6. Populate libs/ directory (Java bindings & external dependency modules)
 echo [PackageDist] (5/5) Populating libs/...
+if exist "%SOLUTION_DIR%\java\tzd-java-sdk.jar" copy "%SOLUTION_DIR%\java\tzd-java-sdk.jar" "%DIST_DIR%\libs\java\" /Y >nul
 if exist "%SOLUTION_DIR%\java\bin" robocopy "%SOLUTION_DIR%\java\bin" "%DIST_DIR%\libs\java" /XO /E /NDL /NFL /NJH /NJS >nul
 if exist "%SOLUTION_DIR%\java\src" robocopy "%SOLUTION_DIR%\java\src" "%DIST_DIR%\libs\java\src" /XO /E /NDL /NFL /NJH /NJS >nul
 

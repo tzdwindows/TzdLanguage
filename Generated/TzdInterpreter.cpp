@@ -4565,6 +4565,14 @@ void TzdInterpreter::loadScript(std::string code)
 
 #undef TZD_ANTLR_TIMER
 
+        m_lastEvalValue = TzdValue();
+        if (result.has_value())
+        {
+            try {
+                m_lastEvalValue = castAnyToTzdValue(result, "loadScript");
+            } catch (...) {}
+        }
+
         // 仅在 REPL 顶层或有明确返回值时打印结果
         if (result.has_value() && result.type() == typeid(TzdValue))
         {
@@ -6181,21 +6189,31 @@ void TzdInterpreter::jitPendingModule()
             userName = m_jitNameToUserMap[symbol];
         }
 
-        // 4. 处理类成员方法 (逻辑：ClassName_MethodName)
-        // 只有当名字包含下划线，且前半部分是已注册类时，视为类方法
-        size_t sep = userName.find('_');
+        // 4. 处理类成员方法 (逻辑：ClassName::MethodName 或 ClassName_MethodName)
+        std::string clsName, methName;
         bool isClassMember = false;
+        size_t sep = userName.find("::");
         if (sep != std::string::npos)
         {
-            std::string potentialCls = userName.substr(0, sep);
-            if (TzdOopManager::getClass(potentialCls))
+            clsName = userName.substr(0, sep);
+            methName = userName.substr(sep + 2);
+            if (TzdOopManager::getClass(clsName))
                 isClassMember = true;
+        }
+        else
+        {
+            sep = userName.find('_');
+            if (sep != std::string::npos)
+            {
+                clsName = userName.substr(0, sep);
+                methName = userName.substr(sep + 1);
+                if (TzdOopManager::getClass(clsName))
+                    isClassMember = true;
+            }
         }
 
         if (isClassMember)
         {
-            std::string clsName = userName.substr(0, sep);
-            std::string methName = userName.substr(sep + 1);
             TzdClassDef *cls = TzdOopManager::getClass(clsName);
 
             // 修正构造函数特殊处理：ClassName_CtorName_ctor_N
@@ -8452,9 +8470,11 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                     auto mIt = newClass->methods.find(mName);
                     if (mIt != newClass->methods.end() && !mIt->second.isVararg)
                     {
-                        std::string jitName = fullName + "_" + mName;
+                        std::string userMethodName = fullName + "::" + mName;
+                        std::string jitName = fullName + "_" + mName + "_v" + std::to_string(m_funcVersion++);
                         m_compiler->compileClassMethod(ctx, methodCtx, jitName);
                         m_pendingJitFunctions.insert(jitName);
+                        m_jitNameToUserMap[jitName] = userMethodName;
                     }
                 }
                 else if (auto smCtx = dynamic_cast<TzdLangParser::MethodStaticDeclContext *>(decl))
@@ -8463,10 +8483,12 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                     auto mIt = newClass->methods.find(mName);
                     if (mIt != newClass->methods.end() && !mIt->second.isVararg)
                     {
-                        std::string jitName = fullName + "_" + mName;
+                        std::string userMethodName = fullName + "::" + mName;
+                        std::string jitName = fullName + "_" + mName + "_v" + std::to_string(m_funcVersion++);
                         std::string retType = smCtx->typeType() ? smCtx->typeType()->getText() : "";
                         m_compiler->compileNamedFunction(smCtx->block(), smCtx->paramList(), jitName, retType);
                         m_pendingJitFunctions.insert(jitName);
+                        m_jitNameToUserMap[jitName] = userMethodName;
                     }
                 }
                 else if (auto ctorCtx = dynamic_cast<TzdLangParser::ConstructorDeclContext *>(decl))
@@ -8476,9 +8498,11 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
                     ClassConstructor *ctor = newClass->findConstructor(pCount);
                     if (ctor && !ctor->isVararg)
                     {
-                        std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(pCount);
+                        std::string userCtorName = fullName + "::" + ctorName + "_ctor_" + std::to_string(pCount);
+                        std::string jitName = fullName + "_" + ctorName + "_ctor_" + std::to_string(pCount) + "_v" + std::to_string(m_funcVersion++);
                         m_compiler->compileConstructor(ctx, ctorCtx, jitName);
                         m_pendingJitFunctions.insert(jitName);
+                        m_jitNameToUserMap[jitName] = userCtorName;
                     }
                 }
             }

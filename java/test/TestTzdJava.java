@@ -47,6 +47,28 @@ public class TestTzdJava {
             System.out.println("    has 'is_ready' = " + hasReady);
             if (!hasReady) throw new AssertionError("Expected is_ready to exist");
 
+            // Class Retransformation test in Java
+            System.out.println("\n[4] Testing Class Retransformation from Java...");
+            ctx.eval("class Device { fun ping() { return \"ping_v1\"; } }");
+            ctx.eval("var d = new Device();");
+            String ping1 = ctx.eval("return d.ping();");
+            System.out.println("    Device.ping() before = " + ping1);
+            boolean ok = ctx.retransformClass("Device", "class Device { fun ping() { return \"ping_v2_retransformed\"; } }");
+            if (!ok) throw new AssertionError("retransformClass failed");
+            String ping2 = ctx.eval("return d.ping();");
+            System.out.println("    Device.ping() after = " + ping2);
+            if (!ping2.contains("ping_v2_retransformed")) {
+                throw new AssertionError("Expected ping_v2_retransformed, got " + ping2);
+            }
+            System.out.println("    [PASS] Class Retransformation in Java succeeded\n");
+
+            // Object Size introspection test in Java
+            System.out.println("[5] Testing Object Size from Java...");
+            long dSize = ctx.getVariableSize("d");
+            System.out.println("    Variable 'd' (Device instance) memory size: " + dSize + " bytes");
+            if (dSize <= 0) throw new AssertionError("Expected positive object size for d");
+            System.out.println("    [PASS] Object Size in Java succeeded\n");
+
             System.out.println("    [PASS] TzdContext operations all succeeded\n");
         }
 

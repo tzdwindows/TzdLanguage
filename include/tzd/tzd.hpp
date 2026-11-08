@@ -140,6 +140,33 @@ public:
         return tzd_has_global(ctx_, name.c_str()) != 0;
     }
 
+    bool retransformClass(const std::string& className, const std::string& classSource) {
+        int rc = tzd_retransform_class(ctx_, className.c_str(), classSource.c_str());
+        if (rc != TZD_OK) {
+            const char* err = tzd_context_get_last_error(ctx_);
+            throw TzdException(rc, err ? err : "Retransform class failed: " + className);
+        }
+        return true;
+    }
+
+    size_t getObjectSize(const void* objectOrVal) const {
+        size_t sz = 0;
+        int rc = tzd_get_object_size(objectOrVal, &sz);
+        if (rc != TZD_OK) {
+            throw TzdException(rc, "Failed to get object size");
+        }
+        return sz;
+    }
+
+    size_t getVariableSize(const std::string& name) const {
+        size_t sz = 0;
+        int rc = tzd_context_get_variable_size(ctx_, name.c_str(), &sz);
+        if (rc != TZD_OK) {
+            throw TzdException(rc, "Failed to get variable size: " + name);
+        }
+        return sz;
+    }
+
     tzd_context_t* getContext() const {
         return ctx_;
     }

@@ -87,6 +87,21 @@ public class TzdContext implements AutoCloseable {
         return TzdLanguage.hasGlobal(handle, name);
     }
 
+    public boolean retransformClass(String className, String classSource) {
+        checkValid();
+        return TzdLanguage.retransformClass(handle, className, classSource);
+    }
+
+    public long getObjectSize(long objectHandle) {
+        checkValid();
+        return TzdLanguage.getObjectSize(objectHandle);
+    }
+
+    public long getVariableSize(String varName) {
+        checkValid();
+        return TzdLanguage.getVariableSize(handle, varName);
+    }
+
     @Override
     public synchronized void close() {
         if (handle != 0) {

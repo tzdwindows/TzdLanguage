@@ -115,6 +115,16 @@ TZD_API int            tzd_get_global_string(tzd_context_t* ctx, const char* nam
 TZD_API int            tzd_has_global(tzd_context_t* ctx, const char* name);
 
 /* ------------------------------------------------------------------------- */
+/* 5.1 Dynamic Class Hot-Swap and Object Introspection                      */
+/* ------------------------------------------------------------------------- */
+/* Retransform/redefine a registered class dynamically at runtime with new source */
+TZD_API int            tzd_retransform_class(tzd_context_t* ctx, const char* class_name, const char* class_source);
+
+/* Calculate the memory size (in bytes) of an object or value */
+TZD_API int            tzd_get_object_size(const void* object_or_val, size_t* out_size);
+TZD_API int            tzd_context_get_variable_size(tzd_context_t* ctx, const char* name, size_t* out_size);
+
+/* ------------------------------------------------------------------------- */
 /* 6. Error Handling                                                         */
 /* ------------------------------------------------------------------------- */
 /* Returns thread-local last error message */

@@ -102,6 +102,19 @@ TZD_API int tzd_ti_get_objects_by_class(tzd_ti_env_t* env, tzd_context_t* ctx,
                                         const char* class_name,
                                         void** out_objects, size_t max_count, size_t* out_count);
 
+/* Retransform / redefine a class dynamically at runtime with new source definition.
+ * Hot-swaps methods and vtable in-place so all live instances immediately use the new implementation.
+ * Returns TZD_OK on success, or error code on compilation/link failure.
+ */
+TZD_API int tzd_ti_retransform_class(tzd_ti_env_t* env, tzd_context_t* ctx,
+                                     const char* class_name, const char* class_source);
+
+/* Get the memory size of an object in bytes (JVMTI GetObjectSize equivalent).
+ * Calculates deep memory footprints including field values, dynamically allocated strings,
+ * buffers, arrays, maps, and AI tensor storage.
+ */
+TZD_API int tzd_ti_get_object_size(tzd_ti_env_t* env, const void* object, size_t* out_size);
+
 /* Trigger hooks programmatically (used internally by JIT and interpreter) */
 TZD_API void tzd_ti_notify_method_entry(tzd_context_t* ctx, const char* cls, const char* method, const char* file, int line);
 TZD_API void tzd_ti_notify_method_exit(tzd_context_t* ctx, const char* cls, const char* method, const char* ret_val_str);

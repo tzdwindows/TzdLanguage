@@ -263,6 +263,13 @@ void* objects[64];
 size_t found = 0;
 // Retrieve all live declared instances of "UserAccount" (and its subclasses)
 tzd_ti_get_objects_by_class(nullptr, ctx.getContext(), "UserAccount", objects, 64, &found);
+
+// Calculate exact deep memory footprint (in bytes) of any object or tensor
+size_t objSize = 0;
+tzd_ti_get_object_size(nullptr, objects[0], &objSize);
+
+// Hot-swap / retransform a live class definition at runtime
+tzd_ti_retransform_class(nullptr, ctx.getContext(), "UserAccount", "class UserAccount { fun getRole() { return 'SuperAdmin'; } }");
 ```
 
 ### 4. JNI-style Native Interface (TNI: `include/tzd/tzd_tni.h`)

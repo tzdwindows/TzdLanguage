@@ -77,6 +77,11 @@ public final class TzdLanguage {
     public static native String getString(long ctxHandle, String name);
     public static native boolean hasGlobal(long ctxHandle, String name);
 
+    // Dynamic Class Retransformation & Object Introspection
+    public static native boolean retransformClass(long ctxHandle, String className, String classSource);
+    public static native long getObjectSize(long objectHandle);
+    public static native long getVariableSize(long ctxHandle, String varName);
+
     // Error Message
     public static native String getLastError();
 }

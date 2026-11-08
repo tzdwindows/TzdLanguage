@@ -104,6 +104,45 @@ int main() {
     assert(foundCount >= 2);
     std::cout << "    [PASS] TZD TI get_objects_by_class\n\n";
 
+    // 7. Dynamic Class Retransformation (Hot Swap)
+    std::cout << "[7] Testing Class Retransformation (tzd_retransform_class)...\n";
+    tiCtx.eval("class Worker { fun work() { return \"v1_standard\"; } }");
+    tiCtx.eval("var w = new Worker();");
+    std::string res1 = tiCtx.eval("return w.work();");
+    std::cout << "    Before retransform: w.work() = " << res1 << std::endl;
+
+    // Retransform Worker class dynamically
+    bool retOk = tiCtx.retransformClass("Worker", "class Worker { fun work() { return \"v2_retransformed_hot_swapped!\"; } }");
+    assert(retOk);
+    std::string res2 = tiCtx.eval("return w.work();");
+    std::cout << "    After retransform: w.work() = " << res2 << std::endl;
+    assert(res2.find("v2_retransformed") != std::string::npos);
+
+    // Also verify a new instance uses the retransformed class
+    std::string res3 = tiCtx.eval("var w2 = new Worker(); return w2.work();");
+    std::cout << "    New instance w2.work() = " << res3 << std::endl;
+    assert(res3.find("v2_retransformed") != std::string::npos);
+    std::cout << "    [PASS] Class Retransformation (Hot Swap)\n\n";
+
+    // 8. Object Size Calculation (JVMTI GetObjectSize equivalent)
+    std::cout << "[8] Testing Object Size API (tzd_get_object_size & tzd_ti_get_object_size)...\n";
+    assert(foundCount > 0);
+    size_t objSize = 0;
+    int sz_rc = tzd_ti_get_object_size(nullptr, objs[0], &objSize);
+    assert(sz_rc == 0);
+    std::cout << "    Instance 'UserAccount' memory size: " << objSize << " bytes\n";
+    assert(objSize >= sizeof(void*));
+
+    size_t instSizeCpp = tiCtx.getObjectSize(objs[0]);
+    std::cout << "    Via C++ wrapper: " << instSizeCpp << " bytes\n";
+    assert(instSizeCpp == objSize);
+
+    size_t varSize = tiCtx.getVariableSize("w");
+    std::cout << "    Variable 'w' size via getVariableSize(): " << varSize << " bytes\n";
+    assert(varSize > 0);
+
+    std::cout << "    [PASS] Object Size API\n\n";
+
     std::cout << "========================================================\n";
     std::cout << "  >>> All Tzd C/C++ API tests PASSED successfully! <<<\n";
     std::cout << "========================================================\n";

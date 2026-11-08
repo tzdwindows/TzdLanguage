@@ -725,6 +725,9 @@ public:
         m_includePaths.push_back(path);
     }
     
+    const TzdValue& getLastEvalValue() const { return m_lastEvalValue; }
+    void setLastEvalValue(const TzdValue& v) { m_lastEvalValue = v; }
+
     void tryJitCompile(TzdValue& funcVal);
     // Background compilation: compile from copied data without touching
     // interpreter scopes. Returns JIT pointer or nullptr on failure.
@@ -899,6 +902,7 @@ public:
     std::vector<TzdValue> m_currentArgs;
     std::unordered_map<std::string, std::string> m_jitNameToUserMap;
     uint64_t m_funcVersion = 0;
+    TzdValue m_lastEvalValue;
 
     std::vector<std::vector<TzdValue>> m_argFrameStack;
     std::vector<TzdValue*> m_argPtrStack;

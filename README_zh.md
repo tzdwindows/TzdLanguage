@@ -265,6 +265,13 @@ void* objects[64];
 size_t found = 0;
 // 检索当前运行态中所有 UserAccount 类（及子类）的声明/存活对象实例
 tzd_ti_get_objects_by_class(nullptr, ctx.getContext(), "UserAccount", objects, 64, &found);
+
+// 计算任意对象或值占用的真实内存字节数 (包括深层字段与 Tensor 显存)
+size_t objSize = 0;
+tzd_ti_get_object_size(nullptr, objects[0], &objSize);
+
+// 热替换/重新转换已加载的类定义 (Hot Swap Class Retransformation)
+tzd_ti_retransform_class(nullptr, ctx.getContext(), "UserAccount", "class UserAccount { fun getRole() { return 'SuperAdmin'; } }");
 ```
 
 ### 4. 类似 JNI 的本地调用接口 (TNI: `include/tzd/tzd_tni.h`)
