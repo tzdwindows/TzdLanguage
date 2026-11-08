@@ -74,6 +74,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>include;E:\Fintamath\include;C:\Program Files\Java\jdk-21.0.12.1\include\win32;C:\Program Files\Java\jdk-21.0.12.1\include;C:\Program Files\Java\latest\include\win32;C:\Program Files\Java\latest\include;C:\Program Files\Java\jdk-20\include\win32;C:\Program Files\Java\jdk-20\include;E:\LLVM_SDK\include;C:\Program Files\LLVM\include;E:\vcpkg\buildtrees\antlr4\src\4.13.2-b64128cc53.clean\runtime\Cpp\runtime\src;$(IncludePath)</IncludePath>
     <TargetName>tzd</TargetName>
+    <IntDir>$(SolutionDir)build\obj\$(ProjectName)\$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
@@ -132,7 +133,7 @@
       <DisableSpecificWarnings>4146;4244;4267;4624;4005;4819;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>include;External\colunwind\include;External\colunwind\src;E:\vcpkg\installed\x64-windows-static\include;External\libtorch\include;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\include;E:\LLVM_SDK\include;E:\Fintamath\f\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);include;src;External\colunwind\include;External\colunwind\src;E:\vcpkg\installed\x64-windows-static\include;External\libtorch\include;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\include;E:\LLVM_SDK\include;E:\Fintamath\f\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/FS /bigobj /utf-8 /arch:AVX2 /openmp %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -184,16 +185,16 @@ exit /B 0</Command>
     <ClCompile Include="Generated\TzdExperimentalCompute.cpp" />
     <ClCompile Include="Plots\pbPlots.cpp" />
     <ClCompile Include="Plots\supportLib.cpp" />
-    <ClCompile Include="PdbReader.cpp" />
-    <ClCompile Include="SymbolDemangler.cpp" />
-    <ClCompile Include="TzdCommandSystem.cpp" />
-    <ClCompile Include="TzdExeCompiler.cpp" />
-    <ClCompile Include="TzdNativeCodegen.cpp" />
-    <ClCompile Include="TzdFuncScanner.cpp" />
-    <ClCompile Include="TzdMemoryAsm.cpp" />
-    <ClCompile Include="TzdDebugger.cpp" />
-    <ClCompile Include="TzdStackTrace.cpp" />
-    <ClCompile Include="tzd_api.cpp" />
+    <ClCompile Include="src\PdbReader.cpp" />
+    <ClCompile Include="src\SymbolDemangler.cpp" />
+    <ClCompile Include="src\TzdCommandSystem.cpp" />
+    <ClCompile Include="src\TzdExeCompiler.cpp" />
+    <ClCompile Include="src\TzdNativeCodegen.cpp" />
+    <ClCompile Include="src\TzdFuncScanner.cpp" />
+    <ClCompile Include="src\TzdMemoryAsm.cpp" />
+    <ClCompile Include="src\TzdDebugger.cpp" />
+    <ClCompile Include="src\TzdStackTrace.cpp" />
+    <ClCompile Include="src\tzd_api.cpp" />
     <ClCompile Include="External\colunwind\src\capture.c" />
     <ClCompile Include="External\colunwind\src\unwind.c" />
     <ClCompile Include="External\colunwind\src\symbolizer.c" />
@@ -256,17 +257,17 @@ exit /B 0</Command>
     <ClInclude Include="Generated\TzdExperimentalCompute.h" />
     <ClInclude Include="Plots\pbPlots.hpp" />
     <ClInclude Include="Plots\supportLib.hpp" />
-    <ClInclude Include="PdbReader.h" />
+    <ClInclude Include="src\PdbReader.h" />
     <ClInclude Include="Res\TzdStrings.h" />
-    <ClInclude Include="SymbolDemangler.h" />
-    <ClInclude Include="TzdCommandSystem.h" />
-    <ClInclude Include="TzdExeCompiler.h" />
-    <ClInclude Include="TzdNativeCodegen.h" />
-    <ClInclude Include="TzdNativeRuntime.hpp" />
-    <ClInclude Include="TzdFuncScanner.h" />
-    <ClInclude Include="TzdMemoryAsm.h" />
-    <ClInclude Include="TzdDebugger.h" />
-    <ClInclude Include="TzdStackTrace.h" />
+    <ClInclude Include="src\SymbolDemangler.h" />
+    <ClInclude Include="src\TzdCommandSystem.h" />
+    <ClInclude Include="src\TzdExeCompiler.h" />
+    <ClInclude Include="src\TzdNativeCodegen.h" />
+    <ClInclude Include="src\TzdNativeRuntime.hpp" />
+    <ClInclude Include="src\TzdFuncScanner.h" />
+    <ClInclude Include="src\TzdMemoryAsm.h" />
+    <ClInclude Include="src\TzdDebugger.h" />
+    <ClInclude Include="src\TzdStackTrace.h" />
     <ClInclude Include="Generated\TzdNetModule.h" />
     <ClInclude Include="Generated\TzdGlModule.h" />
     <ClInclude Include="Generated\TzdUiModule.h" />

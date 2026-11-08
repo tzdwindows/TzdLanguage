@@ -9,6 +9,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TzdTools", "TzdTools.vcxpro
 		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D} = {B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test_c_api", "test\test_c_api.vcxproj", "{A3D7B1E4-2C6F-4B8A-9F12-3D8B4C5E6A7B}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B70B9FA1-4E6D-47AE-971D-3C89B6631E4D} = {B70B9FA1-4E6D-47AE-971D-3C89B6631E4D}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -33,6 +38,10 @@ Global
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Release|x64.Build.0 = Release|x64
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Release|x86.ActiveCfg = Release|Win32
 		{EF38E9BD-D1AC-4CF3-A2A1-842D4858503B}.Release|x86.Build.0 = Release|Win32
+		{A3D7B1E4-2C6F-4B8A-9F12-3D8B4C5E6A7B}.Debug|x64.ActiveCfg = Release|x64
+		{A3D7B1E4-2C6F-4B8A-9F12-3D8B4C5E6A7B}.Debug|x64.Build.0 = Release|x64
+		{A3D7B1E4-2C6F-4B8A-9F12-3D8B4C5E6A7B}.Release|x64.ActiveCfg = Release|x64
+		{A3D7B1E4-2C6F-4B8A-9F12-3D8B4C5E6A7B}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

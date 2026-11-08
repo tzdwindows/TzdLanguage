@@ -212,16 +212,16 @@ message(STATUS "------------------------------------------------------------")
 # ---------------------------------------------------------------------------
 set(TZD_SOURCES
     # Core CLI, Debugger, Profiler & StackTrace
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdTools.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdDebugger.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdStackTrace.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdCommandSystem.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdExeCompiler.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdNativeCodegen.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdFuncScanner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/TzdMemoryAsm.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/PdbReader.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/SymbolDemangler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdDebugger.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdStackTrace.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdCommandSystem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdExeCompiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdNativeCodegen.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdFuncScanner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/TzdMemoryAsm.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PdbReader.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SymbolDemangler.cpp
 
     # Interpreter, Bytecode VM, JIT Engine, GC, FFI, OOP, PyTorch
     ${CMAKE_CURRENT_SOURCE_DIR}/Generated/TzdInterpreter.cpp
@@ -282,6 +282,8 @@ target_compile_definitions(TzdTools PRIVATE
 # ---------------------------------------------------------------------------
 target_include_directories(TzdTools PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/Generated
     ${CMAKE_CURRENT_SOURCE_DIR}/dyncall
     ${CMAKE_CURRENT_SOURCE_DIR}/Plots
