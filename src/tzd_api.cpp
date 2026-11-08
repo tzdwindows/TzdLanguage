@@ -1149,13 +1149,13 @@ static tzd_object_t TNI_NewObject(tzd_env_t env, tzd_class_t clazz, int argc, co
             interp = localInterp.get();
         }
         TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
-        ctorFunc.paramTypes = ctor->paramTypes;
-        ctorFunc.isVararg = ctor->isVararg;
-        ctorFunc.jittedPtr = ctor->jittedPtr;
+        ctorFunc.ensureExtra().paramTypes = ctor->paramTypes;
+        ctorFunc.ensureExtra().isVararg = ctor->isVararg;
+        ctorFunc.ensureExtra().jittedPtr = ctor->jittedPtr;
         ctorFunc.setInstance(inst);
-        ctorFunc.sourceFile = ctor->sourceFile;
-        ctorFunc.line = ctor->line;
-        ctorFunc.column = ctor->column;
+        ctorFunc.ensureExtra().sourceFile = ctor->sourceFile;
+        ctorFunc.ensureExtra().line = ctor->line;
+        ctorFunc.ensureExtra().column = ctor->column;
         interp->callFunction(ctorFunc, args);
     }
     return (tzd_object_t)inst;

@@ -76,7 +76,7 @@ std::string formatTzdValue(const TzdValue& val) {
         }
         case TzdValue::ARRAY: return "array(size=" + std::to_string(val.arrVal.size()) + ")";
         case TzdValue::MAP: return "map(size=" + std::to_string(val.mapVal.size()) + ")";
-        case TzdValue::FUNCTION: return "function " + val.name + "(" + std::to_string(val.params.size()) + " args)";
+        case TzdValue::FUNCTION: return "function " + val.name + "(" + std::to_string(val.extra ? val.extra->params.size() : 0) + " args)";
         case TzdValue::NATIVE_FUNCTION: return "native_function " + val.name;
         case TzdValue::CLASS_DEF: return "class " + val.name;
         case TzdValue::INSTANCE: return "instance of class";
@@ -523,7 +523,7 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
                     int count = 0;
                     for (const auto& [name, val] : globalScope) {
                         if (val.type == TzdValue::FUNCTION) {
-                            reply << "  " << name << " (defined at " << val.sourceFile << ":" << val.line << ")\n";
+                            reply << "  " << name << " (defined at " << (val.extra ? val.extra->sourceFile : "unknown") << ":" << (val.extra ? val.extra->line : 0) << ")\n";
                             count++;
                         }
                     }
@@ -546,11 +546,13 @@ void processDebugCommand(SOCKET clientSocket, TzdInterpreter* interpreter, const
                             } else {
                                 std::stringstream reply;
                                 reply << "Function: " << funName << "\n";
-                                reply << "File: " << val.sourceFile << "\n";
-                                reply << "Line: " << val.line << "\n";
+                                reply << "File: " << (val.extra ? val.extra->sourceFile : "unknown") << "\n";
+                                reply << "Line: " << (val.extra ? val.extra->line : 0) << "\n";
                                 reply << "Parameters: ";
-                                for (size_t i = 0; i < val.params.size(); ++i) {
-                                    reply << val.params[i] << (i + 1 < val.params.size() ? ", " : "");
+                                if (val.extra) {
+                                    for (size_t i = 0; i < val.extra->params.size(); ++i) {
+                                        reply << val.extra->params[i] << (i + 1 < val.extra->params.size() ? ", " : "");
+                                    }
                                 }
                                 reply << "\n";
                                 sendStr(clientSocket, reply.str());

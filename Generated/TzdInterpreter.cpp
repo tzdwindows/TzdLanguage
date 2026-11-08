@@ -28,15 +28,12 @@ TzdValue::TzdValue(TzdInstance *i) : type(INSTANCE), instanceVal(i)
 }
 
 TzdValue::TzdValue(const TzdValue &o)
-    : annotations(o.annotations), type(o.type), name(o.name), declaredType(o.declaredType),
+    : type(o.type), name(o.name), declaredType(o.declaredType),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(o.sVal), bVal(o.bVal), arrVal(o.arrVal), mapVal(o.mapVal),
-      params(o.params), paramTypes(o.paramTypes), returnType(o.returnType), isVararg(o.isVararg), funcBody(o.funcBody),
-      nativeFunc(o.nativeFunc), closureScope(o.closureScope), classDefVal(o.classDefVal),
-      instanceVal(o.instanceVal), sourceFile(o.sourceFile),
-      line(o.line), column(o.column),
-      jitInternalName(o.jitInternalName), nativeArr(o.nativeArr),
-      isNativeDoubleArr(o.isNativeDoubleArr), jittedPtr(o.jittedPtr)
+      extra(o.extra), classDefVal(o.classDefVal),
+      instanceVal(o.instanceVal), nativeArr(o.nativeArr),
+      isNativeDoubleArr(o.isNativeDoubleArr)
 {
     if (instanceVal)
         instanceVal->retain();
@@ -44,28 +41,23 @@ TzdValue::TzdValue(const TzdValue &o)
         tzdTensorRetain(ptrVal);
     if (type == TzdValue::MAP && o.ptrVal)
     {
-        auto *otherM = (std::unordered_map<std::string, double>*)o.ptrVal;
-        ptrVal = new std::unordered_map<std::string, double>(*otherM);
+        auto *otherM = (TzdFastDoubleMap*)o.ptrVal;
+        ptrVal = new TzdFastDoubleMap(*otherM);
     }
     syncFastBuf();
 }
 
 TzdValue::TzdValue(TzdValue &&o) noexcept
-    : annotations(std::move(o.annotations)), type(o.type), name(std::move(o.name)), declaredType(std::move(o.declaredType)),
+    : type(o.type), name(std::move(o.name)), declaredType(std::move(o.declaredType)),
       dVal(o.dVal), lVal(o.lVal), ulVal(o.ulVal), ptrVal(o.ptrVal),
       sVal(std::move(o.sVal)), bVal(o.bVal), arrVal(std::move(o.arrVal)), mapVal(std::move(o.mapVal)),
-      params(std::move(o.params)), paramTypes(std::move(o.paramTypes)), returnType(std::move(o.returnType)), isVararg(o.isVararg), funcBody(o.funcBody),
-      nativeFunc(std::move(o.nativeFunc)), closureScope(std::move(o.closureScope)), classDefVal(o.classDefVal),
-      instanceVal(o.instanceVal), sourceFile(std::move(o.sourceFile)),
-      line(o.line), column(o.column),
-      jitInternalName(std::move(o.jitInternalName)), nativeArr(std::move(o.nativeArr)),
-      isNativeDoubleArr(o.isNativeDoubleArr), jittedPtr(o.jittedPtr)
+      extra(std::move(o.extra)), classDefVal(o.classDefVal),
+      instanceVal(o.instanceVal), nativeArr(std::move(o.nativeArr)),
+      isNativeDoubleArr(o.isNativeDoubleArr)
 {
     o.instanceVal = nullptr;
     o.ptrVal = nullptr;
-    o.jittedPtr = nullptr;
     o.type = NONE;
-    o.isVararg = false;
     o.fastBuf = nullptr;
     o.fastLen = 0;
     syncFastBuf();
@@ -85,7 +77,6 @@ TzdValue &TzdValue::operator=(const TzdValue &o)
         ptrVal = nullptr;
     }
 
-    annotations = o.annotations;
     type = o.type;
     name = o.name;
     declaredType = o.declaredType;
@@ -97,22 +88,11 @@ TzdValue &TzdValue::operator=(const TzdValue &o)
     bVal = o.bVal;
     arrVal = o.arrVal;
     mapVal = o.mapVal;
-    params = o.params;
-    paramTypes = o.paramTypes;
-    returnType = o.returnType;
-    isVararg = o.isVararg;
-    funcBody = o.funcBody;
-    nativeFunc = o.nativeFunc;
-    closureScope = o.closureScope;
+    extra = o.extra;
     classDefVal = o.classDefVal;
     instanceVal = o.instanceVal;
-    sourceFile = o.sourceFile;
-    line = o.line;
-    column = o.column;
-    jitInternalName = o.jitInternalName;
     nativeArr = o.nativeArr;
     isNativeDoubleArr = o.isNativeDoubleArr;
-    jittedPtr = o.jittedPtr;
 
     if (instanceVal)
         instanceVal->retain();
@@ -141,7 +121,6 @@ TzdValue &TzdValue::operator=(TzdValue &&o) noexcept
         ptrVal = nullptr;
     }
 
-    annotations = std::move(o.annotations);
     type = o.type;
     name = std::move(o.name);
     declaredType = std::move(o.declaredType);
@@ -153,28 +132,15 @@ TzdValue &TzdValue::operator=(TzdValue &&o) noexcept
     bVal = o.bVal;
     arrVal = std::move(o.arrVal);
     mapVal = std::move(o.mapVal);
-    params = std::move(o.params);
-    paramTypes = std::move(o.paramTypes);
-    returnType = std::move(o.returnType);
-    isVararg = o.isVararg;
-    funcBody = o.funcBody;
-    nativeFunc = std::move(o.nativeFunc);
-    closureScope = std::move(o.closureScope);
+    extra = std::move(o.extra);
     classDefVal = o.classDefVal;
     instanceVal = o.instanceVal;
-    sourceFile = std::move(o.sourceFile);
-    line = o.line;
-    column = o.column;
-    jitInternalName = std::move(o.jitInternalName);
     nativeArr = std::move(o.nativeArr);
     isNativeDoubleArr = o.isNativeDoubleArr;
-    jittedPtr = o.jittedPtr;
 
     o.instanceVal = nullptr;
     o.ptrVal = nullptr;
-    o.jittedPtr = nullptr;
     o.type = NONE;
-    o.isVararg = false;
     o.fastBuf = nullptr;
     o.fastLen = 0;
     syncFastBuf();
@@ -4143,9 +4109,9 @@ void TzdInterpreter::compileCurrentContext()
     {
         for (auto &[name, val] : scope)
         {
-            if (val.type == TzdValue::FUNCTION && val.funcBody && !val.jittedPtr)
+            if (val.type == TzdValue::FUNCTION && val.extra && val.extra->funcBody && !val.extra->jittedPtr)
             {
-                auto *funcCtx = dynamic_cast<TzdLangParser::FunctionDeclarationContext *>(val.funcBody->parent);
+                auto *funcCtx = dynamic_cast<TzdLangParser::FunctionDeclarationContext *>(val.extra->funcBody->parent);
                 if (funcCtx)
                 {
                     compiler.visitFunctionDeclaration(funcCtx);
@@ -4175,7 +4141,7 @@ void TzdInterpreter::compileCurrentContext()
 
                 llvm::orc::ExecutorAddr execAddr = *symOrErr;
                 auto rawAddr = execAddr.getValue();
-                valPtr->jittedPtr = reinterpret_cast<void (*)(void *, void *)>(rawAddr);
+                valPtr->ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(rawAddr);
             }
         }
     }
@@ -4228,10 +4194,10 @@ void TzdInterpreter::compileFunctionToMemory(const std::string &funcName)
     g_CurrentInterpreter = this;
     TzdValue &val = scopes.back()[funcName];
 
-    if (val.type == TzdValue::FUNCTION && val.funcBody)
+    if (val.type == TzdValue::FUNCTION && val.extra && val.extra->funcBody)
     {
         TzdCompiler compiler(*m_jitEngine, "Mod_" + funcName);
-        auto *funcCtx = dynamic_cast<TzdLangParser::FunctionDeclarationContext *>(val.funcBody->parent);
+        auto *funcCtx = dynamic_cast<TzdLangParser::FunctionDeclarationContext *>(val.extra->funcBody->parent);
         if (funcCtx)
         {
             compiler.visitFunctionDeclaration(funcCtx);
@@ -4243,7 +4209,7 @@ void TzdInterpreter::compileFunctionToMemory(const std::string &funcName)
                 auto sym = m_jitEngine->lookupSymbol(funcName);
                 if (sym)
                 {
-                    val.jittedPtr = reinterpret_cast<void (*)(void *, void *)>(sym->getValue());
+                    val.ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(sym->getValue());
                 }
             }
         }
@@ -4401,8 +4367,8 @@ TzdValue TzdInterpreter::getVariable(const std::string &name, antlr4::ParserRule
                 {
                     current.type = TzdValue::FUNCTION;
                     current.name = m->name;
-                    current.params = m->params;
-                    current.funcBody = m->body;
+                    current.ensureExtra().params = m->params;
+                    current.ensureExtra().funcBody = m->body;
                     current.instanceVal = nullptr;
                 }
                 else
@@ -4977,22 +4943,22 @@ void TzdInterpreter::internalRenderPlot(const std::vector<TzdValue> &functions, 
         for (double val = extendedStart; val <= extendedEnd; val += step)
         {
             std::unordered_map<std::string, TzdValue> callScope;
-            if (!functions[fIdx].params.empty())
+            if (functions[fIdx].extra && !functions[fIdx].extra->params.empty())
             {
-                callScope[functions[fIdx].params[0]] = TzdValue(val);
+                callScope[functions[fIdx].extra->params[0]] = TzdValue(val);
             }
             this->scopes.push_back(callScope);
 
             TzdValue res(0.0);
             try
             {
-                if (functions[fIdx].type == TzdValue::NATIVE_FUNCTION)
+                if (functions[fIdx].type == TzdValue::NATIVE_FUNCTION && functions[fIdx].extra)
                 {
-                    res = functions[fIdx].nativeFunc({TzdValue(val)});
+                    res = functions[fIdx].extra->nativeFunc({TzdValue(val)});
                 }
                 else
                 {
-                    std::any v = this->visit(functions[fIdx].funcBody);
+                    std::any v = this->visit(functions[fIdx].extra ? functions[fIdx].extra->funcBody : nullptr);
                     if (v.has_value() && v.type() == typeid(TzdValue))
                         res = std::any_cast<TzdValue>(v);
                 }
@@ -5122,7 +5088,7 @@ void TzdInterpreter::mapJitSymbolsToValue()
                 void *addr = reinterpret_cast<void (*)(void *, void *)>((m_jitEngine->lookupSymbol(name))->getValue());
                 if (addr)
                 {
-                    val.jittedPtr = (void (*)(void *, void *))addr;
+                    val.ensureExtra().jittedPtr = (void (*)(void *, void *))addr;
                 }
             }
         }
@@ -5172,19 +5138,32 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
         throw std::runtime_error("尝试调用一个非函数对象");
     }
 
+    static const std::vector<std::string> s_emptyVec;
+    static const std::string s_emptyStr;
+    const std::vector<std::string>& fParams = func.extra ? func.extra->params : s_emptyVec;
+    const std::vector<std::string>& fParamTypes = func.extra ? func.extra->paramTypes : s_emptyVec;
+    const std::string& fSourceFile = func.extra ? func.extra->sourceFile : s_emptyStr;
+    int fLine = func.extra ? func.extra->line : 0;
+    bool fIsVararg = func.extra ? func.extra->isVararg : false;
+    TzdLangParser::BlockContext* fFuncBody = func.extra ? func.extra->funcBody : nullptr;
+    void (*fJittedPtr)(void*, void*) = func.extra ? func.extra->jittedPtr : nullptr;
+    const std::string& fDeclaringClass = func.extra ? func.extra->declaringClass : s_emptyStr;
+    const std::string& fJitInternalName = func.extra ? func.extra->jitInternalName : s_emptyStr;
+    auto fClosureScope = func.extra ? func.extra->closureScope : nullptr;
+
     // Build the stack frame label.
-    std::string fileLoc = formatSourcePath(func.sourceFile);
-    if (func.line > 0)
+    std::string fileLoc = formatSourcePath(fSourceFile);
+    if (fLine > 0)
     {
-        fileLoc += ":" + std::to_string(func.line);
+        fileLoc += ":" + std::to_string(fLine);
     }
     std::string stackFrame = func.name.empty() ? "<anonymous>" : func.name;
     if (func.instanceVal && func.instanceVal->definition)
     {
         const std::string& instClass = func.instanceVal->definition->fullName;
-        if (!func.declaringClass.empty() && func.declaringClass != instClass)
+        if (!fDeclaringClass.empty() && fDeclaringClass != instClass)
         {
-            stackFrame = instClass + "(" + func.declaringClass + ")." + func.name;
+            stackFrame = instClass + "(" + fDeclaringClass + ")." + func.name;
         }
         else
         {
@@ -5194,20 +5173,20 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     stackFrame += " (" + fileLoc + ")";
     if (func.type == TzdValue::NATIVE_FUNCTION)
         stackFrame += " (Native Method)";
-    else if (func.type == TzdValue::FUNCTION && func.jittedPtr)
+    else if (func.type == TzdValue::FUNCTION && fJittedPtr)
         stackFrame += " (JIT Compiled)";
     else
         stackFrame += " (Interpreted)";
 
-    TzdCallStackGuard stackGuard(this, stackFrame, func.sourceFile);
+    TzdCallStackGuard stackGuard(this, stackFrame, fSourceFile);
 
     // 参数个数与类型校验 (针对脚本函数；原生函数跳过)。必须在字节码/JIT/解释
     // 分支之前执行，以保持与原有行为一致。
     if (func.type == TzdValue::FUNCTION)
     {
-        if (func.isVararg)
+        if (fIsVararg)
         {
-            size_t minArgs = func.params.empty() ? 0 : func.params.size() - 1;
+            size_t minArgs = fParams.empty() ? 0 : fParams.size() - 1;
             if (args.size() < minArgs)
             {
                 throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 至少期望 " +
@@ -5216,17 +5195,17 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
             }
             for (size_t i = 0; i < minArgs; ++i)
             {
-                if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
-                    !checkParamValueType(func.paramTypes[i], args[i]))
+                if (i < fParamTypes.size() && !fParamTypes[i].empty() &&
+                    !checkParamValueType(fParamTypes[i], args[i]))
                 {
                     throw std::runtime_error(
                         "函数 '" + func.name + "' 第 " + std::to_string(i + 1) +
-                        " 个参数类型不匹配: 期望 " + func.paramTypes[i]);
+                        " 个参数类型不匹配: 期望 " + fParamTypes[i]);
                 }
             }
-            if (!func.paramTypes.empty() && !func.paramTypes.back().empty())
+            if (!fParamTypes.empty() && !fParamTypes.back().empty())
             {
-                const std::string &varType = func.paramTypes.back();
+                const std::string &varType = fParamTypes.back();
                 for (size_t i = minArgs; i < args.size(); ++i)
                 {
                     if (!checkParamValueType(varType, args[i]))
@@ -5240,36 +5219,36 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
         }
         else
         {
-            if (args.size() != func.params.size())
+            if (args.size() != fParams.size())
             {
-                if (!(func.jittedPtr && func.params.empty()))
+                if (!(fJittedPtr && fParams.empty()))
                 {
                     throw std::runtime_error("函数 '" + func.name + "' 参数不匹配: 期望 " +
-                                             std::to_string(func.params.size()) + " 个，实际 " +
+                                             std::to_string(fParams.size()) + " 个，实际 " +
                                              std::to_string(args.size()) + " 个");
                 }
             }
             for (size_t i = 0; i < args.size(); ++i)
             {
-                if (i < func.paramTypes.size() && !func.paramTypes[i].empty() &&
-                    !checkParamValueType(func.paramTypes[i], args[i]))
+                if (i < fParamTypes.size() && !fParamTypes[i].empty() &&
+                    !checkParamValueType(fParamTypes[i], args[i]))
                 {
                     throw std::runtime_error(
                         "函数 '" + func.name + "' 第 " + std::to_string(i + 1) +
-                        " 个参数类型不匹配: 期望 " + func.paramTypes[i]);
+                        " 个参数类型不匹配: 期望 " + fParamTypes[i]);
                 }
             }
         }
     }
 
     // --- 分支 B: 原生 C++ 函数 ---
-    if (func.type == TzdValue::NATIVE_FUNCTION)
+    if (func.type == TzdValue::NATIVE_FUNCTION && func.extra)
     {
-        return func.nativeFunc(args);
+        return func.extra->nativeFunc(args);
     }
 
     // --- 分支 C: JIT 机器码执行 (如果已生成机器码且未被禁用，最高优先级直接执行) ---
-    void (*effJittedPtr)(void *, void *) = func.jittedPtr;
+    void (*effJittedPtr)(void *, void *) = fJittedPtr;
     if (!effJittedPtr && !m_noJit && m_jitEngine)
     {
         if (!m_pendingJitFunctions.empty())
@@ -5279,40 +5258,40 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
         {
             auto findResult = it->find(func.name);
-            if (findResult != it->end() && findResult->second.type == TzdValue::FUNCTION && findResult->second.jittedPtr)
+            if (findResult != it->end() && findResult->second.type == TzdValue::FUNCTION && findResult->second.extra && findResult->second.extra->jittedPtr)
             {
-                effJittedPtr = findResult->second.jittedPtr;
-                const_cast<TzdValue &>(func).jittedPtr = effJittedPtr;
+                effJittedPtr = findResult->second.extra->jittedPtr;
+                const_cast<TzdValue &>(func).ensureExtra().jittedPtr = effJittedPtr;
                 break;
             }
         }
-        if (!effJittedPtr && !func.jitInternalName.empty())
+        if (!effJittedPtr && !fJitInternalName.empty())
         {
-            auto sym = m_jitEngine->lookupSymbol(func.jitInternalName);
+            auto sym = m_jitEngine->lookupSymbol(fJitInternalName);
             if (sym)
             {
                 effJittedPtr = reinterpret_cast<void (*)(void *, void *)>(sym->getValue());
-                const_cast<TzdValue &>(func).jittedPtr = effJittedPtr;
+                const_cast<TzdValue &>(func).ensureExtra().jittedPtr = effJittedPtr;
             }
             else
             {
                 llvm::consumeError(sym.takeError());
             }
         }
-        if (!effJittedPtr && func.funcBody)
+        if (!effJittedPtr && fFuncBody)
         {
             tryJitCompile(const_cast<TzdValue &>(func));
-            effJittedPtr = func.jittedPtr;
+            effJittedPtr = func.extra ? func.extra->jittedPtr : nullptr;
         }
     }
 
-    int funcEndLine = (func.funcBody && func.funcBody->getStop()) ? (int)func.funcBody->getStop()->getLine() : -1;
-    bool hasDebugActivity = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(func.sourceFile, func.line, funcEndLine));
+    int funcEndLine = (fFuncBody && fFuncBody->getStop()) ? (int)fFuncBody->getStop()->getLine() : -1;
+    bool hasDebugActivity = TzdDebugger::g_DebugActive && (TzdDebugger::isStepping() || TzdDebugger::hasBreakpointsInFunction(fSourceFile, fLine, funcEndLine));
     if (effJittedPtr && (!TzdDebugger::g_DebugActive || (TzdJitEngine::isJitDebugEnabled() && !hasDebugActivity)))
     {
-        return callScriptFunction(func.name, func.params, func.paramTypes,
-                                  func.funcBody, effJittedPtr, func.instanceVal, args,
-                                  func.sourceFile, func.line, func.closureScope, func.isVararg);
+        return callScriptFunction(func.name, fParams, fParamTypes,
+                                  fFuncBody, effJittedPtr, func.instanceVal, args,
+                                  fSourceFile, fLine, fClosureScope, fIsVararg);
     }
 
     // --- 分支 D: 字节码 VM 快速路径 ---
@@ -5320,7 +5299,7 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     // method (instanceVal != nullptr) must never be routed to an unrelated
     // free function that happens to share its name — it falls through to the
     // script-function core which executes func.funcBody directly.
-    if (!TzdDebugger::g_DebugActive && m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr && !func.isVararg)
+    if (!TzdDebugger::g_DebugActive && m_useBytecodeVM && m_bytecodeModule && m_bytecodeVM && func.instanceVal == nullptr && !fIsVararg)
     {
         auto it = m_bytecodeModule->funcIndex.find(func.name);
         if (it != m_bytecodeModule->funcIndex.end())
@@ -5330,9 +5309,9 @@ TzdValue TzdInterpreter::callFunction(const TzdValue &func, const std::vector<Tz
     }
 
     // --- 分支 E: 脚本函数 (解释执行)，走公共核心 ---
-    return callScriptFunction(func.name, func.params, func.paramTypes,
-                              func.funcBody, func.jittedPtr, func.instanceVal, args,
-                              func.sourceFile, func.line, func.closureScope, func.isVararg);
+    return callScriptFunction(func.name, fParams, fParamTypes,
+                              fFuncBody, effJittedPtr, func.instanceVal, args,
+                              fSourceFile, fLine, fClosureScope, fIsVararg);
 }
 
 TzdValue TzdInterpreter::callMethod(ClassMethod &method, TzdInstance *receiver,
@@ -6041,21 +6020,21 @@ std::any TzdInterpreter::visitLambdaExpr(TzdLangParser::LambdaExprContext *ctx)
     std::string lambdaInternalName = "lambda_v" + std::to_string(m_funcVersion++);
 
     TzdValue funcVal("", params, ctx->block(), retType);
-    funcVal.paramTypes = paramTypes;
-    funcVal.returnType = retType;
-    funcVal.isVararg = isVararg;
+    funcVal.ensureExtra().paramTypes = paramTypes;
+    funcVal.ensureExtra().returnType = retType;
+    funcVal.ensureExtra().isVararg = isVararg;
     funcVal.type = TzdValue::FUNCTION;
-    funcVal.jitInternalName = lambdaInternalName;
-    funcVal.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
-    funcVal.line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
-    funcVal.column = ctx->getStart() ? (int)ctx->getStart()->getCharPositionInLine() : 0;
+    funcVal.ensureExtra().jitInternalName = lambdaInternalName;
+    funcVal.ensureExtra().sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
+    funcVal.ensureExtra().line = ctx->getStart() ? (int)ctx->getStart()->getLine() : 0;
+    funcVal.ensureExtra().column = ctx->getStart() ? (int)ctx->getStart()->getCharPositionInLine() : 0;
 
-    funcVal.closureScope = std::make_shared<std::unordered_map<std::string, TzdValue>>();
+    funcVal.ensureExtra().closureScope = std::make_shared<std::unordered_map<std::string, TzdValue>>();
     for (const auto &sc : scopes)
     {
         for (const auto &[k, val] : sc)
         {
-            (*funcVal.closureScope)[k] = val;
+            (*funcVal.ensureExtra().closureScope)[k] = val;
         }
     }
 
@@ -6072,7 +6051,7 @@ std::any TzdInterpreter::visitLambdaExpr(TzdLangParser::LambdaExprContext *ctx)
                 auto symOrErr = m_jitEngine->lookupSymbol(lambdaInternalName);
                 if (symOrErr)
                 {
-                    funcVal.jittedPtr = reinterpret_cast<void (*)(void *, void *)>(symOrErr->getValue());
+                    funcVal.ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(symOrErr->getValue());
                 }
                 else
                 {
@@ -6121,15 +6100,15 @@ std::any TzdInterpreter::visitFunctionDeclaration(TzdLangParser::FunctionDeclara
     std::string retType = ctx->typeType() ? ctx->typeType()->getText() : "";
 
     TzdValue funcVal(funcName, params, ctx->block(), retType);
-    funcVal.paramTypes = paramTypes;
-    funcVal.returnType = retType;
-    funcVal.isVararg = isVararg;
+    funcVal.ensureExtra().paramTypes = paramTypes;
+    funcVal.ensureExtra().returnType = retType;
+    funcVal.ensureExtra().isVararg = isVararg;
     funcVal.type = TzdValue::FUNCTION;
-    funcVal.jitInternalName = internalJitName;
+    funcVal.ensureExtra().jitInternalName = internalJitName;
 
-    funcVal.sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
-    funcVal.line = (int)ctx->getStart()->getLine();
-    funcVal.column = (int)ctx->getStart()->getCharPositionInLine();
+    funcVal.ensureExtra().sourceFile = m_scriptPathStack.empty() ? "memory" : m_scriptPathStack.back().string();
+    funcVal.ensureExtra().line = (int)ctx->getStart()->getLine();
+    funcVal.ensureExtra().column = (int)ctx->getStart()->getCharPositionInLine();
 
     if (!m_noJit && m_jitEngine && m_compiler && !isVararg)
     {
@@ -6259,15 +6238,15 @@ void TzdInterpreter::jitPendingModule()
                 auto findResult = it->find(userName);
                 if (findResult != it->end() && findResult->second.type == TzdValue::FUNCTION)
                 {
-                    findResult->second.jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
+                    findResult->second.ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
                     linked = true;
                     break;
                 }
                 for (auto &pair : *it)
                 {
-                    if (pair.second.type == TzdValue::FUNCTION && pair.second.jitInternalName == symbol)
+                    if (pair.second.type == TzdValue::FUNCTION && pair.second.extra && pair.second.extra->jitInternalName == symbol)
                     {
-                        pair.second.jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
+                        pair.second.ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
                         linked = true;
                         break;
                     }
@@ -6397,7 +6376,7 @@ std::any TzdInterpreter::visitNativeFunDeclStmt(TzdLangParser::NativeFunDeclStmt
         // --- 情况 A: 调用原生 C++ 函数 ---
         try {
             // 直接调用存储的 std::function
-            return funcVal.nativeFunc(args);
+            return funcVal.extra ? funcVal.extra->nativeFunc(args) : TzdValue();
         }
         catch (const std::exception& e) {
             throw TzdRuntimeException("调用原生函数 '" + funcName + "' 时发生错误: " + e.what(), ctx->getStart());
@@ -6407,23 +6386,28 @@ std::any TzdInterpreter::visitNativeFunDeclStmt(TzdLangParser::NativeFunDeclStmt
         // --- 情况 B: 调用脚本定义的函数 (原有逻辑) ---
 
         // 检查参数数量
-        if (args.size() != funcVal.params.size()) {
+        size_t paramCount = funcVal.extra ? funcVal.extra->params.size() : 0;
+        if (args.size() != paramCount) {
             std::string err = "函数 '" + funcName + "' 调用参数不匹配: "
-                "需要 " + std::to_string(funcVal.params.size()) + " 个，"
+                "需要 " + std::to_string(paramCount) + " 个，"
                 "实际提供 " + std::to_string(args.size()) + " 个。";
             throw TzdRuntimeException(err, ctx->getStart());
         }
 
         // 创建新作用域并推入参数
         std::unordered_map<std::string, TzdValue> newScope;
-        for (size_t i = 0; i < args.size(); ++i) {
-            newScope[funcVal.params[i]] = args[i];
+        if (funcVal.extra) {
+            for (size_t i = 0; i < args.size(); ++i) {
+                newScope[funcVal.extra->params[i]] = args[i];
+            }
         }
         scopes.push_back(newScope);
 
         TzdValue returnValue;
         try {
-            visit(funcVal.funcBody);
+            if (funcVal.extra && funcVal.extra->funcBody) {
+                visit(funcVal.extra->funcBody);
+            }
         }
         catch (const TzdReturnException& ret) {
             returnValue = ret.value;
@@ -8205,7 +8189,7 @@ std::any TzdInterpreter::visitClassDeclaration(TzdLangParser::ClassDeclarationCo
 
     // --- 3. 初始化 C 代码生成器变量 ---
     TzdValue classVal(newClass);
-    classVal.annotations = newClass->annotations;
+    classVal.ensureExtra().annotations = newClass->annotations;
 
     // --- 4. 开启编译模式 (防止 visit 方法体时报错) ---
     bool oldMode = m_isCompiling;
@@ -8647,13 +8631,13 @@ std::any TzdInterpreter::visitNewExpr(TzdLangParser::NewExprContext *ctx)
         if (ctor)
         {
             TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
-            ctorFunc.paramTypes = ctor->paramTypes;
-            ctorFunc.isVararg = ctor->isVararg;
-            ctorFunc.jittedPtr = ctor->jittedPtr;
+            ctorFunc.ensureExtra().paramTypes = ctor->paramTypes;
+            ctorFunc.ensureExtra().isVararg = ctor->isVararg;
+            ctorFunc.ensureExtra().jittedPtr = ctor->jittedPtr;
             ctorFunc.setInstance(inst);
-            ctorFunc.sourceFile = ctor->sourceFile;
-            ctorFunc.line = ctor->line;
-            ctorFunc.column = ctor->column;
+            ctorFunc.ensureExtra().sourceFile = ctor->sourceFile;
+            ctorFunc.ensureExtra().line = ctor->line;
+            ctorFunc.ensureExtra().column = ctor->column;
             this->callFunction(ctorFunc, args);
         }
     }
@@ -8734,8 +8718,8 @@ std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprCo
                     TzdValue f;
                     f.type = TzdValue::FUNCTION;
                     f.name = slot->method->name;
-                    f.params = slot->method->params;
-                    f.funcBody = slot->method->body;
+                    f.ensureExtra().params = slot->method->params;
+                    f.ensureExtra().funcBody = slot->method->body;
                     return f;
                 }
             }
@@ -8751,8 +8735,8 @@ std::any TzdInterpreter::visitMemberAccessExpr(TzdLangParser::MemberAccessExprCo
                 TzdValue f;
                 f.type = TzdValue::FUNCTION;
                 f.name = method->name;
-                f.params = method->params;
-                f.funcBody = method->body;
+                f.ensureExtra().params = method->params;
+                f.ensureExtra().funcBody = method->body;
                 return f;
             }
         }
@@ -8815,10 +8799,13 @@ std::any TzdInterpreter::visitTypeCheckExpr(TzdLangParser::TypeCheckExprContext 
     if (isTargetAnnotation)
     {
         // --- 【关键修复：判断注解包含关系】 ---
-        for (const auto &anno : obj.annotations)
+        if (obj.extra)
         {
-            if (anno == targetName)
-                return TzdValue(true);
+            for (const auto &anno : obj.extra->annotations)
+            {
+                if (anno == targetName)
+                    return TzdValue(true);
+            }
         }
         return TzdValue(false);
     }
@@ -8972,9 +8959,9 @@ std::any TzdInterpreter::visitSuperExpr(TzdLangParser::SuperExprContext *ctx)
     }
 
     TzdValue ctorFunc(parentClass->simpleName, parentCtor->params, parentCtor->body);
-    ctorFunc.paramTypes = parentCtor->paramTypes;
-    ctorFunc.isVararg = parentCtor->isVararg;
-    ctorFunc.jittedPtr = parentCtor->jittedPtr;
+    ctorFunc.ensureExtra().paramTypes = parentCtor->paramTypes;
+    ctorFunc.ensureExtra().isVararg = parentCtor->isVararg;
+    ctorFunc.ensureExtra().jittedPtr = parentCtor->jittedPtr;
     ctorFunc.setInstance(thisVal.instanceVal);
 
     callFunction(ctorFunc, args);
@@ -9239,8 +9226,8 @@ std::any TzdInterpreter::visitCallExpr(TzdLangParser::CallExprContext *ctx)
                     {
                         val.type = TzdValue::FUNCTION;
                         val.name = m->name;
-                        val.params = m->params;
-                        val.funcBody = m->body;
+                        val.ensureExtra().params = m->params;
+                        val.ensureExtra().funcBody = m->body;
                         found = true;
                     }
                 }
@@ -9392,9 +9379,9 @@ std::any TzdInterpreter::visitNullExpr(TzdLangParser::NullExprContext *ctx)
 // adds the module to the JIT engine, and sets funcVal.jittedPtr.
 void TzdInterpreter::tryJitCompile(TzdValue &funcVal)
 {
-    if (!m_jitEngine || !funcVal.funcBody || funcVal.type != TzdValue::FUNCTION || funcVal.isVararg)
+    if (!m_jitEngine || !funcVal.extra || !funcVal.extra->funcBody || funcVal.type != TzdValue::FUNCTION || funcVal.extra->isVararg)
         return;
-    if (funcVal.jittedPtr)
+    if (funcVal.extra && funcVal.extra->jittedPtr)
         return; // Already compiled
 
     // Generate a unique internal name matching visitFunctionDeclaration's
@@ -9419,7 +9406,7 @@ void TzdInterpreter::tryJitCompile(TzdValue &funcVal)
     bool compileOk = false;
     try
     {
-        m_compiler->compileNamedFunction(funcVal.funcBody, funcVal.params, internalName, funcVal.returnType);
+        m_compiler->compileNamedFunction(funcVal.extra->funcBody, funcVal.extra->params, internalName, funcVal.extra->returnType);
         compileOk = true;
     }
     catch (...)
@@ -9450,8 +9437,8 @@ void TzdInterpreter::tryJitCompile(TzdValue &funcVal)
     if (symOrErr)
     {
         void *addr = reinterpret_cast<void *>(symOrErr->getValue());
-        funcVal.jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
-        funcVal.jitInternalName = internalName;
+        funcVal.ensureExtra().jittedPtr = reinterpret_cast<void (*)(void *, void *)>(addr);
+        funcVal.ensureExtra().jitInternalName = internalName;
 
         // Register worker pointer for TCO cross-function calls
         m_jitEngine->registerWorkerForSymbol(internalName);
@@ -9561,17 +9548,18 @@ TzdValue TzdInterpreter::executeFunction(const TzdValue &funcVal, const std::vec
     // 1. 处理原生函数 (NATIVE_FUNCTION)
     if (finalFunc.type == TzdValue::NATIVE_FUNCTION)
     {
-        return finalFunc.nativeFunc(args);
+        return finalFunc.extra ? finalFunc.extra->nativeFunc(args) : TzdValue();
     }
 
     // 2. 处理脚本函数 (FUNCTION)
     if (finalFunc.type == TzdValue::FUNCTION)
     {
+        size_t paramCount = finalFunc.extra ? finalFunc.extra->params.size() : 0;
         // 检查参数数量
-        if (args.size() != finalFunc.params.size())
+        if (args.size() != paramCount)
         {
             throw std::runtime_error("函数调用参数不匹配: " + finalFunc.name +
-                                     " 需要 " + std::to_string(finalFunc.params.size()) + " 个");
+                                     " 需要 " + std::to_string(paramCount) + " 个");
         }
 
         // --- 准备作用域 ---
@@ -9584,9 +9572,12 @@ TzdValue TzdInterpreter::executeFunction(const TzdValue &funcVal, const std::vec
         }
 
         // 绑定参数
-        for (size_t i = 0; i < args.size(); ++i)
+        if (finalFunc.extra)
         {
-            newScope[finalFunc.params[i]] = args[i];
+            for (size_t i = 0; i < args.size(); ++i)
+            {
+                newScope[finalFunc.extra->params[i]] = args[i];
+            }
         }
 
         scopes.push_back(newScope);
@@ -9594,9 +9585,9 @@ TzdValue TzdInterpreter::executeFunction(const TzdValue &funcVal, const std::vec
 
         try
         {
-            if (finalFunc.funcBody)
+            if (finalFunc.extra && finalFunc.extra->funcBody)
             {
-                visit(finalFunc.funcBody);
+                visit(finalFunc.extra->funcBody);
             }
         }
         catch (const TzdReturnException &ret)

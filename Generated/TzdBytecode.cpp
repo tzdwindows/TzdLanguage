@@ -1773,7 +1773,7 @@ TzdValue TzdBytecodeVM::callFunction(const BytecodeModule& module,
 TzdValue TzdBytecodeVM::callValue(const BytecodeModule& module, const TzdValue& callee,
                                   const std::vector<TzdValue>& args) {
     // Bytecode function referenced by name (funcBody is null sentinel).
-    if (callee.type == TzdValue::FUNCTION && callee.funcBody == nullptr &&
+    if (callee.type == TzdValue::FUNCTION && (!callee.extra || callee.extra->funcBody == nullptr) &&
         !callee.name.empty()) {
         auto it = module.funcIndex.find(callee.name);
         if (it != module.funcIndex.end()) {
@@ -1798,12 +1798,12 @@ TzdValue TzdBytecodeVM::getMember(const TzdValue& obj, const std::string& name) 
             if (slot->method) {
                 if (slot->method->templateVal) {
                     TzdValue fv = *(slot->method->templateVal);
-                    fv.jittedPtr = slot->method->jittedPtr;
+                    fv.ensureExtra().jittedPtr = slot->method->jittedPtr;
                     return fv;
                 }
                 TzdValue fv(slot->method->name, slot->method->params, slot->method->body);
-                fv.paramTypes = slot->method->paramTypes;
-                fv.jittedPtr = slot->method->jittedPtr;
+                fv.ensureExtra().paramTypes = slot->method->paramTypes;
+                fv.ensureExtra().jittedPtr = slot->method->jittedPtr;
                 return fv;
             }
         }
@@ -1811,8 +1811,8 @@ TzdValue TzdBytecodeVM::getMember(const TzdValue& obj, const std::string& name) 
         ClassMethod* m = cls->findMethod(name);
         if (m) {
             TzdValue fv(m->name, m->params, m->body);
-            fv.paramTypes = m->paramTypes;
-            fv.jittedPtr = m->jittedPtr;
+            fv.ensureExtra().paramTypes = m->paramTypes;
+            fv.ensureExtra().jittedPtr = m->jittedPtr;
             return fv;
         }
         throw std::runtime_error("Class '" + cls->fullName + "' has no member: " + name);
@@ -2836,9 +2836,9 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                                 bound = *(sm->templateVal);
                             } else {
                                 bound = TzdValue(sm->name, sm->params, sm->body);
-                                bound.paramTypes = sm->paramTypes;
+                                bound.ensureExtra().paramTypes = sm->paramTypes;
                             }
-                            bound.jittedPtr = sm->jittedPtr;
+                            bound.ensureExtra().jittedPtr = sm->jittedPtr;
                             pushValueMove(callValue(module, bound, callArgs));
                             ++ip; break;
                         }
@@ -3128,7 +3128,7 @@ TzdValue TzdBytecodeVM::runBytecodeFunc(const BytecodeModule& module,
                     m_interp->scopes.push_back(std::move(ctorScope));
                     try {
                         TzdValue ctorFunc(cls->simpleName, ctor->params, ctor->body);
-                        ctorFunc.jittedPtr = ctor->jittedPtr;
+                        ctorFunc.ensureExtra().jittedPtr = ctor->jittedPtr;
                         ctorFunc.setInstance(inst);
                         m_interp->callFunction(ctorFunc, ctorArgs);
                     } catch (...) {

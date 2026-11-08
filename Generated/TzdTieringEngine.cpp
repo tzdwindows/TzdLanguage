@@ -151,10 +151,10 @@ void TzdTieringEngine::executeCompileTask(const CompileTask& task) {
             auto it = scope.find(task.funcName);
             if (it != scope.end()) {
                 TzdValue& fv = it->second;
-                if (fv.type == TzdValue::FUNCTION && fv.funcBody) {
-                    funcBody = fv.funcBody;
-                    params = fv.params;
-                    retType = fv.returnType;
+                if (fv.type == TzdValue::FUNCTION && fv.extra && fv.extra->funcBody) {
+                    funcBody = fv.extra->funcBody;
+                    params = fv.extra->params;
+                    retType = fv.extra->returnType;
                 }
                 break;
             }

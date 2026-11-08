@@ -1312,7 +1312,7 @@ bool TzdExeCompiler::tryRunEmbeddedExecutable(int argc, char* argv[], int* outEx
                 TzdValue mainFunc = interpreter.scopes[0]["main"];
                 if (mainFunc.type == TzdValue::FUNCTION) {
                     std::vector<TzdValue> mainArgs;
-                    if (!mainFunc.params.empty()) {
+                    if (mainFunc.extra && !mainFunc.extra->params.empty()) {
                         mainArgs.push_back(TzdValue(argsList));
                     }
                     interpreter.callFunction(mainFunc, mainArgs);

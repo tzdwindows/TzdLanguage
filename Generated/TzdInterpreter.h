@@ -317,6 +317,24 @@ struct TzdFastDoubleMap {
     }
 };
 
+struct TzdExtra {
+    std::vector<std::string> params;
+    std::vector<std::string> paramTypes;
+    std::string returnType;
+    std::string declaringClass;
+    bool isVararg = false;
+    TzdLangParser::BlockContext* funcBody = nullptr;
+    using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
+    NativeFuncType nativeFunc;
+    std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope;
+    std::string sourceFile;
+    int line = 0;
+    int column = 0;
+    std::string jitInternalName;
+    void (*jittedPtr)(void*, void*) = nullptr;
+    std::vector<std::string> annotations;
+};
+
 struct TzdValue {
     double* fastBuf = nullptr;
     int64_t fastLen = 0;
@@ -346,7 +364,6 @@ struct TzdValue {
         RATIONAL,        // Exact fraction "num/den" stored in sVal (uses BIGINT arithmetic)
         BIGFLOAT         // Arbitrary-precision floating-point (stored as decimal string in sVal)
     };
-    std::vector<std::string> annotations;
     Type type = NONE;
     std::string name = "";
     std::string declaredType = "";
@@ -361,22 +378,22 @@ struct TzdValue {
     std::vector<TzdValue> arrVal;
     std::unordered_map<std::string, TzdValue> mapVal;
 
-    std::vector<std::string> params;
-    std::vector<std::string> paramTypes;
-    std::string returnType = "";
-    std::string declaringClass = "";
-    bool isVararg = false;
-    TzdLangParser::BlockContext* funcBody = nullptr;
-    using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
-    NativeFuncType nativeFunc;
-    std::shared_ptr<std::unordered_map<std::string, TzdValue>> closureScope;
+    std::shared_ptr<TzdExtra> extra;
 
     TzdClassDef* classDefVal = nullptr;
     TzdInstance* instanceVal = nullptr;
 
-    std::string sourceFile = "";
-    int line = 0;
-    int column = 0;
+    std::vector<double, default_init_allocator<double>> nativeArr;  // Backing storage for unboxed double array (performance fast-path)
+    bool isNativeDoubleArr = false; // Flag indicating if current array is a specialized native double array
+
+    using NativeFuncType = std::function<TzdValue(const std::vector<TzdValue>&)>;
+
+    inline TzdExtra& ensureExtra() {
+        if (!extra) extra = std::make_shared<TzdExtra>();
+        return *extra;
+    }
+    inline const TzdExtra* getExtra() const { return extra.get(); }
+    inline TzdExtra* getExtra() { return extra.get(); }
 
     TzdValue() : type(NONE), lVal(0), dVal(0.0), bVal(false), instanceVal(nullptr) {}
     TzdValue(TzdClassDef* c) : type(CLASS_DEF), classDefVal(c) {}
@@ -402,7 +419,7 @@ struct TzdValue {
     TzdValue(unsigned char v) : type(BYTE), ulVal((unsigned long long)v), dVal((double)v) {}
 
     TzdValue(void* v) : type(POINTER), ptrVal(v) {}
-    TzdValue(std::string v) : type(STRING), sVal(v) {}
+    TzdValue(std::string v) : type(STRING), sVal(std::move(v)) {}
     TzdValue(const char* v) : type(STRING), sVal(v ? v : "") {}
     TzdValue(bool v) : type(BOOL), bVal(v) {}
 
@@ -410,23 +427,24 @@ struct TzdValue {
     TzdValue(const std::unordered_map<std::string, TzdValue>& v) : type(MAP), mapVal(v) {}
 
     TzdValue(std::string n, std::vector<std::string> p, TzdLangParser::BlockContext* ctx, std::string retType = "")
-        : type(FUNCTION), name(n), params(p), funcBody(ctx), returnType(retType) {
+        : type(FUNCTION), name(std::move(n)) {
+        auto& ex = ensureExtra();
+        ex.params = std::move(p);
+        ex.funcBody = ctx;
+        ex.returnType = std::move(retType);
     }
 
     TzdValue(NativeFuncType func, std::string n = "")
-        : type(NATIVE_FUNCTION), nativeFunc(func), name(n) {
+        : type(NATIVE_FUNCTION), name(std::move(n)) {
+        ensureExtra().nativeFunc = std::move(func);
     }
 
     static TzdValue Error(std::string msg) {
         TzdValue ev;
         ev.type = ERROR_VAL;
-        ev.sVal = msg;
+        ev.sVal = std::move(msg);
         return ev;
     }
-    std::string jitInternalName;
-    std::vector<double, default_init_allocator<double>> nativeArr;  // Backing storage for unboxed double array (performance fast-path)
-    bool isNativeDoubleArr = false; // Flag indicating if current array is a specialized native double array
-    void (*jittedPtr)(void*, void*) = nullptr;
 
     void syncFastBuf() {
         if (isNativeDoubleArr && !nativeArr.empty()) {

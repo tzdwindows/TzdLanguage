@@ -350,7 +350,7 @@ static void handleUiCallbackError(
     HWND hwndContext,
     const TzdValue& rawThrownVal)
 {
-    std::string filePath = callable.sourceFile;
+    std::string filePath = callable.extra ? callable.extra->sourceFile : "";
     if (filePath.empty() && g_uiInterp && !g_uiInterp->m_scriptPathStack.empty()) {
         filePath = g_uiInterp->m_scriptPathStack.back().string();
     }
@@ -494,18 +494,18 @@ static TzdValue invokeUiCallback(const TzdValue& cb, std::vector<TzdValue> args,
     std::vector<TzdValue> actualArgs = args;
 
     if (callable.type == TzdValue::FUNCTION) {
-        if (!callable.params.empty()) {
-            if (actualArgs.size() > callable.params.size()) {
-                actualArgs.resize(callable.params.size());
+        if (callable.extra && !callable.extra->params.empty()) {
+            if (actualArgs.size() > callable.extra->params.size()) {
+                actualArgs.resize(callable.extra->params.size());
             } else {
-                while (actualArgs.size() < callable.params.size()) {
+                while (actualArgs.size() < callable.extra->params.size()) {
                     actualArgs.push_back(TzdValue());
                 }
             }
-        } else if (callable.jittedPtr != nullptr) {
-            callable.params.resize(actualArgs.size());
+        } else if (callable.extra && callable.extra->jittedPtr != nullptr) {
+            callable.ensureExtra().params.resize(actualArgs.size());
             for (size_t i = 0; i < actualArgs.size(); ++i) {
-                callable.params[i] = "arg" + std::to_string(i);
+                callable.ensureExtra().params[i] = "arg" + std::to_string(i);
             }
         } else {
             actualArgs.clear();

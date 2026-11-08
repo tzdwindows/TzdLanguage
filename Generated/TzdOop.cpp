@@ -209,23 +209,23 @@ struct TzdValue TzdInstance::getMember(TzdSelector selector, const std::string& 
             if (slot->method) {
                 if (slot->method->templateVal) {
                     TzdValue funcVal = *(slot->method->templateVal);
-                    funcVal.jittedPtr = slot->method->jittedPtr;
+                    funcVal.ensureExtra().jittedPtr = slot->method->jittedPtr;
                     funcVal.setInstance(this);
                     return funcVal;
                 }
                 TzdValue funcVal;
                 if (slot->method->isNative) {
                     funcVal.type = TzdValue::NATIVE_FUNCTION;
-                    funcVal.nativeFunc = slot->method->nativeWrapper;
+                    funcVal.ensureExtra().nativeFunc = slot->method->nativeWrapper;
                 } else {
                     funcVal.type = TzdValue::FUNCTION;
-                    funcVal.funcBody = slot->method->body;
-                    funcVal.params = slot->method->params;
-                    funcVal.paramTypes = slot->method->paramTypes;
+                    funcVal.ensureExtra().funcBody = slot->method->body;
+                    funcVal.ensureExtra().params = slot->method->params;
+                    funcVal.ensureExtra().paramTypes = slot->method->paramTypes;
                 }
                 funcVal.name = slot->method->name;
-                funcVal.isVararg = slot->method->isVararg;
-                funcVal.jittedPtr = slot->method->jittedPtr;
+                funcVal.ensureExtra().isVararg = slot->method->isVararg;
+                funcVal.ensureExtra().jittedPtr = slot->method->jittedPtr;
                 funcVal.setInstance(this);
                 return funcVal;
             }
@@ -243,7 +243,7 @@ struct TzdValue TzdInstance::getMember(TzdSelector selector, const std::string& 
             if (ClassMethod* method = definition->findMethod(memberName)) {
                 if (method->templateVal) {
                     TzdValue funcVal = *(method->templateVal);
-                    funcVal.jittedPtr = method->jittedPtr;
+                    funcVal.ensureExtra().jittedPtr = method->jittedPtr;
                     funcVal.setInstance(this);
                     return funcVal;
                 }
@@ -703,14 +703,14 @@ void TzdOopManager::registerClass(TzdClassDef* cls) {
 
         if (m.isNative) {
             m.templateVal->type = TzdValue::NATIVE_FUNCTION;
-            m.templateVal->nativeFunc = m.nativeWrapper;
+            m.templateVal->ensureExtra().nativeFunc = m.nativeWrapper;
         }
         else {
             m.templateVal->type = TzdValue::FUNCTION;
-            m.templateVal->funcBody = m.body;
-            m.templateVal->params = m.params; // 这里仅发生一次 Vector 拷贝
-            m.templateVal->paramTypes = m.paramTypes;
-            m.templateVal->isVararg = m.isVararg;
+            m.templateVal->ensureExtra().funcBody = m.body;
+            m.templateVal->ensureExtra().params = m.params; // 这里仅发生一次 Vector 拷贝
+            m.templateVal->ensureExtra().paramTypes = m.paramTypes;
+            m.templateVal->ensureExtra().isVararg = m.isVararg;
         }
         m.templateVal->name = m.name;
     }

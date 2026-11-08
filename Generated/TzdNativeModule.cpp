@@ -520,13 +520,13 @@ void TzdNativeModule::regMath(TzdInterpreter *interp)
         if (func.type != TzdValue::FUNCTION && func.type != TzdValue::NATIVE_FUNCTION)
             return 0.0;
         std::unordered_map<std::string, TzdValue> callScope;
-        if (!func.params.empty())
-            callScope[func.params[0]] = TzdValue(x);
+        if (func.extra && !func.extra->params.empty())
+            callScope[func.extra->params[0]] = TzdValue(x);
         interp->scopes.push_back(callScope);
         TzdValue res(0.0);
         try
         {
-            std::any v = interp->visit(func.funcBody);
+            std::any v = interp->visit(func.extra ? func.extra->funcBody : nullptr);
             if (v.has_value())
                 res = std::any_cast<TzdValue>(v);
         }

@@ -36,7 +36,7 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
                 for (auto& scope : interp->scopes) {
                     auto vIt = scope.find(funcName);
                     if (vIt != scope.end() && vIt->second.type == TzdValue::FUNCTION) {
-                        vIt->second.jittedPtr = reinterpret_cast<void(*)(void*,void*)>(it->second);
+                        vIt->second.ensureExtra().jittedPtr = reinterpret_cast<void(*)(void*,void*)>(it->second);
                         break;
                     }
                 }
@@ -77,11 +77,11 @@ void* TzdBytecodeJIT::onFunctionCall(const BytecodeModule& module,
                 auto vIt = scope.find(funcName);
                 if (vIt != scope.end()) {
                     TzdValue& funcVal = vIt->second;
-                    if (funcVal.type == TzdValue::FUNCTION && funcVal.funcBody) {
+                    if (funcVal.type == TzdValue::FUNCTION && funcVal.extra && funcVal.extra->funcBody) {
                         interp->tryJitCompile(funcVal);
-                        if (funcVal.jittedPtr) {
-                            m_jittedPtrs[funcName] = (void*)funcVal.jittedPtr;
-                            return (void*)funcVal.jittedPtr;
+                        if (funcVal.extra && funcVal.extra->jittedPtr) {
+                            m_jittedPtrs[funcName] = (void*)funcVal.extra->jittedPtr;
+                            return (void*)funcVal.extra->jittedPtr;
                         }
                     }
                     break;
